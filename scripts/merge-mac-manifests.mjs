@@ -1,5 +1,10 @@
 import { readFileSync, writeFileSync } from "node:fs";
-import yaml from "js-yaml";
+import { createRequire } from "node:module";
+
+// js-yaml is installed into an isolated dir in CI (env JS_YAML) to avoid running
+// `npm install` against the project graph; fall back to bare resolution locally.
+const require = createRequire(import.meta.url);
+const yaml = require(process.env.JS_YAML ?? "js-yaml");
 
 // Merge electron-builder `latest-mac.yml` files from multiple arch builds into
 // one whose `files:` lists every arch. electron-updater (MacUpdater) selects the

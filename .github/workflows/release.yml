@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       bump:
-        description: "Version bump"
+        description: "Version bump (none = rebuild & republish current version)"
         type: choice
-        options: [patch, minor, major]
+        options: [patch, minor, major, none]
         default: patch
   push:
     tags: ["v*.*.*"]
@@ -28,11 +28,14 @@ jobs:
           ref: ${{ github.ref }}
       - id: resolve
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.bump }}" != "none" ]; then
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
             TAG=$(npm version ${{ inputs.bump }} -m "chore(release): %s" | tail -1)
             git push origin "HEAD:${{ github.ref_name }}" --follow-tags
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # bump=none: rebuild & republish the current package.json version, no new tag
+            TAG="v$(node -p "require('./package.json').version")"
           else
             TAG="${{ github.ref_name }}"
           fi
@@ -112,8 +115,13 @@ jobs:
         run: |
           mkdir -p out
           cp artifacts/dist-*/*.dmg artifacts/dist-*/*-mac.zip artifacts/dist-*/*.blockmap out/ 2>/dev/null || true
-          npm install --no-save js-yaml >/dev/null 2>&1
-          node scripts/merge-mac-manifests.mjs out/latest-mac.yml \
+          # Install js-yaml in an isolated dir so npm never resolves the project's
+          # deps (npm ignores pnpm peerDependencyRules → ERESOLVE) or runs postinstall.
+          TOOLS="$RUNNER_TEMP/tools"
+          mkdir -p "$TOOLS"
+          echo '{"name":"tools","private":true}' > "$TOOLS/package.json"
+          npm install --prefix "$TOOLS" --no-audit --no-fund js-yaml
+          JS_YAML="$TOOLS/node_modules/js-yaml" node scripts/merge-mac-manifests.mjs out/latest-mac.yml \
             artifacts/dist-arm64/latest-mac.yml artifacts/dist-x64/latest-mac.yml
           ls -la out
       - name: Generate release notes
@@ -126,5 +134,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${{ needs.gate.outputs.tag }}" out/* \
-            --title "${{ needs.gate.outputs.tag }}" --notes-file notes.md
+          TAG="${{ needs.gate.outputs.tag }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" out/* --clobber
+            gh release edit "$TAG" --notes-file notes.md
+          else
+            gh release create "$TAG" out/* --title "$TAG" --notes-file notes.md
+          fi

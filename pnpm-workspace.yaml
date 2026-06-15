@@ -6,3 +6,7 @@ allowBuilds:
 
 overrides:
   dompurify: ">=3.4.0"
+
+peerDependencyRules:
+  allowedVersions:
+    electron-vite>vite: "8"
