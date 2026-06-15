@@ -87,8 +87,18 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
                 };
                 let git_watchers = state.git_watchers.lock().map_err(|e| e.to_string())?.len() as u32;
                 let (cached_file_indexes, cached_file_paths) = {
-                    let c = state.file_list_cache.lock().map_err(|e| e.to_string())?;
-                    (c.len() as u32, c.values().map(|e| e.files.len() as u32).sum())
+                    let c = state.picker_cache.lock().map_err(|e| e.to_string())?;
+                    let paths: u32 = c
+                        .values()
+                        .map(|e| {
+                            e.picker
+                                .read()
+                                .ok()
+                                .and_then(|g| g.as_ref().map(|p| p.get_files().len() as u32))
+                                .unwrap_or(0)
+                        })
+                        .sum();
+                    (c.len() as u32, paths)
                 };
                 // Electron owns the tabs DB now; it overrides agent_count from
                 // its own connection when merging the diagnostics halves.
@@ -812,25 +822,10 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
         m if m == crate::protocol::methods::SEARCH_FILES => {
             let dir = s(req.params.get("dir"));
             let query = s(req.params.get("query"));
-            // Recency resolved by Electron (path → openedAt), wire shape: [[path, openedAt], ...].
-            let recency_map: std::collections::HashMap<String, i64> = req
-                .params
-                .get("recentFiles")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|e| {
-                            let pair = e.as_array()?;
-                            let path = pair.first()?.as_str()?.to_string();
-                            let opened = pair.get(1)?.as_i64()?;
-                            Some((path, opened))
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
+            // Recency now native to FFF's frecency tracker; no recency arg.
             let state = state.clone();
             let result = tokio::task::spawn_blocking(move || {
-                search_files_impl(&state, &dir, &query, recency_map)
+                search_files_impl(&state, &dir, &query)
             })
             .await
             .map_err(|e| format!("search_files task failed: {e}"));
@@ -862,6 +857,21 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
                 Err(e) => Response::err(req.id, e),
             }
         }
+        // Record a file open into FFF's native frecency tracker. Re-ranks future
+        // file/content searches; no separate recent_files table.
+        m if m == "touch_recent_file" => {
+            let path = s(req.params.get("path"));
+            let state = state.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                if let Ok(g) = state.frecency.read() {
+                    if let Some(t) = g.as_ref() {
+                        let _ = t.track_access(std::path::Path::new(&path));
+                    }
+                }
+            })
+            .await;
+            Response::ok(req.id, serde_json::json!(true))
+        }
         m if m == crate::protocol::methods::LIST_DIRECTORY_PATHS => {
             let partial = s(req.params.get("partial"));
             match list_directory_paths_impl(&state, &partial) {
@@ -873,15 +883,7 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
             let dir = s(req.params.get("dir"));
             let state = state.clone();
             let result = tokio::task::spawn_blocking(move || {
-                let base = std::path::PathBuf::from(&dir);
-                let exclude_key = state.file_exclude_cache_key();
-                let mut cache = state.file_list_cache.lock().unwrap();
-                if cache.get(&dir).is_some_and(|c| c.exclude_key == exclude_key) {
-                    return Ok::<(), String>(());
-                }
-                let files = collect_files_app(&state, &dir, &base)?;
-                insert_file_list_cache_app(&state, &mut cache, &dir, &exclude_key, files);
-                Ok(())
+                ensure_dir_picker(&state, &dir).map(|_| ())
             })
             .await
             .map_err(|e| format!("prewarm_file_index task failed: {e}"));
@@ -1352,204 +1354,118 @@ fn find_project_icon_impl(dir: &str) -> Option<String> {
     None
 }
 
-const FILE_INDEX_CACHE_LIMIT: usize = 8;
-
-/// Mirror of `commands/file_search.rs::insert_file_list_cache` against AppState.
-fn insert_file_list_cache_app(
+/// Get (building if needed) the shared FFF picker for `dir`. Used by both file
+/// and content search. The picker runs a background scan + fs watcher and
+/// applies the global frecency tracker to every file during the walk.
+fn ensure_dir_picker(
     state: &crate::state::AppState,
-    cache: &mut std::collections::HashMap<String, crate::state::FileListCache>,
     dir: &str,
-    exclude_key: &str,
-    files: std::sync::Arc<Vec<String>>,
-) {
-    if cache.len() >= FILE_INDEX_CACHE_LIMIT && !cache.contains_key(dir) {
-        if let Some(oldest) = cache
-            .iter()
-            .min_by_key(|(_, entry)| entry.last_access_tick)
-            .map(|(key, _)| key.clone())
-        {
-            cache.remove(&oldest);
-        }
+) -> Result<fff_search::SharedFilePicker, String> {
+    use fff_search::{FilePicker, FilePickerOptions, SharedFilePicker};
+    use std::time::Duration;
+
+    let mut cache = state.picker_cache.lock().map_err(|e| e.to_string())?;
+    if let Some(entry) = cache.get(dir) {
+        return Ok(entry.picker.clone());
     }
+    if !std::path::Path::new(dir).is_dir() {
+        return Err(format!("not a directory: {dir}"));
+    }
+    let shared = SharedFilePicker::default();
+    FilePicker::new_with_shared_state(
+        shared.clone(),
+        state.frecency.clone(),
+        FilePickerOptions {
+            base_path: dir.to_string(),
+            watch: true,
+            enable_home_dir_scanning: true,
+            ..Default::default()
+        },
+    )
+    .map_err(|e| e.to_string())?;
+    // First build only — blocks until the initial scan lands so the next query
+    // hits a warm index.
+    shared.wait_for_scan(Duration::from_secs(10));
     cache.insert(
         dir.to_string(),
-        crate::state::FileListCache {
-            files,
-            exclude_key: exclude_key.to_string(),
-            last_access_tick: state.next_file_cache_tick(),
-        },
+        crate::state::DirPickerCache { picker: shared.clone() },
     );
+    Ok(shared)
 }
 
-/// Mirror of `commands/file_search.rs::collect_files` against AppState.
-fn collect_files_app(
-    state: &crate::state::AppState,
-    dir: &str,
-    base: &std::path::Path,
-) -> Result<std::sync::Arc<Vec<String>>, String> {
-    use ignore::WalkBuilder;
-    let mut list = Vec::new();
-    let mut builder = WalkBuilder::new(dir);
-    builder
-        .hidden(false)
-        .git_ignore(true)
-        .git_global(false)
-        .max_depth(Some(20));
-    let exclude_patterns = &state.settings.get().files_exclude;
-    let mut overrides = ignore::overrides::OverrideBuilder::new(dir);
-    for (pattern, enabled) in exclude_patterns {
-        if *enabled {
-            overrides.add(&format!("!{}", pattern)).ok();
-        }
-    }
-    if let Ok(overrides) = overrides.build() {
-        builder.overrides(overrides);
-    }
-    for entry in builder.build().flatten() {
-        if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
-            continue;
-        }
-        if let Ok(rel) = entry.path().strip_prefix(base) {
-            list.push(rel.to_string_lossy().to_string());
-        }
-    }
-    Ok(std::sync::Arc::new(list))
-}
-
-/// Mirror of `commands/file_search.rs::search_files` (cache + nucleo fuzzy).
+/// File search via FFF `fuzzy_search` over the per-dir shared picker. Ranking
+/// (incl. native frecency boost) is FFF's; no custom scoring.
 fn search_files_impl(
     state: &crate::state::AppState,
     dir: &str,
     query: &str,
-    recency_map: std::collections::HashMap<String, i64>,
 ) -> Result<serde_json::Value, String> {
-    use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
-    use nucleo_matcher::{Config, Matcher, Utf32Str};
+    use fff_search::{FuzzySearchOptions, PaginationArgs, QueryParser};
     use serde_json::json;
     use std::path::Path;
-    use std::sync::Arc;
 
     let base = Path::new(dir);
     let t0 = std::time::Instant::now();
-    let exclude_key = state.file_exclude_cache_key();
+    let shared = ensure_dir_picker(state, dir)?;
+    let guard = shared.read().map_err(|e| e.to_string())?;
+    let picker = guard.as_ref().ok_or("picker not ready")?;
 
-    let files: Arc<Vec<String>> = {
-        let mut cache = state.file_list_cache.lock().unwrap();
-        if let Some(cached) = cache.get_mut(dir) {
-            if cached.exclude_key == exclude_key {
-                cached.last_access_tick = state.next_file_cache_tick();
-                Arc::clone(&cached.files)
-            } else {
-                cache.remove(dir);
-                let files = collect_files_app(state, dir, base)?;
-                insert_file_list_cache_app(state, &mut cache, dir, &exclude_key, Arc::clone(&files));
-                files
-            }
-        } else {
-            let files = collect_files_app(state, dir, base)?;
-            insert_file_list_cache_app(state, &mut cache, dir, &exclude_key, Arc::clone(&files));
-            files
-        }
+    // `recent` = file has been opened before (FFF frecency > 0). Lets the
+    // renderer split results into a "Recent Files" header section.
+    let mk = |rel: String, recent: bool| {
+        let name = Path::new(&rel)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let abs = base.join(&rel).to_string_lossy().to_string();
+        json!({ "name": name, "path": abs, "relPath": rel, "recent": recent })
     };
 
-    if query.trim().is_empty() {
-        // Precompute recency once per file. Joining + allocating the abs path
-        // inside the comparator was O(N log N) string allocs — the hot path when
-        // backspacing to an empty query.
-        let mut ordered: Vec<(i64, &String)> = files
-            .iter()
-            .map(|rel| {
-                let abs = base.join(rel);
-                let recent = recency_map.get(abs.to_string_lossy().as_ref()).copied().unwrap_or(0);
-                (recent, rel)
-            })
-            .collect();
-        ordered.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(b.1)));
-        ordered.truncate(50);
-        let results: Vec<serde_json::Value> = ordered
+    let results: Vec<serde_json::Value> = if query.trim().is_empty() {
+        // No query: list files ordered by frecency desc, then relative path asc.
+        let mut files: Vec<&fff_search::FileItem> = picker.get_files().iter().collect();
+        files.sort_by(|a, b| {
+            b.total_frecency_score()
+                .cmp(&a.total_frecency_score())
+                .then_with(|| a.relative_path(picker).cmp(&b.relative_path(picker)))
+        });
+        files
             .into_iter()
-            .map(|(_, rel)| {
-                let name = Path::new(rel)
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_default();
-                let abs = base.join(rel).to_string_lossy().to_string();
-                json!({ "name": name, "path": abs, "relPath": rel })
-            })
-            .collect();
-        return Ok(json!({ "results": results }));
-    }
+            .take(50)
+            .map(|f| mk(f.relative_path(picker), f.total_frecency_score() > 0))
+            .collect()
+    } else {
+        let parser = QueryParser::default();
+        let parsed = parser.parse(query);
+        let result = picker.fuzzy_search(
+            &parsed,
+            None,
+            FuzzySearchOptions {
+                max_threads: 0,
+                current_file: None,
+                project_path: Some(base),
+                pagination: PaginationArgs { offset: 0, limit: 50 },
+                ..Default::default()
+            },
+        );
+        result
+            .items
+            .into_iter()
+            .map(|f| mk(f.relative_path(picker), f.total_frecency_score() > 0))
+            .collect()
+    };
 
-    // Recency lookup keyed by rel path so the hot loop never re-joins/allocates
-    // the abs path per candidate (broad queries match thousands of files).
-    let recent_rel: std::collections::HashSet<&str> = recency_map
-        .keys()
-        .filter_map(|abs| Path::new(abs).strip_prefix(base).ok())
-        .filter_map(|p| p.to_str())
-        .collect();
-    const IMAGE_EXTS: [&str; 9] = ["png", "jpg", "jpeg", "gif", "svg", "ico", "webp", "bmp", "icns"];
-
-    let mut matcher = Matcher::new(Config::DEFAULT);
-    let pattern = Pattern::parse(query, CaseMatching::Smart, Normalization::Smart);
-    // Store the file index, not a cloned String — only the surviving 50 are
-    // materialized. The previous `rel.clone()` per match was a per-keystroke
-    // allocation storm on broad/backspace queries.
-    let mut scored: Vec<(u32, usize)> = Vec::new();
-    let mut buf = Vec::new();
-    for (idx, rel) in files.iter().enumerate() {
-        let haystack = Utf32Str::new(rel, &mut buf);
-        if let Some(mut score) = pattern.score(haystack, &mut matcher) {
-            let path = Path::new(rel.as_str());
-            // &str slices — no per-candidate String allocation.
-            let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            let stem = path.file_stem().and_then(|n| n.to_str()).unwrap_or("");
-            let fname_haystack = Utf32Str::new(filename, &mut buf);
-            if let Some(fname_score) = pattern.score(fname_haystack, &mut matcher) {
-                score = score.saturating_add(fname_score).saturating_add(200);
-                if stem.eq_ignore_ascii_case(query) {
-                    score = score.saturating_add(500);
-                }
-            }
-            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-            if IMAGE_EXTS.iter().any(|e| ext.eq_ignore_ascii_case(e)) {
-                score = score.saturating_sub(300);
-            }
-            if recent_rel.contains(rel.as_str()) {
-                score = score.saturating_add(100);
-            }
-            scored.push((score, idx));
-        }
-    }
-    let matched = scored.len();
-    // Partial-select the top 50 instead of fully sorting every match.
-    if scored.len() > 50 {
-        scored.select_nth_unstable_by(49, |a, b| b.0.cmp(&a.0));
-        scored.truncate(50);
-    }
-    scored.sort_by(|a, b| b.0.cmp(&a.0));
-    let results: Vec<serde_json::Value> = scored
-        .into_iter()
-        .map(|(_, idx)| {
-            let rel = &files[idx];
-            let name = Path::new(rel.as_str())
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_default();
-            let abs = base.join(rel).to_string_lossy().to_string();
-            json!({ "name": name, "path": abs, "relPath": rel })
-        })
-        .collect();
     if std::env::var_os("VERNE_SEARCH_TIMING").is_some() {
         eprintln!(
-            "[search] q={:?} files={} matched={} {:?}",
+            "[search] q={:?} returned={} {:?}",
             query,
-            files.len(),
-            matched,
+            results.len(),
             t0.elapsed()
         );
     }
     Ok(json!({ "results": results }))
 }
+
 
 const CONTENT_SEARCH_MAX: usize = 500;
 const CONTENT_SEARCH_CONTEXT: usize = 200;
@@ -1631,46 +1547,6 @@ fn split_match_segments(line: &str, match_byte_offsets: &[(u32, u32)]) -> (Strin
     )
 }
 
-fn ensure_content_picker(
-    state: &crate::state::AppState,
-    dir: &str,
-) -> Result<(), String> {
-    use fff_search::file_picker::{FilePicker, FilePickerOptions};
-    use std::path::Path;
-
-    let exclude_key = state.file_exclude_cache_key();
-    let mut cache = state
-        .content_picker_cache
-        .lock()
-        .map_err(|e| e.to_string())?;
-    let needs_build = match cache.get(dir) {
-        Some(c) => c.exclude_key != exclude_key,
-        None => true,
-    };
-    if needs_build {
-        let base = Path::new(dir);
-        if !base.is_dir() {
-            return Err(format!("not a directory: {dir}"));
-        }
-        let mut picker = FilePicker::new(FilePickerOptions {
-            base_path: dir.to_string(),
-            watch: false,
-            enable_home_dir_scanning: true,
-            ..Default::default()
-        })
-        .map_err(|e| e.to_string())?;
-        picker.collect_files().map_err(|e| e.to_string())?;
-        cache.insert(
-            dir.to_string(),
-            crate::state::ContentPickerCache {
-                picker,
-                exclude_key,
-            },
-        );
-    }
-    Ok(())
-}
-
 /// Content search via fff-search grep across an indexed workspace tree.
 fn search_content_impl(
     state: &crate::state::AppState,
@@ -1705,15 +1581,9 @@ fn search_content_impl(
         abort_signal: None,
     };
 
-    ensure_content_picker(state, dir)?;
-    let mut cache = state
-        .content_picker_cache
-        .lock()
-        .map_err(|e| e.to_string())?;
-    let entry = cache
-        .get_mut(dir)
-        .ok_or_else(|| format!("picker cache miss: {dir}"))?;
-    let picker = &entry.picker;
+    let shared = ensure_dir_picker(state, dir)?;
+    let guard = shared.read().map_err(|e| e.to_string())?;
+    let picker = guard.as_ref().ok_or("picker not ready")?;
     let base = Path::new(dir);
     let grep_result = picker.grep(&fff_query, &options);
     let total_matches = grep_result.matches.len();
@@ -1924,19 +1794,18 @@ fn watch_file_impl(state: &crate::state::AppState, path: String) -> Result<bool,
     Ok(true)
 }
 
-/// Mirror of `commands/file_watch.rs::watch_directory` — invalidates the file
-/// index cache on structural changes and emits `directory-changed` via the bus.
+/// Mirror of `commands/file_watch.rs::watch_directory` — emits `directory-changed`
+/// via the bus on structural changes. The FFF per-dir picker owns its own fs
+/// watcher, so no manual index-cache invalidation is needed here.
 fn watch_directory_impl(state: &crate::state::AppState, path: String) -> Result<bool, String> {
     use notify::{Event, EventKind, RecursiveMode, Watcher};
     use std::path::PathBuf;
-    use std::sync::Arc;
 
     let watch_path = PathBuf::from(&path);
     if !watch_path.is_dir() {
         return Err("not a directory".to_string());
     }
     let emit_path = path.clone();
-    let file_cache = Arc::clone(&state.file_list_cache);
     let bus = state.event_bus.clone();
     let mut watcher = notify::RecommendedWatcher::new(
         move |res: Result<Event, notify::Error>| {
@@ -1947,13 +1816,6 @@ fn watch_directory_impl(state: &crate::state::AppState, path: String) -> Result<
                         | EventKind::Remove(_)
                         | EventKind::Modify(notify::event::ModifyKind::Name(_))
                 ) {
-                    if let Ok(mut c) = file_cache.lock() {
-                        c.retain(|cached_dir, _| {
-                            !(cached_dir == &emit_path
-                                || cached_dir.starts_with(&format!("{}/", emit_path))
-                                || emit_path.starts_with(&format!("{}/", cached_dir)))
-                        });
-                    }
                     bus.emit("directory-changed", serde_json::Value::String(emit_path.clone()));
                 }
             }
@@ -2003,7 +1865,7 @@ where
 #[cfg(test)]
 mod search_content_tests {
     use super::{
-        build_content_grep_query, search_content_impl, split_match_segments,
+        build_content_grep_query, search_content_impl, search_files_impl, split_match_segments,
     };
     use fff_search::file_picker::{FilePicker, FilePickerOptions};
     use fff_search::grep::{parse_grep_query, GrepMode, GrepSearchOptions, MAX_FFFILE_SIZE};
@@ -2139,6 +2001,89 @@ mod search_content_tests {
         assert!(q.contains("foo"));
         assert!(q.contains("*.ts"));
         assert!(q.contains("!**/node_modules/**"));
+    }
+
+    /// AppState with an isolated internal_data_dir so each test gets its own
+    /// frecency LMDB env (no cross-test lock contention).
+    fn isolated_state(internal: &std::path::Path) -> crate::state::AppState {
+        crate::state::AppState::new(
+            9601,
+            std::path::PathBuf::from("/tmp/verne-test-resources"),
+            internal.to_path_buf(),
+            dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/tmp")),
+            None,
+        )
+    }
+
+    fn rel_paths(out: &serde_json::Value) -> Vec<String> {
+        out["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["relPath"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn search_files_impl_ranks_filename_match() {
+        let internal = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src").join("foo.rs"), "").unwrap();
+        std::fs::write(dir.path().join("src").join("foobar.rs"), "").unwrap();
+
+        let state = isolated_state(internal.path());
+        let dir_str = dir.path().to_str().unwrap();
+        let out = search_files_impl(&state, dir_str, "foo").unwrap();
+        let rels = rel_paths(&out);
+        assert!(rels.iter().any(|r| r.ends_with("foo.rs")));
+        assert!(rels.iter().any(|r| r.ends_with("foobar.rs")));
+        // Exact-stem match should rank at/near the top.
+        let foo_pos = rels.iter().position(|r| r.ends_with("foo.rs")).unwrap();
+        let foobar_pos = rels.iter().position(|r| r.ends_with("foobar.rs")).unwrap();
+        assert!(foo_pos <= foobar_pos);
+    }
+
+    #[test]
+    fn search_files_impl_empty_query_returns_files() {
+        let internal = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        for i in 0..5 {
+            std::fs::write(dir.path().join(format!("f{i}.txt")), "").unwrap();
+        }
+        let state = isolated_state(internal.path());
+        let dir_str = dir.path().to_str().unwrap();
+        let out = search_files_impl(&state, dir_str, "").unwrap();
+        let results = out["results"].as_array().unwrap();
+        assert!(!results.is_empty());
+        assert!(results.len() <= 50);
+        for r in results {
+            assert!(r["name"].is_string());
+            assert!(r["path"].is_string());
+            assert!(r["relPath"].is_string());
+        }
+    }
+
+    #[test]
+    fn search_files_impl_respects_gitignore() {
+        let internal = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(dir.path())
+            .output()
+            .expect("git init");
+        std::fs::write(dir.path().join("keep.rs"), "").unwrap();
+        std::fs::create_dir(dir.path().join("ignored")).unwrap();
+        std::fs::write(dir.path().join(".gitignore"), "ignored/\n").unwrap();
+        std::fs::write(dir.path().join("ignored").join("x.rs"), "").unwrap();
+
+        let state = isolated_state(internal.path());
+        let dir_str = dir.path().to_str().unwrap();
+        let out = search_files_impl(&state, dir_str, "").unwrap();
+        let rels = rel_paths(&out);
+        assert!(rels.iter().any(|r| r.ends_with("keep.rs")));
+        assert!(!rels.iter().any(|r| r.contains("ignored")));
     }
 }
 

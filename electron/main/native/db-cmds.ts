@@ -22,7 +22,6 @@ import {
 } from "../db/directories";
 import { getAppState, setAppState } from "../db/appState";
 import { getEditorTabs, saveEditorTabs } from "../db/editorTabs";
-import { touchRecentFile, getRecentFiles } from "../db/recentFiles";
 import {
   addFavorite,
   removeFavorite,
@@ -252,18 +251,9 @@ export function registerDbCommands(
     return true;
   });
 
-  // ---- recent files ----
+  // ---- recent files (frecency now native to FFF in the sidecar) ----
   registerNative("touch_recent_file", (p: { directoryId: string; path: string; scopeType?: string }) => {
-    const scope = p.scopeType ?? "directory";
-    touchRecentFile(getDb(), scope, p.directoryId, p.path);
-    return true;
-  });
-
-  registerNative("get_recent_files", (p: { directoryId: string; limit?: number; scopeType?: string }) => {
-    const scope = p.scopeType ?? "directory";
-    const files = getRecentFiles(getDb(), scope, p.directoryId);
-    const limit = p.limit ?? 10;
-    return files.slice(0, limit);
+    return getSidecar()!.request("touch_recent_file", { path: p.path });
   });
 
   // ---- notes (workspace root resolved here, no sidecar DB) ----
@@ -356,17 +346,9 @@ export function registerDbCommands(
     return true;
   });
 
-  // ---- file search (recency resolved here, no sidecar DB) ----
-  registerNative("search_files", (p: { dir: string; query: string; directoryId?: string | null }) => {
-    const recentFiles = p.directoryId
-      ? getRecentFiles(getDb(), "directory", p.directoryId).map(r => [r.path, r.openedAt])
-      : [];
-    return getSidecar()!.request("search_files", {
-      dir: p.dir,
-      query: p.query,
-      directoryId: p.directoryId ?? null,
-      recentFiles,
-    });
+  // ---- file search (FFF fuzzy + native frecency in the sidecar) ----
+  registerNative("search_files", (p: { dir: string; query: string }) => {
+    return getSidecar()!.request("search_files", { dir: p.dir, query: p.query });
   });
 
   // Suppress unused warning — getWindow is available for future event emissions

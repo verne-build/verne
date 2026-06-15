@@ -27,6 +27,7 @@ interface SearchResult {
   name: string;
   path: string;
   relPath: string;
+  recent: boolean;
 }
 
 // `all` is the unified palette (⌘K) — no pill, searches files + actions together.
@@ -233,6 +234,19 @@ function timeAgo(ts: number): string {
   return `${Math.floor(hrs / 24)}d`;
 }
 
+// Empty query → split into "Recent Files" (frecency>0) + "Files". While typing,
+// one ranked "Files" group (FFF already floats recent matches to the top).
+const fileGroups = computed<{ heading: string; items: SearchResult[] }[]>(() => {
+  if (!results.value.length) return [];
+  if (term.value.trim()) return [{ heading: "Files", items: results.value }];
+  const recent = results.value.filter((r) => r.recent);
+  const rest = results.value.filter((r) => !r.recent);
+  const groups: { heading: string; items: SearchResult[] }[] = [];
+  if (recent.length) groups.push({ heading: "Recent Files", items: recent });
+  if (rest.length) groups.push({ heading: "Files", items: rest });
+  return groups;
+});
+
 const noResults = computed(() => {
   if (mode.value === "goto") return false;
   const hasCmd = actionsVisible.value && commandGroups.value.length > 0;
@@ -314,9 +328,9 @@ const noResults = computed(() => {
             <span class="text-xs text-muted-foreground">{{ timeAgo(a.updatedAt) }}</span>
           </CommandItem>
         </CommandGroup>
-        <CommandGroup v-if="results.length" heading="Files">
+        <CommandGroup v-for="g in fileGroups" :key="g.heading" :heading="g.heading">
           <CommandItem
-            v-for="r in results"
+            v-for="r in g.items"
             :key="r.path"
             :value="r.relPath"
             @select="selectFile(r.path)"

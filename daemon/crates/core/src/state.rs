@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::services::agent_shadow::AgentShadow;
@@ -9,15 +9,11 @@ use crate::services::session_manager::SessionManager;
 use crate::settings::SettingsManager;
 use crate::services::shadow_tree::ShadowTree;
 
-pub struct FileListCache {
-    pub files: Arc<Vec<String>>,
-    pub exclude_key: String,
-    pub last_access_tick: u64,
-}
-
-pub struct ContentPickerCache {
-    pub picker: fff_search::file_picker::FilePicker,
-    pub exclude_key: String,
+/// One live FFF picker per directory, shared by file + content search. Holds a
+/// `SharedFilePicker` whose background scan + fs watcher keep the index fresh;
+/// dropping it cancels those threads.
+pub struct DirPickerCache {
+    pub picker: fff_search::SharedFilePicker,
 }
 
 /// Broadcast bus for daemon-pushed events. Subscribers connect via
@@ -50,9 +46,11 @@ pub struct AppState {
     pub shadow_trees: Mutex<HashMap<String, ShadowTree>>,
     pub agent_shadows: Arc<Mutex<HashMap<String, AgentShadow>>>,
     pub internal_data_dir: PathBuf,
-    pub file_list_cache: Arc<Mutex<HashMap<String, FileListCache>>>,
-    pub content_picker_cache: Arc<Mutex<HashMap<String, ContentPickerCache>>>,
-    pub file_cache_tick: AtomicU64,
+    /// One FFF picker per directory, shared by file + content search.
+    pub picker_cache: Arc<Mutex<HashMap<String, DirPickerCache>>>,
+    /// Global frecency tracker (LMDB, keyed by absolute path). Applied to every
+    /// picker's files during its background scan; recency boost is 0 if open fails.
+    pub frecency: fff_search::SharedFrecency,
     pub git_watchers: Arc<Mutex<HashMap<String, Arc<std::sync::atomic::AtomicBool>>>>,
     pub git_workers: Mutex<HashMap<String, GitRepoHandle>>,
     pub source_control_visible: Arc<AtomicBool>,
@@ -128,6 +126,12 @@ impl AppState {
         home_dir: PathBuf,
         node_path: Option<PathBuf>,
     ) -> Self {
+        let frecency = fff_search::SharedFrecency::default();
+        if let Ok(tracker) =
+            fff_search::frecency::FrecencyTracker::open(internal_data_dir.join("fff-frecency"))
+        {
+            let _ = frecency.init(tracker);
+        }
         Self {
             sessions: Arc::new(Mutex::new(SessionManager::new())),
             settings: Arc::new(SettingsManager::new()),
@@ -137,9 +141,8 @@ impl AppState {
             shadow_trees: Mutex::new(HashMap::new()),
             agent_shadows: Arc::new(Mutex::new(HashMap::new())),
             internal_data_dir,
-            file_list_cache: Arc::new(Mutex::new(HashMap::new())),
-            content_picker_cache: Arc::new(Mutex::new(HashMap::new())),
-            file_cache_tick: AtomicU64::new(1),
+            picker_cache: Arc::new(Mutex::new(HashMap::new())),
+            frecency,
             git_watchers: Arc::new(Mutex::new(HashMap::new())),
             git_workers: Mutex::new(HashMap::new()),
             source_control_visible: Arc::new(AtomicBool::new(false)),
@@ -150,21 +153,6 @@ impl AppState {
             hook_port: AtomicU16::new(0),
             hook_secret: Mutex::new(String::new()),
         }
-    }
-
-    pub fn file_exclude_cache_key(&self) -> String {
-        let settings = self.settings.get();
-        let mut pairs: Vec<_> = settings.files_exclude.into_iter().collect();
-        pairs.sort_by(|a, b| a.0.cmp(&b.0));
-        pairs
-            .into_iter()
-            .map(|(pattern, enabled)| format!("{}={}", pattern, enabled))
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
-    pub fn next_file_cache_tick(&self) -> u64 {
-        self.file_cache_tick.fetch_add(1, Ordering::Relaxed)
     }
 
     /// Tear down watchers/workers/shadow trees for a removed directory subtree.
@@ -214,12 +202,7 @@ impl AppState {
                 trees.remove(*p);
             }
         }
-        if let Ok(mut cache) = self.file_list_cache.lock() {
-            for p in &victim_paths {
-                cache.remove(*p);
-            }
-        }
-        if let Ok(mut cache) = self.content_picker_cache.lock() {
+        if let Ok(mut cache) = self.picker_cache.lock() {
             for p in &victim_paths {
                 cache.remove(*p);
             }
