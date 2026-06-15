@@ -1410,13 +1410,15 @@ fn search_files_impl(
     let guard = shared.read().map_err(|e| e.to_string())?;
     let picker = guard.as_ref().ok_or("picker not ready")?;
 
-    let mk = |rel: String| {
+    // `recent` = file has been opened before (FFF frecency > 0). Lets the
+    // renderer split results into a "Recent Files" header section.
+    let mk = |rel: String, recent: bool| {
         let name = Path::new(&rel)
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
         let abs = base.join(&rel).to_string_lossy().to_string();
-        json!({ "name": name, "path": abs, "relPath": rel })
+        json!({ "name": name, "path": abs, "relPath": rel, "recent": recent })
     };
 
     let results: Vec<serde_json::Value> = if query.trim().is_empty() {
@@ -1430,7 +1432,7 @@ fn search_files_impl(
         files
             .into_iter()
             .take(50)
-            .map(|f| mk(f.relative_path(picker)))
+            .map(|f| mk(f.relative_path(picker), f.total_frecency_score() > 0))
             .collect()
     } else {
         let parser = QueryParser::default();
@@ -1449,7 +1451,7 @@ fn search_files_impl(
         result
             .items
             .into_iter()
-            .map(|f| mk(f.relative_path(picker)))
+            .map(|f| mk(f.relative_path(picker), f.total_frecency_score() > 0))
             .collect()
     };
 

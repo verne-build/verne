@@ -207,7 +207,7 @@ const request = {
     // directoryId no longer used (FFF frecency is global by absolute path);
     // kept optional so existing callers compile unchanged.
     directoryId?: string;
-  }): Promise<{ results: { name: string; path: string; relPath: string }[] }> =>
+  }): Promise<{ results: { name: string; path: string; relPath: string; recent: boolean }[] }> =>
     invoke("search_files", { dir: p.dir, query: p.query }),
   searchContent: (p: {
     dir: string;
