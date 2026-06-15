@@ -658,14 +658,17 @@ function bindWebview(el: WebviewEl | null) {
 
     <div v-if="errorMsg" class="border-b border-destructive/40 bg-destructive/10 px-3 py-1 text-xs text-destructive">{{ errorMsg }}</div>
 
-    <div class="relative min-h-0 flex-1 overflow-hidden bg-muted">
+    <div class="relative min-h-0 flex-1 overflow-hidden bg-white">
       <!-- <webview> is registered by Electron (webviewTag). isCustomElement in
-           electron.vite.config.ts stops Vue treating it as a component. -->
+           electron.vite.config.ts stops Vue treating it as a component.
+           backgroundColor white so transparent-bodied sites composite onto
+           white, not the dark Verne window. -->
       <webview
         :ref="(el: unknown) => bindWebview(el as WebviewEl | null)"
         :src="initialUrl"
         partition="persist:verne-browser"
         webpreferences="contextIsolation=yes,sandbox=yes,devTools=yes"
+        backgroundColor="#ffffff"
         class="flex h-full w-full"
       ></webview>
       <!-- Fresh-tab empty state: overlays the blank webview until the user
