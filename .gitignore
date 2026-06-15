@@ -16,6 +16,10 @@ electron.vite.config.js
 # Rust daemon build artifacts
 daemon/target/
 
+# actool byproducts — only build/compiled/Assets.car is needed (injected by after-pack)
+build/compiled/*.icns
+build/partial.plist
+
 # Bundled LSP server node_modules is reproduced from the committed manifest
 # (resources/bundled/{package.json,pnpm-lock.yaml,.npmrc}) via `pnpm bundle:install`.
 # The node_modules dir itself is already ignored by the root `node_modules/` rule above.

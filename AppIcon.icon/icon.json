@@ -1,47 +1,44 @@
 {
   "color-space-for-untagged-svg-colors" : "display-p3",
-  "fill" : "system-dark",
+  "fill" : {
+    "solid" : "srgb:0.06667,0.06667,0.06667,1.00000"
+  },
   "groups" : [
     {
+      "hidden" : false,
       "layers" : [
         {
-          "fill-specializations" : [
-            {
-              "appearance" : "tinted",
-              "value" : "automatic"
-            }
-          ],
           "glass" : true,
-          "hidden" : true,
-          "image-name" : "Union.svg",
-          "name" : "Union",
+          "image-name" : "verne-symbol-left.svg",
+          "name" : "verne-symbol-left",
           "position" : {
-            "scale" : 2.2,
+            "scale" : 1,
             "translation-in-points" : [
-              0,
+              -39,
               0
             ]
           }
         },
         {
           "glass" : true,
-          "hidden" : false,
-          "image-name" : "verne-vector.svg",
-          "name" : "verne-vector",
+          "image-name" : "verne-symbol-right.svg",
+          "name" : "verne-symbol-right",
           "position" : {
-            "scale" : 2,
+            "scale" : 1,
             "translation-in-points" : [
-              0,
+              39.67100000000002,
               0
             ]
           }
-        },
-        {
-          "hidden" : true,
-          "image-name" : "icon.png",
-          "name" : "icon"
         }
       ],
+      "position" : {
+        "scale" : 3.2,
+        "translation-in-points" : [
+          0,
+          0
+        ]
+      },
       "shadow" : {
         "kind" : "neutral",
         "opacity" : 0.5
