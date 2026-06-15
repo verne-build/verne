@@ -204,9 +204,11 @@ const request = {
   searchFiles: (p: {
     dir: string;
     query: string;
+    // directoryId no longer used (FFF frecency is global by absolute path);
+    // kept optional so existing callers compile unchanged.
     directoryId?: string;
   }): Promise<{ results: { name: string; path: string; relPath: string }[] }> =>
-    invoke("search_files", { dir: p.dir, query: p.query, directoryId: p.directoryId ?? null }),
+    invoke("search_files", { dir: p.dir, query: p.query }),
   searchContent: (p: {
     dir: string;
     query: string;
@@ -223,8 +225,6 @@ const request = {
     }),
   touchRecentFile: (p: { directoryId: string; path: string; scopeType?: "directory" | "agent_worktree" }): Promise<boolean> =>
     invoke("touch_recent_file", { directoryId: p.directoryId, path: p.path, scopeType: p.scopeType ?? null }),
-  getRecentFiles: (p: { directoryId: string; limit?: number; scopeType?: "directory" | "agent_worktree" }): Promise<{ path: string; openedAt: number }[]> =>
-    invoke("get_recent_files", { directoryId: p.directoryId, limit: p.limit ?? null, scopeType: p.scopeType ?? null }),
   watchFile: (p: { path: string }): Promise<boolean> =>
     invoke("watch_file", { path: p.path }),
   unwatchFile: (p: { path: string }): Promise<boolean> =>
