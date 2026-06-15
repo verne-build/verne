@@ -110,6 +110,44 @@ const browserTabs = computed<FilePanelBrowserTab[]>(
   () => allTabs.value.filter((t): t is FilePanelBrowserTab => t.kind === "browser"),
 );
 
+// Background browser tabs are display:none, so their hidden <webview>s don't
+// track resizes and would snap to the new size when next shown. After a resize
+// settles, briefly lay out the background tabs (displayed but visibility:hidden)
+// so their webviews pre-size to the new dimensions — no jump on tab switch.
+const browserLayer = ref<HTMLElement | null>(null);
+const browserRelayout = ref(false);
+let browserResizeObserver: ResizeObserver | null = null;
+let browserResizeTimer: ReturnType<typeof setTimeout> | null = null;
+let browserRelayoutTimer: ReturnType<typeof setTimeout> | null = null;
+
+function browserTabStyle(tabId: string): Record<string, string> {
+  if (tabId === activeTab.value?.id) return { zIndex: "1" };
+  if (browserRelayout.value) return { visibility: "hidden", zIndex: "0" };
+  return { display: "none" };
+}
+
+onMounted(() => {
+  if (!browserLayer.value) return;
+  browserResizeObserver = new ResizeObserver(() => {
+    if (browserResizeTimer) clearTimeout(browserResizeTimer);
+    // Debounce to detect "resize ended", then hold the relayout pass long
+    // enough for Electron to push new bounds to the guest webviews.
+    browserResizeTimer = setTimeout(() => {
+      browserRelayout.value = true;
+      if (browserRelayoutTimer) clearTimeout(browserRelayoutTimer);
+      browserRelayoutTimer = setTimeout(() => { browserRelayout.value = false; }, 250);
+    }, 150);
+  });
+  browserResizeObserver.observe(browserLayer.value);
+});
+
+onUnmounted(() => {
+  browserResizeObserver?.disconnect();
+  browserResizeObserver = null;
+  if (browserResizeTimer) clearTimeout(browserResizeTimer);
+  if (browserRelayoutTimer) clearTimeout(browserRelayoutTimer);
+});
+
 function handleSwitchScView(v: "changes" | "history") {
   setActiveId(v === "history" ? COMMITS_TAB_ID : SC_TAB_ID);
 }
@@ -507,17 +545,17 @@ function revertScFile() {
          the whole layer hides (display:none) when a non-browser tab is active,
          and within it each tab shows only when it's the active one. Keeping the
          node in the DOM is what preserves the page instead of reloading it. -->
-    <div v-show="activeTab?.kind === 'browser'" class="flex-1 min-h-0">
+    <div v-show="activeTab?.kind === 'browser'" ref="browserLayer" class="relative flex-1 min-h-0">
       <BrowserView
         v-for="tab in browserTabs"
         :key="tab.id"
-        v-show="tab.id === activeTab?.id"
+        :style="browserTabStyle(tab.id)"
         :tab-id="tab.id"
         :url="tab.browserUrl"
         :workspace-dir="activeCwd"
         :directory-id="activeDirId"
         :active="tab.id === activeTab?.id"
-        class="h-full w-full"
+        class="absolute inset-0"
         @open-new-tab="(url) => openBrowserTab(url)"
       />
     </div>
