@@ -3,6 +3,7 @@ productName: Verne
 directories:
   output: release
   buildResources: build
+afterPack: scripts/after-pack.mjs
 files:
   - out/**
 asarUnpack:
@@ -26,6 +27,9 @@ mac:
   entitlementsInherit: build/Verne.entitlements
   extendInfo:
     NSMicrophoneUsageDescription: "Verne uses the microphone for voice dictation."
+    # Liquid Glass icon catalog (macOS 26). Assets.car copied in via afterPack.
+    # icon.icns above stays as the fallback for macOS < 26.
+    CFBundleIconName: AppIcon
   # Hardened runtime + Developer ID signing, required for notarization.
   # identity auto-detects the "Developer ID Application" cert in the login
   # keychain. Notarization runs automatically when the APPLE_* credential env

@@ -1,0 +1,57 @@
+{
+  "color-space-for-untagged-svg-colors" : "display-p3",
+  "fill" : {
+    "solid" : "srgb:0.06667,0.06667,0.06667,1.00000"
+  },
+  "groups" : [
+    {
+      "hidden" : false,
+      "layers" : [
+        {
+          "glass" : true,
+          "image-name" : "verne-symbol-left.svg",
+          "name" : "verne-symbol-left",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              -39,
+              0
+            ]
+          }
+        },
+        {
+          "glass" : true,
+          "image-name" : "verne-symbol-right.svg",
+          "name" : "verne-symbol-right",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              39.67100000000002,
+              0
+            ]
+          }
+        }
+      ],
+      "position" : {
+        "scale" : 3.2,
+        "translation-in-points" : [
+          0,
+          0
+        ]
+      },
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "squares" : [
+      "macOS"
+    ]
+  }
+}

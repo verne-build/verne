@@ -9,6 +9,7 @@
     "postinstall": "node node_modules/electron/install.js && node scripts/sign-dev-electron.mjs",
     "daemon:build:dev": "cargo build --manifest-path daemon/Cargo.toml",
     "daemon:build": "cargo build --release --manifest-path daemon/Cargo.toml",
+    "icon:build": "mkdir -p build/compiled && xcrun actool AppIcon.icon --compile build/compiled --output-partial-info-plist build/partial.plist --app-icon AppIcon --include-all-app-icons --platform macosx --minimum-deployment-target 26.0 --errors --warnings --notices",
     "predev": "pnpm daemon:build:dev && pnpm bundle:install",
     "dev": "electron-vite dev",
     "build": "electron-vite build",
