@@ -42,6 +42,7 @@ jobs:
   build:
     name: Build ${{ matrix.arch }}
     needs: gate
+    environment: release
     strategy:
       fail-fast: false
       matrix:
@@ -64,6 +65,13 @@ jobs:
       - run: pnpm bundle:install
       - run: cargo build --release --manifest-path daemon/Cargo.toml
       - run: pnpm exec electron-vite build
+      - name: Check signing secrets present
+        env:
+          CSC_LINK: ${{ secrets.MAC_CERTIFICATE }}
+          APPLE_API_KEY_B64: ${{ secrets.APPLE_API_KEY_B64 }}
+        run: |
+          : "${CSC_LINK:?MAC_CERTIFICATE missing — add signing secrets to the 'release' environment}"
+          : "${APPLE_API_KEY_B64:?APPLE_API_KEY_B64 missing — add notarization secrets to the 'release' environment}"
       - name: Build, sign & notarize
         env:
           CSC_LINK: ${{ secrets.MAC_CERTIFICATE }}
