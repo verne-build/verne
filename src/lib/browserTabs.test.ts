@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { normalizeBrowserUrl, labelForUrl, sameBrowserUrl } from "./browserTabs";
+import { normalizeBrowserUrl, labelForUrl, sameBrowserUrl, browserLoadError } from "./browserTabs";
 
 describe("normalizeBrowserUrl", () => {
   it("adds https for bare hosts", () => {
@@ -60,5 +60,28 @@ describe("labelForUrl", () => {
   it("labels a blank new tab", () => {
     expect(labelForUrl("about:blank")).toBe("New Tab");
     expect(labelForUrl("")).toBe("New Tab");
+  });
+});
+
+describe("browserLoadError", () => {
+  it("returns null for user-aborted loads (ERR_ABORTED / -3)", () => {
+    expect(browserLoadError(-3, "ERR_ABORTED", "https://example.com", true)).toBeNull();
+  });
+
+  it("returns null for non-main-frame failures", () => {
+    expect(browserLoadError(-106, "ERR_INTERNET_DISCONNECTED", "https://example.com/ad", false)).toBeNull();
+  });
+
+  it("formats a connection-refused failure with the host in the description", () => {
+    const e = browserLoadError(-102, "ERR_CONNECTION_REFUSED", "https://example.com/path", true);
+    expect(e).not.toBeNull();
+    expect(e!.title).toBe("Can't reach this site");
+    expect(e!.description).toContain("example.com");
+  });
+
+  it("falls back to the raw url when it can't be parsed as a host", () => {
+    const e = browserLoadError(-105, "ERR_NAME_NOT_RESOLVED", "not a url", true);
+    expect(e).not.toBeNull();
+    expect(e!.description.length).toBeGreaterThan(0);
   });
 });

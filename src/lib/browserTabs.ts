@@ -57,3 +57,23 @@ export function labelForUrl(url: string): string {
     return url;
   }
 }
+
+export type BrowserLoadError = { title: string; description: string };
+
+// Turn an Electron did-fail-load into the empty-state error screen's text, or
+// null when the failure should be ignored: ERR_ABORTED (-3, fired on user stop
+// or redirect-interrupted loads) and sub-frame failures (ads/trackers, not the
+// page itself). Description names the host so it reads like a real browser.
+export function browserLoadError(
+  errorCode: number,
+  errorDescription: string,
+  validatedURL: string,
+  isMainFrame: boolean,
+): BrowserLoadError | null {
+  if (!isMainFrame) return null;
+  if (errorCode === -3 || errorDescription === "ERR_ABORTED") return null;
+  let host = "";
+  try { host = new URL(validatedURL).hostname; } catch { /* not a parseable url */ }
+  const who = host || validatedURL || "this site";
+  return { title: "Can't reach this site", description: `${who} could not be loaded.` };
+}
