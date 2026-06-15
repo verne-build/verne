@@ -1,10 +1,14 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 
-// js-yaml is installed into an isolated dir in CI (env JS_YAML) to avoid running
-// `npm install` against the project graph; fall back to bare resolution locally.
-const require = createRequire(import.meta.url);
-const yaml = require(process.env.JS_YAML ?? "js-yaml");
+// js-yaml is installed into an isolated dir in CI (JS_YAML_DIR) to avoid running
+// `npm install` against the project graph (npm ignores pnpm peerDependencyRules
+// → ERESOLVE). Resolve from that dir's node_modules; fall back to bare locally.
+const base = process.env.JS_YAML_DIR
+  ? pathToFileURL(`${process.env.JS_YAML_DIR}/`).href
+  : import.meta.url;
+const yaml = createRequire(base)("js-yaml");
 
 // Merge electron-builder `latest-mac.yml` files from multiple arch builds into
 // one whose `files:` lists every arch. electron-updater (MacUpdater) selects the

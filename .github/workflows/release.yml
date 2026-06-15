@@ -112,16 +112,18 @@ jobs:
           path: artifacts
           pattern: dist-*
       - name: Merge mac update manifests
+        env:
+          JS_YAML_DIR: ${{ runner.temp }}/tools
         run: |
           mkdir -p out
           cp artifacts/dist-*/*.dmg artifacts/dist-*/*-mac.zip artifacts/dist-*/*.blockmap out/ 2>/dev/null || true
           # Install js-yaml in an isolated dir so npm never resolves the project's
-          # deps (npm ignores pnpm peerDependencyRules → ERESOLVE) or runs postinstall.
-          TOOLS="$RUNNER_TEMP/tools"
-          mkdir -p "$TOOLS"
-          echo '{"name":"tools","private":true}' > "$TOOLS/package.json"
-          npm install --prefix "$TOOLS" --no-audit --no-fund js-yaml
-          JS_YAML="$TOOLS/node_modules/js-yaml" node scripts/merge-mac-manifests.mjs out/latest-mac.yml \
+          # deps (npm ignores pnpm peerDependencyRules -> ERESOLVE) or runs postinstall.
+          mkdir -p "$JS_YAML_DIR"
+          echo '{"name":"tools","private":true}' > "$JS_YAML_DIR/package.json"
+          npm install --prefix "$JS_YAML_DIR" --no-audit --no-fund js-yaml
+          test -d "$JS_YAML_DIR/node_modules/js-yaml" || { echo "::error::js-yaml not installed at $JS_YAML_DIR"; exit 1; }
+          node scripts/merge-mac-manifests.mjs out/latest-mac.yml \
             artifacts/dist-arm64/latest-mac.yml artifacts/dist-x64/latest-mac.yml
           ls -la out
       - name: Generate release notes
