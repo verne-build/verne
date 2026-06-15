@@ -9,8 +9,10 @@
 // that was leftover from the Tauri WKWebView, which always painted on top.
 import { ref, computed, onBeforeUnmount, onMounted, nextTick, watch } from "vue";
 import { ArrowLeft, ArrowRight, Code, Globe, PanelLeft, RotateCw, Search, Star, MoreHorizontal, X } from "@lucide/vue";
+import { toast } from "vue-sonner";
 import { invoke } from "@/platform";
-import { normalizeBrowserUrl, labelForUrl, isSearchQuery } from "@/lib/browserTabs";
+import { normalizeBrowserUrl, labelForUrl, isSearchQuery, browserLoadError } from "@/lib/browserTabs";
+import type { BrowserLoadError } from "@/lib/browserTabs";
 import { updateBrowserTab } from "@/composables/useFilePanelTabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -50,7 +52,8 @@ type WebviewEl = HTMLElement & {
 const webviewRef = ref<WebviewEl | null>(null);
 const addressInput = ref<{ $el: HTMLInputElement } | null>(null);
 const urlInput = ref("");
-const errorMsg = ref("");
+// Empty-state error for a failed page load (did-fail-load). Null = no error.
+const loadError = ref<BrowserLoadError | null>(null);
 const sel = ref(-1);
 const focused = ref(false);
 const addressEdited = ref(false);
@@ -214,7 +217,7 @@ async function go(v: string) {
   try {
     urlInput.value = await invoke<string>("native_browser_navigate", { id, url });
   } catch (e) {
-    errorMsg.value = String(e);
+    toast.error(String(e));
   }
 }
 
@@ -236,7 +239,7 @@ function onAddressKey(e: KeyboardEvent) {
 async function navCmd(cmd: "native_browser_back" | "native_browser_forward" | "native_browser_reload" | "native_browser_stop") {
   const id = currentWebContentsId();
   if (id === null) return;
-  await invoke(cmd, { id }).catch((e) => (errorMsg.value = String(e)));
+  await invoke(cmd, { id }).catch((e) => toast.error(String(e)));
 }
 
 // ---- favorites + overflow menu ----
@@ -249,8 +252,8 @@ function toggleFavorite() {
   const title = currentTitle.trim() || labelForUrl(url);
   let faviconUrl: string | null = null;
   try { faviconUrl = `https://icons.duckduckgo.com/ip3/${new URL(url).hostname}.ico`; } catch { /* ignore */ }
-  if (isFavorited.value) browserData.removeFavorite(props.directoryId, url).catch((e) => (errorMsg.value = String(e)));
-  else browserData.addFavorite(props.directoryId, url, title, faviconUrl).catch((e) => (errorMsg.value = String(e)));
+  if (isFavorited.value) browserData.removeFavorite(props.directoryId, url).catch((e) => toast.error(String(e)));
+  else browserData.addFavorite(props.directoryId, url, title, faviconUrl).catch((e) => toast.error(String(e)));
 }
 
 function copyUrl() {
@@ -260,20 +263,20 @@ function copyUrl() {
 async function hardReload() {
   const id = currentWebContentsId();
   if (id === null) return;
-  await invoke("native_browser_reload_hard", { id }).catch((e) => (errorMsg.value = String(e)));
+  await invoke("native_browser_reload_hard", { id }).catch((e) => toast.error(String(e)));
 }
 
 async function clearBrowsingHistory() {
   if (!props.directoryId) return;
-  await browserData.clearHistory(props.directoryId).catch((e) => (errorMsg.value = String(e)));
+  await browserData.clearHistory(props.directoryId).catch((e) => toast.error(String(e)));
 }
 
 async function clearCookies() {
-  await invoke("native_browser_clear_cookies", {}).catch((e) => (errorMsg.value = String(e)));
+  await invoke("native_browser_clear_cookies", {}).catch((e) => toast.error(String(e)));
 }
 
 async function clearCache() {
-  await invoke("native_browser_clear_cache", {}).catch((e) => (errorMsg.value = String(e)));
+  await invoke("native_browser_clear_cache", {}).catch((e) => toast.error(String(e)));
 }
 
 // DevTools opens detached via the <webview>'s own openDevTools(), which always
@@ -293,15 +296,14 @@ function onDevtoolsClosed() {
 function openDevtools() {
   const wv = webviewRef.value;
   if (!wv) {
-    errorMsg.value = "Webview is not ready yet.";
+    toast.error("Webview is not ready yet.");
     return;
   }
-  errorMsg.value = "";
   try {
     if (wv.isDevToolsOpened()) wv.closeDevTools();
     else wv.openDevTools();
   } catch (e) {
-    errorMsg.value = String(e);
+    toast.error(String(e));
   }
 }
 
@@ -349,7 +351,7 @@ function onDomReady() {
   if (wcId !== null && !props.newTabMode) {
     invoke("native_browser_register", { tabId: props.tabId, wcId, workspaceDir: props.workspaceDir })
       .then(() => { if (props.active) reportActive(); })
-      .catch((e) => { errorMsg.value = String(e); });
+      .catch((e) => { toast.error(String(e)); });
   }
 }
 
@@ -409,6 +411,8 @@ function setProgressTarget(target: number) {
 }
 
 function onStartLoading() {
+  // Reloading / navigating dismisses any prior load-failure screen.
+  loadError.value = null;
   // The new-tab page never navigates in place; its blank about:blank load
   // shouldn't flash the progress bar.
   if (props.newTabMode) return;
@@ -471,6 +475,7 @@ onBeforeUnmount(() => {
     wv.removeEventListener("devtools-closed", onDevtoolsClosed);
     wv.removeEventListener("did-start-loading", onStartLoading);
     wv.removeEventListener("did-start-navigation", onStartNavigation);
+    wv.removeEventListener("did-fail-load", onDidFailLoad);
     wv.removeEventListener("dom-ready", onDomContentLoaded);
     wv.removeEventListener("did-frame-finish-load", onFrameFinished);
     wv.removeEventListener("did-finish-load", onFinishLoad);
@@ -497,6 +502,18 @@ function onPageTitleUpdated(e: unknown) {
   reportUrl();
 }
 
+// A failed main-frame navigation (e.g. ERR_CONNECTION_REFUSED) -> empty-state
+// error overlay. Sub-frame and user-aborted failures are filtered in the helper.
+function onDidFailLoad(e: unknown) {
+  const ev = e as { errorCode?: number; errorDescription?: string; validatedURL?: string; isMainFrame?: boolean };
+  loadError.value = browserLoadError(
+    ev.errorCode ?? 0,
+    ev.errorDescription ?? "",
+    ev.validatedURL ?? currentUrl.value,
+    ev.isMainFrame ?? true,
+  );
+}
+
 function bindWebview(el: WebviewEl | null) {
   webviewRef.value = el;
   if (!el || boundWebview === el) return;
@@ -509,6 +526,7 @@ function bindWebview(el: WebviewEl | null) {
   el.addEventListener("devtools-closed", onDevtoolsClosed);
   el.addEventListener("did-start-loading", onStartLoading);
   el.addEventListener("did-start-navigation", onStartNavigation);
+  el.addEventListener("did-fail-load", onDidFailLoad);
   el.addEventListener("dom-ready", onDomContentLoaded);
   el.addEventListener("did-frame-finish-load", onFrameFinished);
   el.addEventListener("did-finish-load", onFinishLoad);
@@ -656,8 +674,6 @@ function bindWebview(el: WebviewEl | null) {
       </DropdownMenu>
     </div>
 
-    <div v-if="errorMsg" class="border-b border-destructive/40 bg-destructive/10 px-3 py-1 text-xs text-destructive">{{ errorMsg }}</div>
-
     <div class="relative min-h-0 flex-1 overflow-hidden bg-white">
       <!-- <webview> is registered by Electron (webviewTag). isCustomElement in
            electron.vite.config.ts stops Vue treating it as a component.
@@ -679,6 +695,18 @@ function bindWebview(el: WebviewEl | null) {
             <EmptyMedia variant="icon"><Globe /></EmptyMedia>
             <EmptyTitle>Browser</EmptyTitle>
             <EmptyDescription>Search or enter an address above to get started.</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      </div>
+      <!-- Load-failure empty state: covers the webview when a navigation fails
+           (e.g. connection refused). Cleared on the next load (onStartLoading).
+           Not pointer-events-none — it fully replaces the dead page. -->
+      <div v-if="loadError" class="absolute inset-0 flex items-center justify-center bg-white">
+        <Empty>
+          <EmptyHeader>
+            <EmptyMedia variant="icon"><Globe /></EmptyMedia>
+            <EmptyTitle>{{ loadError.title }}</EmptyTitle>
+            <EmptyDescription>{{ loadError.description }}</EmptyDescription>
           </EmptyHeader>
         </Empty>
       </div>
