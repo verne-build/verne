@@ -1,0 +1,45 @@
+appId: build.verne
+productName: Verne
+directories:
+  output: release
+  buildResources: build
+files:
+  - out/**
+asarUnpack:
+  - "**/node_modules/sherpa-onnx*/**"
+  - out/main/mcp-server.cjs
+extraResources:
+  - from: daemon/target/release/verne
+    to: verne
+  - from: daemon/target/release/verne-sidecar
+    to: verne-sidecar
+  - from: resources/bundled
+    to: bundled
+  - from: resources/notification.wav
+    to: notification.wav
+  - from: resources/voice.wav
+    to: voice.wav
+mac:
+  category: public.app-category.developer-tools
+  icon: build/icon.icns
+  entitlements: build/Verne.entitlements
+  entitlementsInherit: build/Verne.entitlements
+  extendInfo:
+    NSMicrophoneUsageDescription: "Verne uses the microphone for voice dictation."
+  # Hardened runtime + Developer ID signing, required for notarization.
+  # identity auto-detects the "Developer ID Application" cert in the login
+  # keychain. Notarization runs automatically when the APPLE_* credential env
+  # vars are set at build time (see SIGNING.md).
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  # The Rust daemon binaries in Resources are signed by electron-builder's bundle
+  # walk. If notarization flags them, list them explicitly under `binaries:`.
+  target:
+    - target: dir
+    - target: dmg
+    - target: zip
+publish:
+  provider: github
+  owner: verne-build
+  repo: verne
+  # Public repo — no token at runtime; do NOT set `private: true`.

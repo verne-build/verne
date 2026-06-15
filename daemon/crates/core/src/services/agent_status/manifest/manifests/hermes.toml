@@ -1,0 +1,40 @@
+id = "hermes"
+version = "2026.06.10"
+updated_at = "2026-06-10"
+
+# blocked = ("dangerous command" OR options) AND controls
+# options = "allow once" AND "allow for this session" AND "deny"
+# controls = "enter to confirm" OR "↑/↓ to select" OR "show full command"
+[[rules]]
+id = "approval_prompt"
+state = "blocked"
+priority = 900
+region = "bottom_lines(30)"
+visible_blocker = true
+all = [
+  { any = [
+      { contains = ["dangerous command"] },
+      { all = [
+          { contains = ["allow once"] },
+          { contains = ["allow for this session"] },
+          { contains = ["deny"] },
+      ] },
+  ] },
+  { any = [
+      { contains = ["enter to confirm"] },
+      { contains = ["↑/↓ to select"] },
+      { contains = ["show full command"] },
+  ] },
+]
+
+# working = "msg=interrupt" OR "ctrl+c cancel"
+[[rules]]
+id = "interrupt_working"
+state = "working"
+priority = 800
+region = "bottom_lines(30)"
+visible_working = true
+any = [
+  { contains = ["msg=interrupt"] },
+  { contains = ["ctrl+c cancel"] },
+]

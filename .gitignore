@@ -1,0 +1,29 @@
+node_modules/
+out/
+dist/
+release/
+*.log
+
+# signing/notarization credentials — auto-loaded by electron-builder. Never commit.
+electron-builder.env
+
+# compiled TS artifacts (sources are .ts; electron-vite emits to out/)
+electron/**/*.js
+electron.vite.config.js
+.DS_Store
+**/.DS_Store
+
+# Rust daemon build artifacts
+daemon/target/
+
+# Bundled LSP server node_modules is reproduced from the committed manifest
+# (resources/bundled/{package.json,pnpm-lock.yaml,.npmrc}) via `pnpm bundle:install`.
+# The node_modules dir itself is already ignored by the root `node_modules/` rule above.
+
+# git worktrees for isolated feature work
+.worktrees/
+electron-builder.env
+.claude/worktrees
+# playwright renderer suite artifacts
+test-results/
+playwright-report/

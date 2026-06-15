@@ -1,0 +1,55 @@
+id = "codex"
+version = "2026.06.11"
+updated_at = "2026-06-11"
+
+[[rules]]
+id = "session_limit"
+state = "blocked"
+priority = 950
+region = "bottom_lines(20)"
+visible_blocker = true
+contains = ["you've hit your usage limit"]
+not = [
+  { contains = ["automatic approval review approved"] },
+]
+
+[[rules]]
+id = "confirm_prompt"
+state = "blocked"
+priority = 900
+region = "bottom_lines(20)"
+visible_blocker = true
+any = [
+  { contains = ["press enter to confirm or esc to cancel"] },
+  { contains = ["enter to submit answer"] },
+  { contains = ["allow command?"] },
+  { contains = ["[y/n]"] },
+  { contains = ["yes (y)"] },
+  { all = [
+      { any = [ { contains = ["do you want"] }, { contains = ["would you like"] } ] },
+      { any = [ { contains = ["yes"] }, { contains = ["❯"] } ] },
+  ] },
+]
+not = [
+  { contains = ["automatic approval review approved"] },
+]
+
+[[rules]]
+id = "interrupt_working"
+state = "working"
+priority = 800
+region = "bottom_lines(20)"
+visible_working = true
+any = [
+  { contains = ["esc to interrupt"] },
+  { contains = ["ctrl+c to interrupt"] },
+  { all = [ { contains = ["esc"] }, { contains = ["interrupt"] } ] },
+]
+
+[[rules]]
+id = "working_header"
+state = "working"
+priority = 790
+region = "bottom_lines(20)"
+visible_working = true
+line_regex = ['^\s*•.*Working \(']

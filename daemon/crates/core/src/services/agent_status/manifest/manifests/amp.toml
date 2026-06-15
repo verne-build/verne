@@ -1,0 +1,35 @@
+id = "amp"
+version = "2026.06.10"
+updated_at = "2026-06-10"
+
+[[rules]]
+id = "approval_prompt"
+state = "blocked"
+priority = 900
+region = "bottom_lines(30)"
+visible_blocker = true
+all = [
+  { any = [
+      { contains = ["waiting for approval"] },
+      { contains = ["invoke tool"] },
+      { contains = ["run this command?"] },
+      { contains = ["allow editing file:"] },
+      { contains = ["allow creating file:"] },
+      { contains = ["confirm tool call"] },
+  ] },
+  { contains = ["approve"] },
+  { any = [
+      { contains = ["allow all for this session"] },
+      { contains = ["allow all for every session"] },
+      { contains = ["allow file for every session"] },
+      { contains = ["deny with feedback"] },
+  ] },
+]
+
+[[rules]]
+id = "cancel_working"
+state = "working"
+priority = 800
+region = "bottom_lines(30)"
+visible_working = true
+contains = ["esc to cancel"]

@@ -1,0 +1,35 @@
+id = "default"
+version = "2026.06.10"
+
+[[rules]]
+id = "blocked_generic"
+state = "blocked"
+priority = 900
+region = "bottom_lines(20)"
+visible_blocker = true
+any = [
+  { contains = ["[y/n]"] },
+  { contains = ["(y/n)"] },
+  { contains = ["press enter to confirm"] },
+  { contains = ["allow command?"] },
+  { all = [
+      { any = [ { contains = ["do you want"] }, { contains = ["would you like"] } ] },
+      { any = [ { contains = ["yes"] }, { contains = ["❯"] } ] },
+  ] },
+  { all = [
+      { line_regex = ['^\s*❯\s*\d+\.'] },
+      { line_regex = ['(?i)^\s*❯?\s*(?:\d+\.\s*)?(?:yes|no)\b'] },
+  ] },
+]
+
+[[rules]]
+id = "working_generic"
+state = "working"
+priority = 800
+region = "bottom_lines(20)"
+visible_working = true
+any = [
+  { contains = ["esc to interrupt"] },
+  { contains = ["ctrl+c to interrupt"] },
+  { all = [ { contains = ["esc"] }, { contains = ["interrupt"] } ] },
+]

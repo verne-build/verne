@@ -1,0 +1,75 @@
+id = "kimi"
+version = "2026.06.10"
+updated_at = "2026-06-10"
+
+# blocked = approval_panel OR question_panel OR legacy
+[[rules]]
+id = "approval_or_question"
+state = "blocked"
+priority = 900
+region = "bottom_lines(30)"
+visible_blocker = true
+any = [
+  # approval_panel = approval_title AND " choose" AND "1" AND "2"
+  #   AND "↵ confirm" AND (approve|reject|revise)
+  { all = [
+      # approval_title = any of 5 phrases OR a line "approve …?" (after ▶/ws strip)
+      { any = [
+          { contains = ["run this command?"] },
+          { contains = ["write this file?"] },
+          { contains = ["apply these edits?"] },
+          { contains = ["stop this task?"] },
+          { contains = ["ready to build with this plan?"] },
+          { line_regex = ['(?i)^\s*▶?\s*approve .*\?\s*$'] },
+      ] },
+      { contains = [" choose"] },
+      { contains = ["1"] },
+      { contains = ["2"] },
+      { contains = ["↵ confirm"] },
+      { any = [
+          { contains = ["approve"] },
+          { contains = ["reject"] },
+          { contains = ["revise"] },
+      ] },
+  ] },
+  # question_panel = "question" line AND "? " line AND "↑↓ select"
+  #   AND (↵ choose|↵ toggle|↵ save) AND "esc cancel"
+  { all = [
+      { line_regex = ['^\s*question\s*$'] },
+      { line_regex = ['^\s*\? '] },
+      { contains = ["↑↓ select"] },
+      { any = [
+          { contains = ["↵ choose"] },
+          { contains = ["↵ toggle"] },
+          { contains = ["↵ save"] },
+      ] },
+      { contains = ["esc cancel"] },
+  ] },
+  # legacy = "requesting approval" AND (approve once|approve for this session)
+  #   AND "reject" AND (1/2/3/4 choose|↵ confirm)
+  { all = [
+      { contains = ["requesting approval"] },
+      { any = [
+          { contains = ["approve once"] },
+          { contains = ["approve for this session"] },
+      ] },
+      { contains = ["reject"] },
+      { any = [
+          { contains = ["1/2/3/4 choose"] },
+          { contains = ["↵ confirm"] },
+      ] },
+  ] },
+]
+
+# working = a line == a moon glyph
+#   OR a braille-prefixed line whose remainder starts_with thinking…/working…/using
+[[rules]]
+id = "spinner_working"
+state = "working"
+priority = 800
+region = "bottom_lines(30)"
+visible_working = true
+any = [
+  { line_regex = ['^\s*[🌕🌖🌗🌘🌑🌒🌓🌔]\s*$'] },
+  { line_regex = ['(?i)^\s*[\x{2800}-\x{28FF}]+\s*(?:thinking\.\.\.|working\.\.\.|using )'] },
+]

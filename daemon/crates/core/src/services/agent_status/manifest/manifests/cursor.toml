@@ -1,0 +1,43 @@
+id = "cursor"
+version = "2026.06.10"
+updated_at = "2026-06-10"
+
+[[rules]]
+id = "approval_prompt"
+state = "blocked"
+priority = 900
+region = "bottom_lines(30)"
+visible_blocker = true
+any = [
+  { all = [
+      { contains = ["waiting for approval"] },
+      { contains = ["run this command?"] },
+      { any = [
+          { contains = ["run (once) (y)"] },
+          { contains = ["skip (esc or n)"] },
+      ] },
+  ] },
+  { contains = ["(y) (enter)"] },
+  { contains = ["keep (n)"] },
+  { contains = ["skip (esc or n)"] },
+  { all = [
+      { line_regex = ['\(y\)'] },
+      { any = [
+          { contains = ["allow"] },
+          { contains = ["run (once)"] },
+          { contains = ["→ run"] },
+          { line_regex = ['^run '] },
+      ] },
+  ] },
+]
+
+[[rules]]
+id = "stop_working"
+state = "working"
+priority = 800
+region = "bottom_lines(30)"
+visible_working = true
+any = [
+  { contains = ["ctrl+c to stop"] },
+  { line_regex = ['^\s*[⬡⬢\x{2800}-\x{28FF}]\s+\S*ing\b'] },
+]

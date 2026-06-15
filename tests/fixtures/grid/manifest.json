@@ -1,0 +1,8 @@
+[
+  {"name": "sync_default", "cells": 4800},
+  {"name": "delta_flood", "cells": 4800},
+  {"name": "delta_truecolor", "cells": 4800},
+  {"name": "delta_typing", "cells": 12},
+  {"name": "sync_hyperlink", "cells": 4800},
+  {"name": "delta_cjk", "cells": 2400}
+]

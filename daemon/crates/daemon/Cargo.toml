@@ -1,0 +1,11 @@
+[package]
+name = "verne-daemon"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "verne"
+path = "src/main.rs"
+
+[dependencies]
+verne-core = { path = "../core" }

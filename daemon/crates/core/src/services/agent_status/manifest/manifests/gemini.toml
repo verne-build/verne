@@ -1,0 +1,40 @@
+id = "gemini"
+version = "2026.06.10"
+updated_at = "2026-06-10"
+
+[[rules]]
+id = "confirm_prompt"
+state = "blocked"
+priority = 900
+region = "bottom_lines(30)"
+visible_blocker = true
+any = [
+  { contains = ["│ apply this change"] },
+  { contains = ["│ allow execution"] },
+  { all = [
+      { any = [
+          { contains = ["yes"] },
+          { contains = ["no"] },
+      ] },
+      { any = [
+          { contains = ["waiting for user confirmation"] },
+          { contains = ["│ do you want to proceed"] },
+          { contains = ["do you want to proceed?"] },
+      ] },
+  ] },
+  { all = [
+      { line_regex = ['^❯'] },
+      { any = [
+          { line_regex = ['^❯.*yes'] },
+          { line_regex = ['^❯.*allow'] },
+      ] },
+  ] },
+]
+
+[[rules]]
+id = "cancel_working"
+state = "working"
+priority = 800
+region = "bottom_lines(30)"
+visible_working = true
+contains = ["esc to cancel"]

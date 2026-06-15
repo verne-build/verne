@@ -1,0 +1,206 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/* Window dragging is done entirely in JS (`useWindowDrag`), NOT via native
+   `-webkit-app-region: drag`. Native is unreliable here: at an unclipped root it
+   captures clicks on child buttons (native `no-drag` is geometric and isn't
+   honored in this Electron setup), and inside reka-ui's overflow-clipped panels
+   it's dropped anyway. So `.drag-region` is purely a JS hit-test marker and is
+   explicitly `no-drag` (never natively draggable); the JS listener drags the
+   window on mousedown and excludes the interactive controls below. */
+.drag-region,
+button, a, input, select, textarea,
+[role="button"], [role="tab"], [contenteditable="true"], [data-no-drag] {
+  -webkit-app-region: no-drag;
+}
+
+@custom-variant dark (&:is(.dark *));
+
+/* App-specific status colors */
+@theme {
+  --color-in-progress: #f59e0b;
+  --color-waiting: #8b5cf6;
+  --color-archived: #a1a1aa;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html, body {
+    overscroll-behavior: none;
+  }
+  body {
+    @apply bg-background text-foreground;
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    color-scheme: dark;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  input, textarea, select, [contenteditable] {
+    user-select: text;
+    -webkit-user-select: text;
+  }
+  .monaco-editor, .xterm, .selectable-text {
+    user-select: text;
+    -webkit-user-select: text;
+    cursor: text;
+  }
+}
+
+/* Instantly hide tooltips during scroll */
+html[data-scrolling] [data-slot="tooltip-content"] {
+  display: none !important;
+}
+
+/* Monaco widget repositioning — push overlay container down so tooltips (~35px) fit above */
+
+
+/* Monaco's .context-view.fixed uses `all: initial` which resets z-index to auto,
+   causing tooltips to render behind the app's tab bar stacking context */
+.context-view.fixed {
+  z-index: 1000 !important;
+}
+
+/* Scrollbar styling — matches the file-explorer tree scrollbar
+   (var(--color-border) thumb, fully rounded, 2px transparent inset). */
+.app-scrollbar::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.app-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.app-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+  border-radius: 9999px;
+}
+.app-scrollbar::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-soft-foreground: var(--soft-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-tab-border: var(--tab-border);
+  --color-tab-active-bg: var(--tab-active-bg);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+/* Default values (sovngarde) — overridden at runtime by applyTheme() */
+:root {
+  --radius: 0.625rem;
+  --background: #0d1016;
+  --foreground: #f2fffc;
+  --card: #16191f;
+  --card-foreground: #f2fffc;
+  --popover: #16191f;
+  --popover-foreground: #f2fffc;
+  --primary: #3a3d41;
+  --primary-foreground: #ffffff;
+  --secondary: #3a4150;
+  --secondary-foreground: #f2fffc;
+  --muted: #16191f;
+  --muted-foreground: #6b7678;
+  --soft-foreground: #bfbdb7;
+  --accent: #1d2026;
+  --accent-foreground: #f2fffc;
+  --destructive: #ff6d7e;
+  --border: #2e3138;
+  --input: #2e3138;
+  --ring: #2e3138;
+  --chart-1: #7cd5f1;
+  --chart-2: #8cc46f;
+  --chart-3: #ffcd66;
+  --chart-4: #baa0f8;
+  --chart-5: #7cd5f1;
+  --sidebar: #16191f;
+  --sidebar-foreground: #8a8986;
+  --sidebar-primary: #3a3d41;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #1d2026;
+  --sidebar-accent-foreground: #f2fffc;
+  --sidebar-border: #2e3138;
+  --sidebar-ring: #2e3138;
+  --tab-border: #1d2026;
+  --editor-bg: #0d1016;
+}
+
+/* vue-sonner pins a hovered toast to its measured --initial-height, which goes
+   stale when we swap a loading toast for a taller/shorter one by id (e.g.
+   Publishing… → Publish complete) or the multi-line description reflows — the
+   box then grows past its content on hover. Size to content in both states. */
+[data-sonner-toast][data-expanded="true"] {
+  height: auto !important;
+}
+
+/* Default close button is ~20px; our slotted XIcon is 16px, leaving it cramped
+   against the edges. Enlarge the hit target and shrink the glyph for padding. */
+[data-sonner-toast] [data-close-button] {
+  width: 22px;
+  height: 22px;
+}
+[data-sonner-toast] [data-close-button] > svg {
+  width: 10px;
+  height: 10px;
+}
+
+/* Stack action/cancel buttons on their own row beneath the description, each at
+   its natural (fit-content) width, left-aligned. Switch these toasts to CSS grid
+   (single column): content stretches + wraps, the button sits on the next row
+   via justify-self:start. Grid is used instead of flex-wrap because sonner owns
+   the toast's ::before/::after (swipe + expand hit-areas) and toggles flex/height
+   on hover — a pseudo-spacer or wrap trick collapses when expanded. Scoped with
+   :has([data-button]) so buttonless toasts keep their normal flex row. row-gap +
+   align-content:center keep the gap constant across collapsed/hover states. The
+   absolutely-positioned close button is unaffected. margin:0 clears sonner's
+   default --toast-button-margin-start:auto (the right-align). */
+[data-sonner-toast]:has([data-button]) {
+  display: grid !important;
+  grid-template-columns: 1fr;
+  align-content: center;
+  /* !important: sonner sets `gap: 6px` (shorthand) at equal specificity and
+     injects its CSS after ours, so a plain row-gap gets reset to 6px. */
+  row-gap: 14px !important;
+}
+[data-sonner-toast]:has([data-button]) [data-button] {
+  justify-self: start;
+  margin: 0 !important;
+}

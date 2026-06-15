@@ -1,0 +1,50 @@
+id = "opencode"
+version = "2026.06.10"
+updated_at = "2026-06-10"
+
+# blocked = "△ Permission required" (CASE-SENSITIVE) OR ("esc dismiss" AND action AND nav)
+# action = "enter confirm" OR "enter submit" OR "enter toggle"
+# nav    = "↑↓ select" OR "⇆ tab"
+[[rules]]
+id = "permission_required"
+state = "blocked"
+priority = 900
+region = "bottom_lines(30)"
+visible_blocker = true
+any = [
+  { regex = ['\x{25B3} Permission required'] },
+  { all = [
+      { contains = ["esc dismiss"] },
+      { any = [
+          { contains = ["enter confirm"] },
+          { contains = ["enter submit"] },
+          { contains = ["enter toggle"] },
+      ] },
+      { any = [
+          { contains = ["↑↓ select"] },
+          { contains = ["⇆ tab"] },
+      ] },
+  ] },
+]
+
+# working = "esc to interrupt" OR "ctrl+c to interrupt"
+#   OR (line with "opencode" AND ("esc interrupt" OR "esc again to interrupt"))
+#   OR 4+ consecutive ■/⬝
+[[rules]]
+id = "interrupt_working"
+state = "working"
+priority = 800
+region = "bottom_lines(30)"
+visible_working = true
+any = [
+  { contains = ["esc to interrupt"] },
+  { contains = ["ctrl+c to interrupt"] },
+  { all = [
+      { contains = ["opencode"] },
+      { any = [
+          { contains = ["esc interrupt"] },
+          { contains = ["esc again to interrupt"] },
+      ] },
+  ] },
+  { regex = ['[\x{25A0}\x{2B1D}]{4,}'] },
+]

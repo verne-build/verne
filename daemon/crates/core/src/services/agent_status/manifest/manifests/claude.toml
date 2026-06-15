@@ -1,0 +1,67 @@
+id = "claude"
+version = "2026.06.11"
+updated_at = "2026-06-11"
+
+[[rules]]
+id = "session_limit"
+state = "blocked"
+priority = 950
+region = "bottom_lines(25)"
+visible_blocker = true
+all = [
+  { contains = ["/rate-limit-options"] },
+  { any = [
+      { contains = ["stop and wait for limit to reset"] },
+      { contains = ["upgrade your plan"] },
+  ] },
+]
+
+[[rules]]
+id = "permission_prompt"
+state = "blocked"
+priority = 900
+region = "bottom_lines(25)"
+visible_blocker = true
+any = [
+  { contains = ["do you want to proceed?"] },
+  { contains = ["would you like to proceed?"] },
+  { contains = ["waiting for permission"] },
+  { contains = ["do you want to allow this connection?"] },
+  { contains = ["tab to amend"] },
+  { all = [
+      { line_regex = ['^\s*❯\s*\d+\.'] },
+      { line_regex = ['(?i)^\s*❯?\s*(?:\d+\.\s*)?(?:yes|no)\b'] },
+  ] },
+  { all = [
+      { any = [ { contains = ["do you want"] }, { contains = ["would you like"] } ] },
+      { any = [ { contains = ["yes"] }, { contains = ["❯"] } ] },
+  ] },
+]
+
+[[rules]]
+id = "interrupt_working"
+state = "working"
+priority = 800
+region = "above_prompt_box"
+visible_working = true
+any = [
+  { contains = ["esc to interrupt"] },
+  { contains = ["ctrl+c to interrupt"] },
+  { all = [ { contains = ["esc"] }, { contains = ["interrupt"] } ] },
+]
+
+[[rules]]
+id = "spinner_working"
+state = "working"
+priority = 790
+region = "above_prompt_box"
+visible_working = true
+line_regex = ['^\s*[·✱✲✳✴✵✶✷✸✹✺✻✼✽✾✿❀❁❂❃❇❈❉❊❋✢✣✤✥✦✧✨⊛⊕⊙◉◎◍⁂⁕※⍟☼★☆\x{2800}-\x{28FF}]\s+.*[\p{Alphabetic}].*(?:…|\.\.\.)']
+
+[[rules]]
+id = "idle_prompt_box"
+state = "idle"
+priority = 10
+region = "whole_recent"
+visible_idle = true
+line_regex = ['^\s*│\s*>']

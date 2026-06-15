@@ -1,0 +1,10 @@
+id = "pi"
+version = "2026.06.10"
+
+[[rules]]
+id = "working"
+state = "working"
+priority = 800
+region = "bottom_lines(30)"
+visible_working = true
+regex = ['Working\.\.\.']

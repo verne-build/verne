@@ -1,0 +1,22 @@
+id = "copilot"
+version = "2026.06.10"
+updated_at = "2026-06-10"
+
+[[rules]]
+id = "confirm_prompt"
+state = "blocked"
+priority = 900
+region = "bottom_lines(20)"
+visible_blocker = true
+any = [
+  { contains = ["│ do you want"] },
+  { all = [ { contains = ["confirm with"] }, { contains = ["enter"] } ] },
+]
+
+[[rules]]
+id = "cancel_working"
+state = "working"
+priority = 800
+region = "bottom_lines(20)"
+visible_working = true
+contains = ["esc to cancel"]

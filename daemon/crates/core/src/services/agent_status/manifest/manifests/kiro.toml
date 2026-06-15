@@ -1,0 +1,53 @@
+id = "kiro"
+version = "2026.06.10"
+updated_at = "2026-06-10"
+
+# blocked = tool_blocked OR subagent_blocked
+[[rules]]
+id = "approval_pending"
+state = "blocked"
+priority = 900
+region = "bottom_lines(30)"
+visible_blocker = true
+any = [
+  # tool_blocked = "requires approval" AND (one of the action labels)
+  { all = [
+      { contains = ["requires approval"] },
+      { any = [
+          { contains = ["yes, single permission"] },
+          { contains = ["trust, always allow"] },
+          { contains = ["no (tab to edit)"] },
+          { contains = ["esc to close"] },
+      ] },
+  ] },
+  # subagent_blocked = (tool approval|tool approvals) AND "pending from subagents"
+  #   AND (approve all pending|configure individually|exit (cancel subagents))
+  { all = [
+      { any = [
+          { contains = ["tool approval"] },
+          { contains = ["tool approvals"] },
+      ] },
+      { contains = ["pending from subagents"] },
+      { any = [
+          { contains = ["approve all pending"] },
+          { contains = ["configure individually"] },
+          { contains = ["exit (cancel subagents)"] },
+      ] },
+  ] },
+]
+
+# working = "kiro is working" OR ("esc to cancel" AND spinner)
+# spinner = line whose first non-ws char is ◔/◑/◕/● then an alphabetic char
+[[rules]]
+id = "spinner_working"
+state = "working"
+priority = 800
+region = "bottom_lines(30)"
+visible_working = true
+any = [
+  { contains = ["kiro is working"] },
+  { all = [
+      { contains = ["esc to cancel"] },
+      { line_regex = ['^\s*[◔◑◕●]\s*\p{Alphabetic}'] },
+  ] },
+]

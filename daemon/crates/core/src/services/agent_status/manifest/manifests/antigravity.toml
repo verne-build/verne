@@ -1,0 +1,39 @@
+id = "antigravity"
+version = "2026.06.10"
+updated_at = "2026-06-10"
+
+[[rules]]
+id = "permission_prompt"
+state = "blocked"
+priority = 900
+region = "bottom_lines(30)"
+visible_blocker = true
+all = [
+  { contains = ["requesting permission for:"] },
+  { any = [
+      { contains = ["do you want to proceed?"] },
+      { all = [
+          { contains = ["tab amend"] },
+          { contains = ["edit command"] },
+      ] },
+  ] },
+]
+
+[[rules]]
+id = "spinner_working"
+state = "working"
+priority = 800
+region = "bottom_lines(30)"
+visible_working = true
+line_regex = ['^\s*[\x{2800}-\x{28FF}]\s+.*ing\b']
+
+[[rules]]
+id = "tasks_working"
+state = "working"
+priority = 800
+region = "bottom_lines(30)"
+visible_working = true
+all = [
+  { contains = ["/tasks"] },
+  { regex = ['[1-9][0-9]*\s*tasks?'] },
+]

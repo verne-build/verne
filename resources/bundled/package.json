@@ -1,0 +1,11 @@
+{
+  "name": "verne-lsp-bundle",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@vue/language-server": "^3.2.5",
+    "@vue/typescript-plugin": "^2.2.0",
+    "typescript": "^5.7.0",
+    "typescript-language-server": "^4.3.3"
+  }
+}

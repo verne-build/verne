@@ -1,0 +1,50 @@
+id = "qodercli"
+version = "2026.06.10"
+updated_at = "2026-06-10"
+
+# blocked = ("waiting for user confirmation" AND any{yes,no,allow,reject})
+#   OR ("awaiting approval" AND (allow|reject))
+#   OR any of the standalone approval phrases
+[[rules]]
+id = "confirmation_required"
+state = "blocked"
+priority = 900
+region = "bottom_lines(30)"
+visible_blocker = true
+any = [
+  { all = [
+      { contains = ["waiting for user confirmation"] },
+      { any = [
+          { contains = ["yes"] },
+          { contains = ["no"] },
+          { contains = ["allow"] },
+          { contains = ["reject"] },
+      ] },
+  ] },
+  { all = [
+      { contains = ["awaiting approval"] },
+      { any = [
+          { contains = ["allow"] },
+          { contains = ["reject"] },
+      ] },
+  ] },
+  { contains = ["permission required"] },
+  { contains = ["allow once or always?"] },
+  { contains = ["asking user"] },
+  { contains = ["enter your response"] },
+  { contains = ["review your answers:"] },
+  { contains = ["shell awaiting input"] },
+]
+
+# working = "(esc to cancel," OR a braille-prefixed line: one braille char,
+#   then a space, then an alphabetic char somewhere on the line.
+[[rules]]
+id = "spinner_working"
+state = "working"
+priority = 800
+region = "bottom_lines(30)"
+visible_working = true
+any = [
+  { contains = ["(esc to cancel,"] },
+  { line_regex = ['^\s*[\x{2800}-\x{28FF}] .*\p{Alphabetic}'] },
+]

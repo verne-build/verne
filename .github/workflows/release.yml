@@ -1,0 +1,122 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump"
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+
+jobs:
+  gate:
+    name: Approve & version
+    runs-on: ubuntu-latest
+    environment: release
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref }}
+      - id: resolve
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            TAG=$(npm version ${{ inputs.bump }} -m "chore(release): %s" | tail -1)
+            git push origin "HEAD:${{ github.ref_name }}" --follow-tags
+          else
+            TAG="${{ github.ref_name }}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Releasing $TAG"
+
+  build:
+    name: Build ${{ matrix.arch }}
+    needs: gate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: arm64, runner: macos-14 }
+          - { arch: x64,   runner: macos-13 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.tag }}
+      - uses: pnpm/action-setup@v4
+        with: { version: 11 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: "daemon -> daemon/target" }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm bundle:install
+      - run: cargo build --release --manifest-path daemon/Cargo.toml
+      - run: pnpm exec electron-vite build
+      - name: Build, sign & notarize
+        env:
+          CSC_LINK: ${{ secrets.MAC_CERTIFICATE }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          echo "${{ secrets.APPLE_API_KEY_B64 }}" | base64 -d > "$RUNNER_TEMP/AuthKey.p8"
+          export APPLE_API_KEY="$RUNNER_TEMP/AuthKey.p8"
+          pnpm exec electron-builder --mac --${{ matrix.arch }} --publish never
+      - name: Verify update manifest was generated
+        run: test -f release/latest-mac.yml || (echo "::error::latest-mac.yml missing — electron-updater needs it"; exit 1)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.arch }}
+          path: |
+            release/*.dmg
+            release/*-mac.zip
+            release/*.blockmap
+            release/latest-mac.yml
+          retention-days: 14
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: [gate, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.gate.outputs.tag }}
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: dist-*
+      - name: Merge mac update manifests
+        run: |
+          mkdir -p out
+          cp artifacts/dist-*/*.dmg artifacts/dist-*/*-mac.zip artifacts/dist-*/*.blockmap out/ 2>/dev/null || true
+          npm install --no-save js-yaml >/dev/null 2>&1
+          node scripts/merge-mac-manifests.mjs out/latest-mac.yml \
+            artifacts/dist-arm64/latest-mac.yml artifacts/dist-x64/latest-mac.yml
+          ls -la out
+      - name: Generate release notes
+        run: |
+          TAG="${{ needs.gate.outputs.tag }}"
+          PREV=$(git tag -l 'v*' --sort=-v:refname | grep -vx "$TAG" | head -1)
+          RANGE=$([ -n "$PREV" ] && echo "$PREV..$TAG" || echo "$TAG")
+          { echo "## Changes"; git log --pretty='- %s' "$RANGE"; } > notes.md
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ needs.gate.outputs.tag }}" out/* \
+            --title "${{ needs.gate.outputs.tag }}" --notes-file notes.md

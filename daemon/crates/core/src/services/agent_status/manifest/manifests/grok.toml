@@ -1,0 +1,41 @@
+id = "grok"
+version = "2026.06.10"
+updated_at = "2026-06-10"
+
+[[rules]]
+id = "permission_scope"
+state = "blocked"
+priority = 900
+region = "bottom_lines(30)"
+visible_blocker = true
+all = [
+  { any = [
+      { contains = ["use ← → to choose permission whitelist scope"] },
+      { contains = ["←/→:scope"] },
+  ] },
+  { contains = ["yes, proceed"] },
+  { contains = ["no, reject"] },
+]
+
+[[rules]]
+id = "cancel_working"
+state = "working"
+priority = 800
+region = "bottom_lines(30)"
+visible_working = true
+any = [
+  { all = [
+      { line_regex = ['^\s*[\x{2800}-\x{28FF}]'] },
+      { any = [
+          { contains = ["waiting"] },
+          { contains = ["run "] },
+          { contains = ["read "] },
+          { contains = ["search "] },
+          { contains = ["list "] },
+      ] },
+  ] },
+  { all = [
+      { contains = ["ctrl+c:cancel"] },
+      { contains = ["ctrl+enter:interject"] },
+  ] },
+]

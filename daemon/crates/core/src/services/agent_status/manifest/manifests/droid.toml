@@ -1,0 +1,36 @@
+id = "droid"
+version = "2026.06.10"
+updated_at = "2026-06-10"
+
+[[rules]]
+id = "execute_approval"
+state = "blocked"
+priority = 900
+region = "bottom_lines(30)"
+visible_blocker = true
+# Mirrors detector: (EXECUTE && (chrome || options)) || (chrome && options).
+# `regex`(EXECUTE) is case-sensitive to match the detector's content.contains("EXECUTE").
+any = [
+  { all = [
+      { regex = ['EXECUTE'] },
+      { any = [
+          { contains = ["enter to select"] },
+          { contains = ["↑↓ to navigate"] },
+          { contains = ["esc to cancel"] },
+          { contains = ["> yes, allow"] },
+          { contains = ["> no, cancel"] },
+      ] },
+  ] },
+  { all = [
+      { any = [ { contains = ["enter to select"] }, { contains = ["↑↓ to navigate"] }, { contains = ["esc to cancel"] } ] },
+      { any = [ { contains = ["> yes, allow"] }, { contains = ["> no, cancel"] } ] },
+  ] },
+]
+
+[[rules]]
+id = "stop_working"
+state = "working"
+priority = 800
+region = "bottom_lines(30)"
+visible_working = true
+contains = ["esc to stop"]

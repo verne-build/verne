@@ -1,0 +1,35 @@
+id = "cline"
+version = "2026.06.10"
+updated_at = "2026-06-10"
+
+[[rules]]
+id = "tool_approval"
+state = "blocked"
+priority = 900
+region = "bottom_lines(30)"
+visible_blocker = true
+any = [
+  { contains = ["let cline use this tool"] },
+  { all = [
+      { any = [
+          { contains = ["[act mode]"] },
+          { contains = ["[plan mode]"] },
+      ] },
+      { any = [
+          { contains = ["execute command?"] },
+          { contains = ["use this tool?"] },
+      ] },
+      { contains = ["yes"] },
+  ] },
+]
+
+[[rules]]
+id = "mode_banner_working"
+state = "working"
+priority = 800
+region = "bottom_lines(30)"
+visible_working = true
+any = [
+  { contains = ["[act mode]"] },
+  { contains = ["[plan mode]"] },
+]
