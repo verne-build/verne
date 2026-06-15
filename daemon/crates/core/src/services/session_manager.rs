@@ -426,6 +426,13 @@ pub struct Session {
     pub output_sequence: Arc<std::sync::atomic::AtomicU64>,
     /// Monotonic count of terminal resizes; resize redraw output is user-caused.
     pub resize_sequence: Arc<std::sync::atomic::AtomicU64>,
+    /// Current PTY winsize packed as (cols << 16 | rows). `resize` skips the
+    /// `TIOCSWINSZ` ioctl when the requested size already matches, because the
+    /// kernel raises SIGWINCH on *every* ioctl call even when dimensions are
+    /// unchanged — and a backgrounded TUI (Claude Code) re-emits its static
+    /// banner on each spurious SIGWINCH (foreground tab mirrors its size onto
+    /// background PTYs via `tabResize`). See plans/001.
+    current_size: std::sync::atomic::AtomicU32,
     /// Unix-millis of the last interrupt-looking input (Ctrl+C / lone Esc) sent
     /// while the hook state was "working". Claude fires no Stop hook on
     /// interrupt; this lets detection recover faster after a user interrupt.
@@ -446,6 +453,11 @@ pub struct Session {
 }
 
 impl Session {
+    #[inline]
+    fn pack_size(cols: u16, rows: u16) -> u32 {
+        ((cols as u32) << 16) | rows as u32
+    }
+
     pub fn pty_master_fd(&self) -> Option<RawFd> {
         self.master_fd
     }
@@ -503,6 +515,17 @@ impl Session {
     }
 
     pub fn resize(&self, cols: u16, rows: u16) {
+        let packed = Session::pack_size(cols, rows);
+        // Skip no-op resizes: TIOCSWINSZ raises SIGWINCH on every call even when
+        // the size is unchanged, and a backgrounded TUI re-emits its banner on
+        // each spurious SIGWINCH. swap returns the prior value; bail if identical.
+        if self
+            .current_size
+            .swap(packed, std::sync::atomic::Ordering::Relaxed)
+            == packed
+        {
+            return;
+        }
         self.resize_sequence
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if let Ok(master) = self.master.lock() {
@@ -825,6 +848,7 @@ pub fn create_raw_session(
         last_output_at: last_output_at.clone(),
         output_sequence: output_sequence.clone(),
         resize_sequence: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        current_size: std::sync::atomic::AtomicU32::new(Session::pack_size(cols, rows)),
         last_interrupt_at: Arc::new(std::sync::atomic::AtomicI64::new(0)),
         agent_status: Arc::new(Mutex::new(
             crate::services::agent_status::AgentStatusEngine::default(),
@@ -988,6 +1012,9 @@ pub fn create_session(
         last_output_at: last_output_at.clone(),
         output_sequence: output_sequence.clone(),
         resize_sequence: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        current_size: std::sync::atomic::AtomicU32::new(Session::pack_size(
+            opts.cols, opts.rows,
+        )),
         last_interrupt_at: Arc::new(std::sync::atomic::AtomicI64::new(0)),
         agent_status: Arc::new(Mutex::new(
             crate::services::agent_status::AgentStatusEngine::default(),
@@ -1176,5 +1203,32 @@ mod osc_title_tests {
     fn idle_derived_from_star_glyph() {
         assert!("✳ working".contains('✳'));
         assert!(!"idle title".contains('✳'));
+    }
+}
+
+#[cfg(test)]
+mod resize_tests {
+    use super::*;
+    use std::sync::atomic::Ordering::Relaxed;
+
+    #[test]
+    fn same_size_resize_is_noop() {
+        // Long-lived harmless child so the PTY master stays open.
+        let (_id, session) =
+            create_raw_session("rsztst", "sleep", &["30"], "/tmp", 80, 24).expect("spawn pty");
+
+        // Same size as construction → no-op, must not bump resize_sequence.
+        session.resize(80, 24);
+        assert_eq!(session.resize_sequence.load(Relaxed), 0);
+
+        // Genuine change → applies, bumps once.
+        session.resize(100, 30);
+        assert_eq!(session.resize_sequence.load(Relaxed), 1);
+
+        // Repeat of the new size → no-op again, stays at 1.
+        session.resize(100, 30);
+        assert_eq!(session.resize_sequence.load(Relaxed), 1);
+
+        session.terminate();
     }
 }
