@@ -262,6 +262,9 @@ export interface DebugMetrics {
   lspCount: number;
   sourceControlVisible: boolean;
   processBreakdown: ProcessBreakdown[];
+  /** Aggregate totals computed from the SAME sample as processBreakdown, so the
+   *  headline RAM/CPU always reconcile with the per-process rows below. */
+  usage: ResourceUsage;
 }
 
 export interface StoredTabState {

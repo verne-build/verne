@@ -249,6 +249,8 @@ export function registerMetricsCommands(
       lspCount: lspCountFn(),
       sourceControlVisible: diag.sourceControlVisible,
       processBreakdown: breakdown,
+      // Same `stats`/`appRows` sample feeds both → headline reconciles w/ rows.
+      usage: aggregateUsage({ app: appRows, pidStats: stats, diag, lspCount: lspCountFn(), numCores }),
     };
   });
 }

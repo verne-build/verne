@@ -121,11 +121,11 @@ let timer: ReturnType<typeof setInterval> | undefined;
 
 async function poll() {
   const rpc = useRpc();
-  try {
-    usage.value = await rpc.request.getResourceUsage({});
-  } catch { }
+  // One call: headline totals + per-process rows share a single sample, so the
+  // RAM/CPU shown up top always equal the sum of the breakdown below.
   try {
     debugMetrics.value = await rpc.request.getDebugMetrics({});
+    usage.value = debugMetrics.value.usage;
   } catch {
     debugMetrics.value = null;
   }
