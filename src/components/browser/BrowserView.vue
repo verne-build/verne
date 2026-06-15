@@ -700,8 +700,10 @@ function bindWebview(el: WebviewEl | null) {
       </div>
       <!-- Load-failure empty state: covers the webview when a navigation fails
            (e.g. connection refused). Cleared on the next load (onStartLoading).
-           Not pointer-events-none — it fully replaces the dead page. -->
-      <div v-if="loadError" class="absolute inset-0 flex items-center justify-center bg-white">
+           Not pointer-events-none — it fully replaces the dead page. bg-sidebar
+           (not white) so the Empty component's themed colors read correctly;
+           only the webview itself is white. -->
+      <div v-if="loadError" class="absolute inset-0 flex items-center justify-center bg-sidebar">
         <Empty>
           <EmptyHeader>
             <EmptyMedia variant="icon"><Globe /></EmptyMedia>
