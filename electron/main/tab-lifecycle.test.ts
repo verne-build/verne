@@ -88,6 +88,20 @@ describe("tab lifecycle handlers", () => {
     expect(send).toHaveBeenCalledWith("daemon-event", "tab-added", { tab });
   });
 
+  it("rolls back the tab row and emits nothing when PTY spawn fails", async () => {
+    const { tabs, deps, daemon, handlers } = setup();
+    daemon.request.mockRejectedValueOnce(new Error("spawn failed"));
+    const { win, send } = fakeWindow();
+
+    await expect(handlers.tabsCreate({ opts: { directoryId: "dir-1" } }, win))
+      .rejects.toThrow("spawn failed");
+
+    expect(tabs).toHaveLength(0);
+    expect(deps.insertTab).toHaveBeenCalledOnce();
+    expect(deps.deleteTab).toHaveBeenCalledWith(expect.anything(), "tab-1");
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("closes a tab with best-effort daemon and sidecar cleanup", async () => {
     const { tabs, deps, daemon, sidecar, handlers } = setup();
     tabs.push({
@@ -135,5 +149,27 @@ describe("tab lifecycle handlers", () => {
         tabLabel: "Shell",
       },
     });
+  });
+
+  it("does not mutate persisted tabs when session ensure spawn fails", async () => {
+    const { tabs, deps, daemon, handlers } = setup();
+    const persisted: Tab = {
+      id: "tab-1",
+      directoryId: "dir-1",
+      label: "Shell",
+      cwd: "/repo/sub",
+      sortOrder: 0,
+      createdAt: 123,
+      userRenamed: false,
+    };
+    tabs.push(persisted);
+    daemon.request.mockRejectedValueOnce(new Error("spawn failed"));
+
+    await expect(handlers.tabsSessionId({ id: "tab-1" }, fakeWindow().win))
+      .rejects.toThrow("spawn failed");
+
+    expect(tabs).toEqual([persisted]);
+    expect(deps.insertTab).not.toHaveBeenCalled();
+    expect(deps.deleteTab).not.toHaveBeenCalled();
   });
 });
