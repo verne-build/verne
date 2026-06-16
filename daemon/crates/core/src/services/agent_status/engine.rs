@@ -20,7 +20,11 @@ pub struct HookReport {
 pub struct AgentObservation {
     pub process_agent_type: Option<String>,
     pub screen_agent_type: Option<String>,
-    pub shell_in_foreground: bool,
+    /// The foreground process group is owned by a non-agent process (the login
+    /// shell, or any command the user ran after quitting the agent — `curl`,
+    /// `git`, …). Drives the identity-clear branch: once a foreign command is
+    /// in the foreground, the agent is gone and its identity must drop.
+    pub foreign_in_foreground: bool,
     pub detection: AgentDetection,
     pub input_sequence: u64,
     pub output_sequence: u64,
@@ -98,7 +102,7 @@ impl AgentStatusEngine {
     }
 
     pub fn observe(&mut self, observation: AgentObservation) -> Option<EffectiveAgentStatus> {
-        if observation.shell_in_foreground {
+        if observation.foreign_in_foreground {
             self.hook_identity = None;
             self.hook_authority = HookAuthority::IdentityOnly;
             self.candidate_identity = None;
@@ -277,7 +281,7 @@ mod tests {
         AgentObservation {
             process_agent_type: Some("claude".into()),
             screen_agent_type: None,
-            shell_in_foreground: false,
+            foreign_in_foreground: false,
             detection: AgentDetection::from_state(AgentState::Idle),
             input_sequence: 0,
             output_sequence: 0,
@@ -315,7 +319,25 @@ mod tests {
         let mut engine = AgentStatusEngine::default();
         engine.apply_hook(hook(1, Some(AgentState::Working)));
         let mut obs = observation(10_000);
-        obs.shell_in_foreground = true;
+        obs.process_agent_type = None;
+        obs.foreign_in_foreground = true;
+        engine.observe(obs);
+        assert_eq!(engine.snapshot().agent_type, None);
+        assert_eq!(engine.snapshot().agent_state, AgentState::Unknown);
+    }
+
+    #[test]
+    fn foreign_foreground_command_clears_agent() {
+        // Agent quit, tab reused for a non-agent command (curl/git). The shell
+        // is NOT the foreground pgrp — the command is — so the old
+        // `shell_in_foreground` check never fired and identity stuck.
+        let mut engine = AgentStatusEngine::default();
+        engine.observe(observation(1_000));
+        assert_eq!(engine.snapshot().agent_type.as_deref(), Some("claude"));
+        let mut obs = observation(2_000);
+        obs.process_agent_type = None;
+        obs.screen_agent_type = None;
+        obs.foreign_in_foreground = true;
         engine.observe(obs);
         assert_eq!(engine.snapshot().agent_type, None);
         assert_eq!(engine.snapshot().agent_state, AgentState::Unknown);
