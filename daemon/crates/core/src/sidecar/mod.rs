@@ -6,6 +6,8 @@
 
 use std::sync::Arc;
 
+pub mod dispatch;
+
 /// Run the sidecar: DB + hooks + the full non-PTY RPC surface on the sidecar
 /// socket. No WS server, no PTYs — those belong to the daemon.
 pub fn run() {

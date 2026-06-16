@@ -628,62 +628,8 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
             }
         }
 
-        // ---- notes.rs ----
-        m if m == crate::protocol::methods::NOTES_DIR_PATH => {
-            let workspace_root = s(req.params.get("workspaceRoot"));
-            let result = tokio::task::spawn_blocking(move || -> Result<String, String> {
-                let dir = notes_dir_for(&workspace_root);
-                std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-                Ok(dir.to_string_lossy().into_owned())
-            })
-            .await
-            .map_err(|e| format!("notes dir task failed: {e}"));
-            match result {
-                Ok(Ok(v)) => Response::ok(req.id, serde_json::Value::String(v)),
-                Ok(Err(e)) => Response::err(req.id, e),
-                Err(e) => Response::err(req.id, e),
-            }
-        }
-        m if m == crate::protocol::methods::NOTES_LIST => {
-            let workspace_root = s(req.params.get("workspaceRoot"));
-            let result = crate::notes::list(&notes_dir_for(&workspace_root));
-            match result {
-                Ok(v) => Response::ok(req.id, serde_json::to_value(v).unwrap()),
-                Err(e) => Response::err(req.id, e),
-            }
-        }
-        m if m == crate::protocol::methods::NOTES_CREATE => {
-            let workspace_root = s(req.params.get("workspaceRoot"));
-            let title = s(req.params.get("title"));
-            let result: Result<crate::notes::NoteMeta, String> = (|| {
-                let dir = notes_dir_for(&workspace_root);
-                let slug = crate::notes::create(&dir, &title, "")?;
-                Ok(crate::notes::NoteMeta { slug, title })
-            })();
-            match result {
-                Ok(v) => Response::ok(req.id, serde_json::to_value(v).unwrap()),
-                Err(e) => Response::err(req.id, e),
-            }
-        }
-        m if m == crate::protocol::methods::NOTES_RENAME => {
-            let workspace_root = s(req.params.get("workspaceRoot"));
-            let slug = s(req.params.get("slug"));
-            let title = s(req.params.get("title"));
-            let result =
-                crate::notes::rename(&notes_dir_for(&workspace_root), &slug, &title);
-            match result {
-                Ok(v) => Response::ok(req.id, serde_json::to_value(v).unwrap()),
-                Err(e) => Response::err(req.id, e),
-            }
-        }
-        m if m == crate::protocol::methods::NOTES_DELETE => {
-            let workspace_root = s(req.params.get("workspaceRoot"));
-            let slug = s(req.params.get("slug"));
-            let result = crate::notes::delete(&notes_dir_for(&workspace_root), &slug);
-            match result {
-                Ok(()) => Response::ok(req.id, serde_json::Value::Null),
-                Err(e) => Response::err(req.id, e),
-            }
+        m if crate::sidecar::dispatch::notes::handles(m) => {
+            crate::sidecar::dispatch::notes::dispatch(req).await
         }
 
         // ---- files.rs (filesystem CRUD + tree) ----
@@ -1969,14 +1915,6 @@ fn watch_directory_impl(state: &crate::state::AppState, path: String) -> Result<
     }
     Ok(true)
 }
-
-/// Resolve a workspace root's notes storage dir. Root is resolved by the
-/// caller (Electron) and passed in — no DB read here.
-fn notes_dir_for(workspace_root: &str) -> std::path::PathBuf {
-    crate::paths::notes_dir(workspace_root)
-}
-
-
 
 /// Get-or-create the per-dir `ShadowTree` and run `f` against it, mirroring
 /// `commands/shadow.rs::with_tree` but typed against daemon `AppState`. The
