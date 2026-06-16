@@ -419,6 +419,7 @@ function handleMenuAction(e: Event) {
   else if (action === "focusNotes") focusFilePanel("notes");
   else if (action === "focusTerminal") focusTerminal();
   else if (action === "checkForUpdates") window.dispatchEvent(new CustomEvent("check-for-updates"));
+  else if (action === "restartToUpdate") void invoke("updater_quit_and_install");
   else if (action === "undo" || action === "redo") {
     window.dispatchEvent(new CustomEvent("editor-action", { detail: action }));
   }

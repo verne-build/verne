@@ -11,6 +11,40 @@ let currentScope = "all";
 // rebuilds (e.g. agent-scope changes) keep Restart Daemon wired.
 let restartDaemon: (() => void) | undefined;
 
+// Cached getWindow + updater phase so the updater can flip the "Check for
+// Updates…" item to a greyed-out progress label (and back) via a menu rebuild.
+let getWindowRef: (() => BrowserWindow) | undefined;
+export type UpdaterMenuPhase = "idle" | "checking" | "downloading" | "installing" | "ready";
+let updaterPhase: UpdaterMenuPhase = "idle";
+
+function updaterMenuItem(
+  send: (action: string) => void,
+): Electron.MenuItemConstructorOptions {
+  switch (updaterPhase) {
+    case "checking":
+      return { label: "Checking for Updates…", enabled: false };
+    case "downloading":
+      return { label: "Downloading Update…", enabled: false };
+    case "installing":
+      return { label: "Installing Update…", enabled: false };
+    case "ready":
+      return { label: "Restart to Update", click: () => send("restartToUpdate") };
+    default:
+      return { label: "Check for Updates…", click: () => send("checkForUpdates") };
+  }
+}
+
+/**
+ * Flips the Verne-menu update item between "Check for Updates…" and a greyed-out
+ * phase label ("Downloading Update…", etc). No-ops when the phase is unchanged so
+ * frequent progress events don't churn full menu rebuilds.
+ */
+export function setUpdaterMenuPhase(phase: UpdaterMenuPhase): void {
+  if (phase === updaterPhase || !getWindowRef) return;
+  updaterPhase = phase;
+  buildAppMenu(getWindowRef);
+}
+
 /**
  * Builds the native application menu, mirroring the Tauri menu in
  * verne-tauri/src-tauri/src/lib.rs. Each custom item dispatches a
@@ -23,6 +57,7 @@ let restartDaemon: (() => void) | undefined;
  */
 export function buildAppMenu(getWindow: () => BrowserWindow, onRestartDaemon?: () => void): void {
   if (onRestartDaemon) restartDaemon = onRestartDaemon;
+  getWindowRef = getWindow;
   const send = (action: string, scope?: string) =>
     getWindow().webContents.send("daemon-event", "menu-action", { action, scope });
 
@@ -34,7 +69,7 @@ export function buildAppMenu(getWindow: () => BrowserWindow, onRestartDaemon?: (
       label: "Verne",
       submenu: [
         { role: "about" },
-        { label: "Check for Updates…", click: () => send("checkForUpdates") },
+        updaterMenuItem(send),
         { type: "separator" },
         { label: "Settings…", accelerator: accel("settings"), click: () => send("openSettings") },
         { label: "Themes…", click: () => send("openThemes") },

@@ -1,6 +1,7 @@
 import { app, type BrowserWindow } from "electron";
 import { autoUpdater } from "electron-updater";
 import { registerNative } from "../ipc-router";
+import { setUpdaterMenuPhase } from "../menu";
 
 type UpdaterEventKind =
   | "checking" | "available" | "not-available" | "progress" | "downloaded" | "error";
@@ -31,12 +32,12 @@ export function initAutoUpdater(getWindow: () => BrowserWindow): void {
       win.webContents.send("daemon-event", "updater-event", { kind, manual: manualCheck, ...extra });
   };
 
-  autoUpdater.on("checking-for-update", () => emit("checking"));
-  autoUpdater.on("update-available", (i) => emit("available", { version: i.version }));
-  autoUpdater.on("update-not-available", (i) => { emit("not-available", { version: i.version }); manualCheck = false; });
-  autoUpdater.on("download-progress", (p) => emit("progress", { percent: Math.round(p.percent) }));
-  autoUpdater.on("update-downloaded", (i) => { emit("downloaded", { version: i.version }); manualCheck = false; });
-  autoUpdater.on("error", (e) => { emit("error", { message: String(e?.message ?? e ?? "unknown") }); manualCheck = false; });
+  autoUpdater.on("checking-for-update", () => { emit("checking"); if (manualCheck) setUpdaterMenuPhase("checking"); });
+  autoUpdater.on("update-available", (i) => { emit("available", { version: i.version }); setUpdaterMenuPhase("downloading"); });
+  autoUpdater.on("update-not-available", (i) => { emit("not-available", { version: i.version }); setUpdaterMenuPhase("idle"); manualCheck = false; });
+  autoUpdater.on("download-progress", (p) => { const percent = Math.round(p.percent); emit("progress", { percent }); setUpdaterMenuPhase(percent >= 100 ? "installing" : "downloading"); });
+  autoUpdater.on("update-downloaded", (i) => { emit("downloaded", { version: i.version }); setUpdaterMenuPhase("ready"); manualCheck = false; });
+  autoUpdater.on("error", (e) => { emit("error", { message: String(e?.message ?? e ?? "unknown") }); setUpdaterMenuPhase("idle"); manualCheck = false; });
 
   setTimeout(() => void autoUpdater.checkForUpdates().catch((e) => console.error("[updater] initial check:", e)), FIRST_CHECK_DELAY_MS);
   pollTimer = setInterval(
