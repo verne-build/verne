@@ -454,6 +454,12 @@ export interface SplitPaneResult {
   group: TabGroup;
 }
 
+export interface CloseGroupResult {
+  directoryId: string;
+  groupId: string;
+  closedTabIds: string[];
+}
+
 /** Daemon-canonical agent status sent over the socket. Mirrors the Rust enum
  *  in daemon/crates/core/src/services/detect.rs — exactly these four values.
  *  "done" is NOT a wire value; it is a renderer display state — see

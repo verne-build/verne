@@ -24,6 +24,7 @@ import {
 } from "./db/groups";
 import { forgetTab as defaultForgetNotificationTab } from "./native/notifications";
 import type {
+  CloseGroupResult,
   CreateTabOpts,
   CreateTabResult,
   LayoutNode,
@@ -79,6 +80,7 @@ const defaultDeps: TabLifecycleDeps = {
 export interface TabLifecycleHandlers {
   tabsCreate: Handler;
   tabsSplitPane: Handler;
+  tabsCloseGroup: Handler;
   tabsClose: Handler;
   tabsSessionId: Handler;
   tabsList: Handler;
@@ -275,6 +277,25 @@ export function createTabLifecycleHandlers(
       return true;
     },
 
+    async tabsCloseGroup(params: { id: string }, win: BrowserWindow): Promise<CloseGroupResult> {
+      const db = deps.getDb();
+      const group = groupById(deps, db, params.id);
+      if (!group) throw new Error("group not found");
+      const closedTabIds = collectPaneIds(parseLayout(group.layout));
+
+      await Promise.all(
+        closedTabIds.map((tabId) => daemon.request("tab_kill", { tabId }).catch(() => {})),
+      );
+      for (const tabId of closedTabIds) {
+        deps.deleteTab(db, tabId);
+        sidecar.request("agent_shadow_cleanup", { tabId }).catch(() => {});
+        deps.forgetNotificationTab(tabId);
+        emit(win, "tab-deleted", { id: tabId });
+      }
+      deps.deleteGroup(db, group.id);
+      return { directoryId: group.directoryId, groupId: group.id, closedTabIds };
+    },
+
     tabsSessionId(params: { id: string }) {
       const db = deps.getDb();
       const tab = deps.getTab(db, params.id);
@@ -309,6 +330,7 @@ export function registerTabLifecycle(daemon: DaemonClient, sidecar: DaemonClient
   const handlers = createTabLifecycleHandlers(daemon, sidecar);
   registerNative("tabs_create", handlers.tabsCreate);
   registerNative("tabs_split_pane", handlers.tabsSplitPane);
+  registerNative("tabs_close_group", handlers.tabsCloseGroup);
   registerNative("tabs_close", handlers.tabsClose);
   registerNative("tabs_session_id", handlers.tabsSessionId);
   registerNative("tabs_list", handlers.tabsList);

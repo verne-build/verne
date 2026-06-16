@@ -164,6 +164,62 @@ describe("tab lifecycle handlers", () => {
     expect(send).toHaveBeenCalledWith("daemon-event", "tab-deleted", { id: "tab-1" });
   });
 
+  it("closes a group with best-effort per-pane cleanup", async () => {
+    const { tabs, groups, deps, daemon, sidecar, handlers } = setup();
+    tabs.push(
+      {
+        id: "pane-1",
+        directoryId: "dir-1",
+        label: "Main",
+        cwd: "/repo",
+        sortOrder: 0,
+        createdAt: 1,
+        userRenamed: false,
+      },
+      {
+        id: "pane-2",
+        directoryId: "dir-1",
+        label: "Main",
+        cwd: "/repo",
+        sortOrder: 1,
+        createdAt: 1,
+        userRenamed: false,
+      },
+    );
+    groups.push({
+      id: "group-1",
+      directoryId: "dir-1",
+      sortOrder: 0,
+      activePaneId: "pane-1",
+      layout: JSON.stringify({
+        direction: "h",
+        children: [{ pane: "pane-1" }, { pane: "pane-2" }],
+        sizes: [50, 50],
+      }),
+      createdAt: 1,
+    });
+    daemon.request.mockRejectedValueOnce(new Error("already gone"));
+    const { win, send } = fakeWindow();
+
+    await expect(handlers.tabsCloseGroup({ id: "group-1" }, win)).resolves.toEqual({
+      directoryId: "dir-1",
+      groupId: "group-1",
+      closedTabIds: ["pane-1", "pane-2"],
+    });
+
+    expect(tabs).toHaveLength(0);
+    expect(groups).toHaveLength(0);
+    expect(daemon.request).toHaveBeenCalledWith("tab_kill", { tabId: "pane-1" });
+    expect(daemon.request).toHaveBeenCalledWith("tab_kill", { tabId: "pane-2" });
+    expect(sidecar.request).toHaveBeenCalledWith("agent_shadow_cleanup", { tabId: "pane-1" });
+    expect(sidecar.request).toHaveBeenCalledWith("agent_shadow_cleanup", { tabId: "pane-2" });
+    expect(deps.deleteGroup).toHaveBeenCalledWith(expect.anything(), "group-1");
+    expect(deps.forgetNotificationTab).toHaveBeenCalledWith("pane-1");
+    expect(deps.forgetNotificationTab).toHaveBeenCalledWith("pane-2");
+    expect(send).toHaveBeenCalledWith("daemon-event", "tab-deleted", { id: "pane-1" });
+    expect(send).toHaveBeenCalledWith("daemon-event", "tab-deleted", { id: "pane-2" });
+  });
+
   it("ensures an existing tab session by spawning from the persisted row", async () => {
     const { tabs, daemon, handlers } = setup();
     tabs.push({

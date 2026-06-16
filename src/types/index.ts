@@ -40,6 +40,7 @@ export type {
   CreateTabOpts,
   SplitPaneOpts,
   SplitPaneResult,
+  CloseGroupResult,
   TabUpdatedEvent,
   TabTitleEvent,
   AgentState,

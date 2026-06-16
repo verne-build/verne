@@ -444,12 +444,21 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     if (!group) return;
     const groups = groupsOf(dirId);
     const idx = groups.findIndex((g) => g.id === groupId);
-    for (const paneId of collectPaneIds(group.layout)) {
-      await destroyPane(paneId);
+    const paneIds = collectPaneIds(group.layout);
+    const sessionIds = await Promise.all(
+      paneIds.map(async (paneId) => {
+        try { return await useRpc().request.tabsSessionId({ id: paneId }); }
+        catch { return null; }
+      }),
+    );
+    const result = await useRpc().request.tabsCloseGroup({ id: groupId });
+    for (const paneId of result.closedTabIds) {
       forgetTab(dirId, paneId);
       forgetAgentNotificationTab(paneId);
     }
-    await useRpc().request.groupDelete({ id: groupId }).catch(() => {});
+    for (const sid of sessionIds) {
+      if (sid) window.dispatchEvent(new CustomEvent("dispose-terminal-session", { detail: sid }));
+    }
     const remaining = groups.filter((g) => g.id !== groupId);
     setGroups(dirId, remaining);
     if (activeGroupIdByDirectory.value[dirId] === groupId) {

@@ -21,6 +21,7 @@ import type {
   CreateTabOpts,
   SplitPaneOpts,
   SplitPaneResult,
+  CloseGroupResult,
   TabGroup,
   ReviewComment,
 } from "@/types";
@@ -133,6 +134,8 @@ const request = {
   // Terminal tabs (Phase 2 RPC)
   tabsCreate: (p: CreateTabOpts): Promise<CreateTabResult> => invoke("tabs_create", { opts: p }),
   tabsSplitPane: (p: SplitPaneOpts): Promise<SplitPaneResult> => invoke("tabs_split_pane", p),
+  tabsCloseGroup: (p: { id: string }): Promise<CloseGroupResult> =>
+    invoke("tabs_close_group", { id: p.id }),
   tabsList: (p: { directoryId?: string | null }): Promise<Tab[]> =>
     invoke("tabs_list", { directoryId: p.directoryId ?? null }),
   tabsRename: (p: { id: string; label: string }): Promise<Tab> =>

@@ -13,7 +13,8 @@ export function registerNative(method: string, handler: Handler): void {
 
 // Methods served by the lean daemon (live PTYs + canonical agent status).
 // goes to the sidecar. The composite tab flows (tabs_create/tabs_close/
-// tabs_session_id) are NOT here — they're native handlers that orchestrate both
+// tabs_close_group/tabs_session_id) are NOT here — they're native handlers
+// that orchestrate both
 // processes (registered in index.ts).
 const DAEMON_METHODS = new Set<string>([
   "ping",
