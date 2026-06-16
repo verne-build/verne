@@ -42,9 +42,6 @@ fn observe_all(
         let processes = fg_pgrp
             .map(crate::services::pgrp::foreground_processes)
             .unwrap_or_default();
-        let shell_in_foreground = session
-            .child_pid
-            .is_some_and(|pid| processes.iter().any(|p| p.pid == pid));
         let process_agent_type = processes.iter().find_map(|p| {
             identify_process(
                 &p.name,
@@ -52,6 +49,11 @@ fn observe_all(
                 p.argv.as_deref().unwrap_or_default(),
             )
         });
+        // The foreground pgrp resolved to real process(es) and none is an agent
+        // — the login shell, or whatever the user ran after quitting the agent.
+        // (Empty processes = pgrp couldn't be resolved this tick; stay sticky
+        // rather than clearing on a transient read failure.)
+        let foreign_in_foreground = !processes.is_empty() && process_agent_type.is_none();
         let screen = session
             .emulator
             .lock()
@@ -77,7 +79,7 @@ fn observe_all(
         let observation = AgentObservation {
             process_agent_type,
             screen_agent_type,
-            shell_in_foreground,
+            foreign_in_foreground,
             detection,
             input_sequence: session.input_sequence.load(Ordering::Relaxed),
             output_sequence: session.output_sequence.load(Ordering::Relaxed),
