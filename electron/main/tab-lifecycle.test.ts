@@ -66,6 +66,16 @@ function setup() {
       const idx = groups.findIndex((g) => g.id === id);
       if (idx !== -1) groups.splice(idx, 1);
     }),
+    getGroups: vi.fn((_db: unknown, directoryId?: string | null) =>
+      directoryId ? groups.filter((g) => g.directoryId === directoryId) : groups,
+    ),
+    setGroupLayout: vi.fn((_db: unknown, id: string, layout: string, activePaneId: string | null) => {
+      const group = groups.find((g) => g.id === id);
+      if (group) {
+        group.layout = layout;
+        group.activePaneId = activePaneId ?? undefined;
+      }
+    }),
     forgetNotificationTab: vi.fn(),
     randomId: vi.fn(() => "tab-1"),
     now: vi.fn(() => 123),
@@ -129,19 +139,6 @@ describe("tab lifecycle handlers", () => {
     expect(deps.deleteGroup).toHaveBeenCalledWith(expect.anything(), "group-1");
     expect(deps.deleteTab).toHaveBeenCalledWith(expect.anything(), "tab-1");
     expect(send).not.toHaveBeenCalled();
-  });
-
-  it("can create a tab row without a new pane group for split-pane migration", async () => {
-    const { tabs, groups, handlers } = setup();
-
-    const result = await handlers.tabsCreate({
-      opts: { directoryId: "dir-1", createGroup: false },
-    }, fakeWindow().win) as { tab: Tab; group?: TabGroup };
-
-    expect(result.tab.id).toBe("tab-1");
-    expect(result.group).toBeUndefined();
-    expect(tabs).toHaveLength(1);
-    expect(groups).toHaveLength(0);
   });
 
   it("closes a tab with best-effort daemon and sidecar cleanup", async () => {
@@ -213,5 +210,84 @@ describe("tab lifecycle handlers", () => {
     expect(tabs).toEqual([persisted]);
     expect(deps.insertTab).not.toHaveBeenCalled();
     expect(deps.deleteTab).not.toHaveBeenCalled();
+  });
+
+  it("splits a pane by creating a tab and updating the existing group", async () => {
+    const { tabs, groups, daemon, handlers } = setup();
+    tabs.push({
+      id: "source",
+      directoryId: "dir-1",
+      label: "Main",
+      cwd: "/repo",
+      sortOrder: 0,
+      createdAt: 1,
+      userRenamed: false,
+    });
+    groups.push({
+      id: "group-1",
+      directoryId: "dir-1",
+      sortOrder: 0,
+      activePaneId: "source",
+      layout: JSON.stringify({ pane: "source" }),
+      createdAt: 1,
+    });
+    const { win, send } = fakeWindow();
+
+    const { tab, group } = await handlers.tabsSplitPane({
+      groupId: "group-1",
+      paneId: "source",
+      direction: "h",
+    }, win) as { tab: Tab; group: TabGroup };
+
+    expect(tab).toMatchObject({ id: "tab-1", label: "Main", cwd: "/repo" });
+    expect(JSON.parse(group.layout)).toEqual({
+      direction: "h",
+      children: [{ pane: "source" }, { pane: "tab-1" }],
+      sizes: [50, 50],
+    });
+    expect(groups[0]).toMatchObject({ id: "group-1", activePaneId: "tab-1", layout: group.layout });
+    expect(daemon.request).toHaveBeenCalledWith("tab_spawn", expect.any(Object));
+    expect(send).toHaveBeenCalledWith("daemon-event", "tab-added", { tab });
+  });
+
+  it("rolls back tab and group layout when split spawn fails", async () => {
+    const { tabs, groups, deps, daemon, handlers } = setup();
+    const source: Tab = {
+      id: "source",
+      directoryId: "dir-1",
+      label: "Main",
+      cwd: "/repo",
+      sortOrder: 0,
+      createdAt: 1,
+      userRenamed: false,
+    };
+    tabs.push(source);
+    const originalGroup: TabGroup = {
+      id: "group-1",
+      directoryId: "dir-1",
+      sortOrder: 0,
+      activePaneId: "source",
+      layout: JSON.stringify({ pane: "source" }),
+      createdAt: 1,
+    };
+    groups.push({ ...originalGroup });
+    daemon.request.mockRejectedValueOnce(new Error("spawn failed"));
+
+    await expect(handlers.tabsSplitPane({
+      groupId: "group-1",
+      paneId: "source",
+      direction: "v",
+      before: true,
+    }, fakeWindow().win)).rejects.toThrow("spawn failed");
+
+    expect(tabs).toEqual([source]);
+    expect(groups).toEqual([originalGroup]);
+    expect(deps.setGroupLayout).toHaveBeenLastCalledWith(
+      expect.anything(),
+      "group-1",
+      originalGroup.layout,
+      "source",
+    );
+    expect(deps.deleteTab).toHaveBeenCalledWith(expect.anything(), "tab-1");
   });
 });

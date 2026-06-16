@@ -38,6 +38,8 @@ export type {
   LayoutNode,
   CreateTabResult,
   CreateTabOpts,
+  SplitPaneOpts,
+  SplitPaneResult,
   TabUpdatedEvent,
   TabTitleEvent,
   AgentState,

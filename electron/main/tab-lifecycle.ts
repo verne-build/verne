@@ -19,9 +19,19 @@ import {
 import {
   createGroup as defaultCreateGroup,
   deleteGroup as defaultDeleteGroup,
+  getGroups as defaultGetGroups,
+  setGroupLayout as defaultSetGroupLayout,
 } from "./db/groups";
 import { forgetTab as defaultForgetNotificationTab } from "./native/notifications";
-import type { CreateTabOpts, CreateTabResult, Tab, WorkingDirectory } from "../../src/types/shared";
+import type {
+  CreateTabOpts,
+  CreateTabResult,
+  LayoutNode,
+  SplitPaneResult,
+  Tab,
+  TabGroup,
+  WorkingDirectory,
+} from "../../src/types/shared";
 
 type Handler = (params: any, win: BrowserWindow) => Promise<unknown> | unknown;
 type RpcClient = Pick<DaemonClient, "request">;
@@ -39,6 +49,8 @@ interface TabLifecycleDeps {
   tabDisplayLabels: typeof defaultTabDisplayLabels;
   createGroup: typeof defaultCreateGroup;
   deleteGroup: typeof defaultDeleteGroup;
+  getGroups: typeof defaultGetGroups;
+  setGroupLayout: typeof defaultSetGroupLayout;
   forgetNotificationTab: typeof defaultForgetNotificationTab;
   randomId: () => string;
   now: () => number;
@@ -57,6 +69,8 @@ const defaultDeps: TabLifecycleDeps = {
   tabDisplayLabels: defaultTabDisplayLabels,
   createGroup: defaultCreateGroup,
   deleteGroup: defaultDeleteGroup,
+  getGroups: defaultGetGroups,
+  setGroupLayout: defaultSetGroupLayout,
   forgetNotificationTab: defaultForgetNotificationTab,
   randomId: () => crypto.randomUUID(),
   now: () => Date.now(),
@@ -64,11 +78,77 @@ const defaultDeps: TabLifecycleDeps = {
 
 export interface TabLifecycleHandlers {
   tabsCreate: Handler;
+  tabsSplitPane: Handler;
   tabsClose: Handler;
   tabsSessionId: Handler;
   tabsList: Handler;
   tabsRename: Handler;
   tabsReorder: Handler;
+}
+
+type SplitDir = "h" | "v";
+
+function isLeaf(n: LayoutNode): n is { pane: string } {
+  return "pane" in n;
+}
+
+function firstLeaf(n: LayoutNode): string {
+  return isLeaf(n) ? n.pane : firstLeaf(n.children[0]);
+}
+
+function collectPaneIds(n: LayoutNode, out: string[] = []): string[] {
+  if (isLeaf(n)) out.push(n.pane);
+  else for (const c of n.children) collectPaneIds(c, out);
+  return out;
+}
+
+function cloneLayout(n: LayoutNode): LayoutNode {
+  return isLeaf(n)
+    ? { pane: n.pane }
+    : { direction: n.direction, children: n.children.map(cloneLayout), sizes: [...n.sizes] };
+}
+
+function evenSizes(count: number): number[] {
+  return Array.from({ length: count }, () => 100 / count);
+}
+
+function insertSplit(
+  root: LayoutNode,
+  targetPane: string,
+  newPane: string,
+  dir: SplitDir,
+  before = false,
+): LayoutNode {
+  const rec = (n: LayoutNode): LayoutNode => {
+    if (isLeaf(n)) {
+      if (n.pane !== targetPane) return n;
+      return {
+        direction: dir,
+        children: before
+          ? [{ pane: newPane }, { pane: targetPane }]
+          : [{ pane: targetPane }, { pane: newPane }],
+        sizes: evenSizes(2),
+      };
+    }
+    if (n.direction === dir) {
+      const idx = n.children.findIndex((c) => isLeaf(c) && c.pane === targetPane);
+      if (idx !== -1) {
+        const children = [...n.children];
+        children.splice(before ? idx : idx + 1, 0, { pane: newPane });
+        return { direction: dir, children, sizes: evenSizes(children.length) };
+      }
+    }
+    return { direction: n.direction, children: n.children.map(rec), sizes: n.sizes };
+  };
+  return rec(cloneLayout(root));
+}
+
+function parseLayout(raw: string): LayoutNode {
+  try {
+    return JSON.parse(raw) as LayoutNode;
+  } catch {
+    return { pane: raw };
+  }
 }
 
 function emit(win: BrowserWindow, name: string, payload: unknown): void {
@@ -92,6 +172,10 @@ function spawnPlanFor(
     directoryName: labels.directoryName,
     tabLabel: labels.tabLabel,
   };
+}
+
+function groupById(deps: TabLifecycleDeps, db: ReturnType<typeof defaultGetDb>, groupId: string): TabGroup | undefined {
+  return deps.getGroups(db, null).find((g) => g.id === groupId);
 }
 
 export function createTabLifecycleHandlers(
@@ -123,9 +207,7 @@ export function createTabLifecycleHandlers(
         userRenamed: false,
       };
       deps.insertTab(db, tab);
-      const group = opts.createGroup === false
-        ? undefined
-        : deps.createGroup(db, tab.directoryId, JSON.stringify({ pane: tab.id }), tab.id);
+      const group = deps.createGroup(db, tab.directoryId, JSON.stringify({ pane: tab.id }), tab.id);
 
       const plan = spawnPlanFor(deps, db, tab);
       try {
@@ -137,6 +219,51 @@ export function createTabLifecycleHandlers(
       }
       emit(win, "tab-added", { tab });
       return { tab, group };
+    },
+
+    async tabsSplitPane(
+      params: { groupId: string; paneId: string; direction: SplitDir; before?: boolean },
+      win: BrowserWindow,
+    ): Promise<SplitPaneResult> {
+      const db = deps.getDb();
+      const group = groupById(deps, db, params.groupId);
+      if (!group) throw new Error("group not found");
+      const layout = parseLayout(group.layout);
+      if (!collectPaneIds(layout).includes(params.paneId)) {
+        throw new Error("pane not found in group");
+      }
+      const srcTab = deps.getTab(db, params.paneId);
+      if (!srcTab) throw new Error("source tab not found");
+      const primaryTab = deps.getTab(db, firstLeaf(layout));
+      const tab: Tab = {
+        id: deps.randomId(),
+        directoryId: group.directoryId,
+        label: primaryTab?.label ?? srcTab.label,
+        cwd: srcTab.cwd,
+        sortOrder: 0,
+        createdAt: deps.now(),
+        lastAgentType: undefined,
+        lastAgentSessionId: undefined,
+        lastAgentState: undefined,
+        userRenamed: false,
+      };
+      deps.insertTab(db, tab);
+      const previousLayout = group.layout;
+      const previousActivePaneId = group.activePaneId ?? null;
+      const nextLayout = JSON.stringify(insertSplit(layout, params.paneId, tab.id, params.direction, params.before));
+      const updatedGroup: TabGroup = { ...group, layout: nextLayout, activePaneId: tab.id };
+      deps.setGroupLayout(db, group.id, nextLayout, tab.id);
+
+      try {
+        await daemon.request("tab_spawn", { plan: spawnPlanFor(deps, db, tab) });
+      } catch (e) {
+        deps.setGroupLayout(db, group.id, previousLayout, previousActivePaneId);
+        deps.deleteTab(db, tab.id);
+        throw e;
+      }
+      emit(win, "tab-added", { tab });
+      emit(win, "tab-updated", { tab });
+      return { tab, group: updatedGroup };
     },
 
     async tabsClose(params: { id: string }, win: BrowserWindow) {
@@ -181,6 +308,7 @@ export function createTabLifecycleHandlers(
 export function registerTabLifecycle(daemon: DaemonClient, sidecar: DaemonClient): void {
   const handlers = createTabLifecycleHandlers(daemon, sidecar);
   registerNative("tabs_create", handlers.tabsCreate);
+  registerNative("tabs_split_pane", handlers.tabsSplitPane);
   registerNative("tabs_close", handlers.tabsClose);
   registerNative("tabs_session_id", handlers.tabsSessionId);
   registerNative("tabs_list", handlers.tabsList);

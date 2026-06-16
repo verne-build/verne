@@ -90,6 +90,17 @@ export function updateGroupLayout(
   ).run(layout, activePaneId ?? null, id);
 }
 
+export function setGroupLayout(
+  db: DatabaseSync,
+  id: string,
+  layout: string,
+  activePaneId: string | null,
+): void {
+  db.prepare(
+    "UPDATE tab_groups SET layout = ?, active_pane_id = ? WHERE id = ?"
+  ).run(layout, activePaneId, id);
+}
+
 export function setGroupActivePane(db: DatabaseSync, id: string, paneId: string): void {
   db.prepare("UPDATE tab_groups SET active_pane_id = ? WHERE id = ?").run(paneId, id);
 }

@@ -440,8 +440,18 @@ export interface CreateTabOpts {
   directoryId: string;
   label?: string;
   cwd?: string;
-  /** Temporary lifecycle migration flag: split-pane uses false until it has its own command. */
-  createGroup?: boolean;
+}
+
+export interface SplitPaneOpts {
+  groupId: string;
+  paneId: string;
+  direction: "h" | "v";
+  before?: boolean;
+}
+
+export interface SplitPaneResult {
+  tab: Tab;
+  group: TabGroup;
 }
 
 /** Daemon-canonical agent status sent over the socket. Mirrors the Rust enum

@@ -417,27 +417,20 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     const loc = locateGroup(paneId);
     if (!loc) return;
     const { group, dirId } = loc;
-    const tabsInDir = terminalTabsByDirectory.value[dirId] ?? [];
-    const srcTab = tabsInDir.find((t) => t.id === paneId);
-    // New panes inherit the tab's name (the primary pane's label) — they're
-    // part of the same tab, not a new numbered tab.
-    const primaryLabel = tabsInDir.find((t) => t.id === firstLeaf(group.layout))?.label;
-    const { tab } = await useRpc().request.tabsCreate({
-      directoryId: dirId,
-      cwd: srcTab?.cwd,
-      label: primaryLabel,
-      createGroup: false,
+    const { tab, group: groupRow } = await useRpc().request.tabsSplitPane({
+      groupId: group.id,
+      paneId,
+      direction,
+      before,
     });
     terminalTabsByDirectory.value = {
       ...terminalTabsByDirectory.value,
       [dirId]: [...(terminalTabsByDirectory.value[dirId] ?? []), tab],
     };
-    const layout = insertSplit(group.layout, paneId, tab.id, direction, before);
-    const next: PaneGroup = { ...group, layout, activePaneId: tab.id };
-    replaceGroup(dirId, next);
+    const next = rowToPaneGroup(groupRow);
+    if (next) replaceGroup(dirId, next);
     activeGroupIdByDirectory.value = { ...activeGroupIdByDirectory.value, [dirId]: group.id };
     syncActiveTab(dirId);
-    await useRpc().request.groupUpdateLayout({ id: group.id, layout: JSON.stringify(layout), activePaneId: tab.id }).catch(() => {});
     return tab;
   }
 
