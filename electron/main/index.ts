@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { ensureDaemon, ensureSidecar, killSidecar, restartDaemon } from "./daemon-supervisor";
 import { installRouter, registerNative } from "./ipc-router";
 import { createWindow } from "./window";
-import { showTestNotification, forgetTab as forgetNotificationTab } from "./native/notifications";
+import { showTestNotification } from "./native/notifications";
 import { buildAppMenu, registerMenuStateCommands } from "./menu";
 import { registerAssetSchemePrivilege, handleAssetProtocol } from "./asset-protocol";
 import { registerWindowCommands } from "./native/window-cmds";
@@ -24,19 +24,7 @@ import { registerDictationHotkey } from "./speech/hotkey";
 import { initAutoUpdater, stopAutoUpdater } from "./native/updater";
 import { registerDbCommands } from "./native/db-cmds";
 import { getDb } from "./db/connection";
-import { getDirectory, resolveWorkspaceRoot } from "./db/directories";
-import {
-  insertTab,
-  getTab,
-  getTabs,
-  renameTab,
-  reorderTabs,
-  deleteTab,
-  clearStaleTabStates,
-  tabDisplayLabels,
-  defaultLabel,
-} from "./db/tabs";
-import type { Tab, CreateTabOpts } from "../../src/types/shared";
+import { getTab, clearStaleTabStates } from "./db/tabs";
 import { writeMcpLauncher } from "./mcp/launcher";
 import {
   writeNotifyScript,
@@ -50,6 +38,7 @@ import { removePluginForOpencode, removePluginForPi } from "./native/agent-plugi
 import { HOOK_INSTALLERS } from "./native/hook-install-registry";
 import { internalDataDir } from "./paths";
 import type { DaemonClient } from "./daemon-client";
+import { registerTabLifecycle } from "./tab-lifecycle";
 
 // Privileged scheme registration MUST happen before app is ready.
 registerAssetSchemePrivilege();
@@ -135,113 +124,6 @@ function registerExtraNatives(): void {
   });
 }
 
-// Tab lifecycle spans both processes (Star topology): Electron owns the DB row
-// (node:sqlite, slice 5b.2), the daemon owns the live PTY, the sidecar owns
-// agent-shadow teardown (DB-free RPCs). These native handlers preserve the
-// single renderer call (`tabs_create` etc.).
-function registerTabOrchestration(d: DaemonClient, s: DaemonClient): void {
-  const emit = (name: string, payload: unknown) =>
-    getWindow().webContents.send("daemon-event", name, payload);
-
-  // create: Electron inserts the row + assembles the spawn plan → daemon spawns
-  // the PTY. Roll the row back on failure.
-  registerNative("tabs_create", async (params: { opts: CreateTabOpts }) => {
-    const db = getDb();
-    const { opts } = params;
-    const dir = getDirectory(db, opts.directoryId);
-    if (!dir) throw new Error("directory not found");
-    const cwd = opts.cwd ?? dir.path;
-    const label = opts.label ?? defaultLabel(getTabs(db, opts.directoryId).length);
-
-    const env: Record<string, string> = {};
-    const root = resolveWorkspaceRoot(db, opts.directoryId);
-    if (root) env.VERNE_WORKSPACE_DIR = root;
-
-    const now = Date.now();
-    const tab: Tab = {
-      id: crypto.randomUUID(),
-      directoryId: opts.directoryId,
-      label,
-      cwd,
-      sortOrder: 0,
-      createdAt: now,
-      lastAgentType: undefined,
-      lastAgentSessionId: undefined,
-      lastAgentState: undefined,
-      userRenamed: false,
-    };
-    insertTab(db, tab);
-
-    const labels = tabDisplayLabels(db, tab.id);
-    const plan = {
-      tabId: tab.id,
-      cwd,
-      env,
-      agentSessionId: undefined,
-      directoryName: labels.directoryName,
-      tabLabel: labels.tabLabel,
-    };
-    try {
-      await d.request("tab_spawn", { plan });
-    } catch (e) {
-      deleteTab(db, tab.id);
-      throw e;
-    }
-    emit("tab-added", { tab });
-    return tab;
-  });
-
-  // close: daemon kills the PTY, Electron deletes the row, sidecar tears down the
-  // agent shadow (it still owns the in-memory git2 repo + on-disk shadow tree).
-  registerNative("tabs_close", async (params: { id: string }) => {
-    await d.request("tab_kill", { tabId: params.id }).catch(() => {});
-    deleteTab(getDb(), params.id);
-    s.request("agent_shadow_cleanup", { tabId: params.id }).catch(() => {});
-    emit("tab-deleted", { id: params.id });
-    forgetNotificationTab(params.id);
-    return true;
-  });
-
-  // session-id: assemble a plan from the persisted row, then ensure the daemon
-  // has a live PTY (idempotent — returns existing id).
-  registerNative("tabs_session_id", (params: { id: string }) => {
-    const db = getDb();
-    const tab = getTab(db, params.id);
-    if (!tab) throw new Error("tab not found");
-    const env: Record<string, string> = {};
-    const root = resolveWorkspaceRoot(db, tab.directoryId);
-    if (root) env.VERNE_WORKSPACE_DIR = root;
-    const labels = tabDisplayLabels(db, params.id);
-    const plan = {
-      tabId: params.id,
-      cwd: tab.cwd,
-      env,
-      agentSessionId: undefined,
-      directoryName: labels.directoryName,
-      tabLabel: labels.tabLabel,
-    };
-    return d.request("tab_spawn", { plan });
-  });
-
-  registerNative("tabs_list", (params: { directoryId?: string | null }) =>
-    getTabs(getDb(), params.directoryId));
-
-  registerNative("tabs_rename", (params: { id: string; label: string }) => {
-    const db = getDb();
-    renameTab(db, params.id, params.label);
-    const tab = getTab(db, params.id);
-    if (!tab) throw new Error("tab gone after rename");
-    emit("tab-updated", { tab });
-    return tab;
-  });
-
-  registerNative("tabs_reorder", (params: { ids: string[] }) => {
-    reorderTabs(getDb(), params.ids);
-    emit("tabs-reordered", { ids: params.ids });
-    return true;
-  });
-}
-
 app.whenReady().then(async () => {
   handleAssetProtocol();
 
@@ -302,7 +184,7 @@ app.whenReady().then(async () => {
   // to be awaited HERE, on the pre-window critical path, delaying first paint by
   // seconds (the daemon/sidecar round-trips + git work in resync).
   registerMetricsCommands(daemon, sidecar, lspInstanceCount, lspPids);
-  registerTabOrchestration(daemon, sidecar);
+  registerTabLifecycle(daemon, sidecar);
   registerSettingsCommands(sidecar);
 
   // Forward `agent-hook-fileops` events from the daemon to the sidecar's
