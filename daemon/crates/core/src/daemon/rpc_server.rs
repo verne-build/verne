@@ -776,82 +776,8 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
                 Err(e) => Response::err(req.id, e),
             }
         }
-        // ---- shadow.rs (per-dir shadow git tree) ----
-        m if m == crate::protocol::methods::SHADOW_COMMIT => {
-            let dir = s(req.params.get("dir"));
-            let rel_path = s(req.params.get("relPath"));
-            let content = s(req.params.get("content"));
-            let result = shadow_with_tree(&state, &dir, |tree| tree.commit_file(&rel_path, &content));
-            match result {
-                Ok(v) => Response::ok(req.id, serde_json::Value::String(v)),
-                Err(e) => Response::err(req.id, e),
-            }
-        }
-        m if m == crate::protocol::methods::SHADOW_READ => {
-            let dir = s(req.params.get("dir"));
-            let rel_path = s(req.params.get("relPath"));
-            let result = shadow_with_tree(&state, &dir, |tree| Ok(tree.read_file(&rel_path)));
-            match result {
-                Ok(v) => Response::ok(req.id, serde_json::to_value(v).unwrap()),
-                Err(e) => Response::err(req.id, e),
-            }
-        }
-        m if m == crate::protocol::methods::SHADOW_READ_WITH_BASELINE => {
-            let dir = s(req.params.get("dir"));
-            let rel_path = s(req.params.get("relPath"));
-            let result = shadow_with_tree(&state, &dir, |tree| tree.read_file_with_baseline(&rel_path));
-            match result {
-                Ok(v) => Response::ok(req.id, serde_json::to_value(v).unwrap()),
-                Err(e) => Response::err(req.id, e),
-            }
-        }
-        m if m == crate::protocol::methods::SHADOW_DIFF => {
-            let dir = s(req.params.get("dir"));
-            let rel_path = s(req.params.get("relPath"));
-            let disk_content = s(req.params.get("diskContent"));
-            let result = shadow_with_tree(&state, &dir, |tree| tree.diff_file(&rel_path, &disk_content));
-            match result {
-                Ok(v) => Response::ok(req.id, serde_json::to_value(v).unwrap()),
-                Err(e) => Response::err(req.id, e),
-            }
-        }
-        m if m == crate::protocol::methods::SHADOW_HISTORY => {
-            let dir = s(req.params.get("dir"));
-            let rel_path = s(req.params.get("relPath"));
-            let result = shadow_with_tree(&state, &dir, |tree| tree.file_history(&rel_path));
-            match result {
-                Ok(v) => Response::ok(req.id, serde_json::to_value(v).unwrap()),
-                Err(e) => Response::err(req.id, e),
-            }
-        }
-        m if m == crate::protocol::methods::SHADOW_READ_AT => {
-            let dir = s(req.params.get("dir"));
-            let rel_path = s(req.params.get("relPath"));
-            let oid = s(req.params.get("oid"));
-            let result = shadow_with_tree(&state, &dir, |tree| tree.read_at_commit(&rel_path, &oid));
-            match result {
-                Ok(v) => Response::ok(req.id, serde_json::Value::String(v)),
-                Err(e) => Response::err(req.id, e),
-            }
-        }
-        m if m == crate::protocol::methods::SHADOW_ON_SAVED => {
-            let dir = s(req.params.get("dir"));
-            let rel_path = s(req.params.get("relPath"));
-            let content = s(req.params.get("content"));
-            let result = shadow_with_tree(&state, &dir, |tree| tree.on_file_saved(&rel_path, &content));
-            match result {
-                Ok(()) => Response::ok(req.id, serde_json::Value::Null),
-                Err(e) => Response::err(req.id, e),
-            }
-        }
-        m if m == crate::protocol::methods::SHADOW_REMOVE => {
-            let dir = s(req.params.get("dir"));
-            let rel_path = s(req.params.get("relPath"));
-            let result = shadow_with_tree(&state, &dir, |tree| tree.remove_file(&rel_path));
-            match result {
-                Ok(()) => Response::ok(req.id, serde_json::Value::Null),
-                Err(e) => Response::err(req.id, e),
-            }
+        m if crate::sidecar::dispatch::shadow::handles(m) => {
+            crate::sidecar::dispatch::shadow::dispatch(req, state).await
         }
 
         // ---- mcp.rs (agent MCP registration) ----
@@ -1666,28 +1592,6 @@ fn list_directory_paths_impl(
         })
         .collect();
     Ok(json!({ "dirs": collapsed, "resolved": parent_dir }))
-}
-
-/// Get-or-create the per-dir `ShadowTree` and run `f` against it, mirroring
-/// `commands/shadow.rs::with_tree` but typed against daemon `AppState`. The
-/// shadow tree map persists across requests in the daemon.
-fn shadow_with_tree<T, F>(
-    state: &crate::state::AppState,
-    dir: &str,
-    f: F,
-) -> Result<T, String>
-where
-    F: FnOnce(&crate::services::shadow_tree::ShadowTree) -> Result<T, String>,
-{
-    let mut trees = state.shadow_trees.lock().map_err(|e| e.to_string())?;
-    if !trees.contains_key(dir) {
-        let tree = crate::services::shadow_tree::ShadowTree::open(
-            &state.internal_data_dir,
-            &std::path::PathBuf::from(dir),
-        )?;
-        trees.insert(dir.to_string(), tree);
-    }
-    f(trees.get(dir).unwrap())
 }
 
 #[cfg(test)]
