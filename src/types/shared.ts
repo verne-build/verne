@@ -431,15 +431,23 @@ export interface TabGroup {
   createdAt: number;
 }
 
-export interface CreateTabResult {
-  tab: Tab;
-  group?: TabGroup;
+export interface TabLifecycleSnapshot {
+  directoryId: string;
+  tabs: Tab[];
+  groups: TabGroup[];
+  activeGroupId?: string | null;
 }
 
 export interface CreateTabOpts {
   directoryId: string;
   label?: string;
   cwd?: string;
+}
+
+export interface CreateTabResult {
+  tab: Tab;
+  group?: TabGroup;
+  snapshot: TabLifecycleSnapshot;
 }
 
 export interface SplitPaneOpts {
@@ -452,12 +460,14 @@ export interface SplitPaneOpts {
 export interface SplitPaneResult {
   tab: Tab;
   group: TabGroup;
+  snapshot: TabLifecycleSnapshot;
 }
 
 export interface CloseGroupResult {
   directoryId: string;
   groupId: string;
   closedTabIds: string[];
+  snapshot: TabLifecycleSnapshot;
 }
 
 /** Daemon-canonical agent status sent over the socket. Mirrors the Rust enum

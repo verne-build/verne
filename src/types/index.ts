@@ -36,6 +36,7 @@ export type {
   TabSessionRow,
   TabGroup,
   LayoutNode,
+  TabLifecycleSnapshot,
   CreateTabResult,
   CreateTabOpts,
   SplitPaneOpts,

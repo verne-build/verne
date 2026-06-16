@@ -91,9 +91,10 @@ describe("tab lifecycle handlers", () => {
     const { tabs, groups, daemon, handlers } = setup();
     const { win, send } = fakeWindow();
 
-    const { tab, group } = await handlers.tabsCreate({ opts: { directoryId: "dir-1" } }, win) as {
+    const { tab, group, snapshot } = await handlers.tabsCreate({ opts: { directoryId: "dir-1" } }, win) as {
       tab: Tab;
       group: TabGroup;
+      snapshot: { directoryId: string; tabs: Tab[]; groups: TabGroup[]; activeGroupId?: string | null };
     };
 
     expect(tab).toMatchObject({
@@ -112,6 +113,12 @@ describe("tab lifecycle handlers", () => {
       layout: JSON.stringify({ pane: "tab-1" }),
     });
     expect(groups).toEqual([group]);
+    expect(snapshot).toEqual({
+      directoryId: "dir-1",
+      tabs: [tab],
+      groups: [group],
+      activeGroupId: "group-1",
+    });
     expect(daemon.request).toHaveBeenCalledWith("tab_spawn", {
       plan: {
         tabId: "tab-1",
@@ -205,6 +212,12 @@ describe("tab lifecycle handlers", () => {
       directoryId: "dir-1",
       groupId: "group-1",
       closedTabIds: ["pane-1", "pane-2"],
+      snapshot: {
+        directoryId: "dir-1",
+        tabs: [],
+        groups: [],
+        activeGroupId: null,
+      },
     });
 
     expect(tabs).toHaveLength(0);
@@ -289,11 +302,15 @@ describe("tab lifecycle handlers", () => {
     });
     const { win, send } = fakeWindow();
 
-    const { tab, group } = await handlers.tabsSplitPane({
+    const { tab, group, snapshot } = await handlers.tabsSplitPane({
       groupId: "group-1",
       paneId: "source",
       direction: "h",
-    }, win) as { tab: Tab; group: TabGroup };
+    }, win) as {
+      tab: Tab;
+      group: TabGroup;
+      snapshot: { directoryId: string; tabs: Tab[]; groups: TabGroup[]; activeGroupId?: string | null };
+    };
 
     expect(tab).toMatchObject({ id: "tab-1", label: "Main", cwd: "/repo" });
     expect(JSON.parse(group.layout)).toEqual({
@@ -302,6 +319,12 @@ describe("tab lifecycle handlers", () => {
       sizes: [50, 50],
     });
     expect(groups[0]).toMatchObject({ id: "group-1", activePaneId: "tab-1", layout: group.layout });
+    expect(snapshot).toEqual({
+      directoryId: "dir-1",
+      tabs: [tabs[0], tab],
+      groups: [groups[0]],
+      activeGroupId: "group-1",
+    });
     expect(daemon.request).toHaveBeenCalledWith("tab_spawn", expect.any(Object));
     expect(send).toHaveBeenCalledWith("daemon-event", "tab-added", { tab });
   });

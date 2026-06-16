@@ -1,6 +1,15 @@
 import { defineStore } from "pinia";
 import { ref, shallowRef, triggerRef, computed, watch } from "vue";
-import type { WorkingDirectory, TabUpdatedEvent, Tab, TabGroup, LayoutNode, CreateTabOpts, AgentState } from "@/types";
+import type {
+  WorkingDirectory,
+  TabUpdatedEvent,
+  Tab,
+  TabGroup,
+  LayoutNode,
+  CreateTabOpts,
+  AgentState,
+  TabLifecycleSnapshot,
+} from "@/types";
 import { useRpc } from "@/composables/useRpc";
 import { stopClient } from "@/composables/useLanguageClient";
 import { dropFilePanelScope } from "@/composables/useFilePanelTabs";
@@ -382,6 +391,39 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     };
   }
 
+  function applyLifecycleSnapshot(snapshot: TabLifecycleSnapshot, activeGroupId = snapshot.activeGroupId) {
+    const dirId = snapshot.directoryId;
+    const nextGroups = snapshot.groups
+      .map(rowToPaneGroup)
+      .filter((g): g is PaneGroup => Boolean(g));
+    const nextIds = new Set(snapshot.tabs.map((t) => t.id));
+    for (const old of terminalTabsByDirectory.value[dirId] ?? []) {
+      if (nextIds.has(old.id)) continue;
+      tabRuntime.value.delete(old.id);
+      oscTitleByTab.value.delete(old.id);
+      const hist = tabActivationHistory[dirId];
+      if (hist) {
+        const hi = hist.indexOf(old.id);
+        if (hi !== -1) hist.splice(hi, 1);
+      }
+    }
+    terminalTabsByDirectory.value = {
+      ...terminalTabsByDirectory.value,
+      [dirId]: snapshot.tabs,
+    };
+    setGroups(dirId, nextGroups);
+    hydrateTabRuntime(snapshot.tabs);
+    triggerRef(oscTitleByTab);
+
+    const validActive = activeGroupId && nextGroups.some((g) => g.id === activeGroupId)
+      ? activeGroupId
+      : nextGroups[0]?.id;
+    activeGroupIdByDirectory.value = {
+      ...activeGroupIdByDirectory.value,
+      [dirId]: validActive,
+    };
+  }
+
   async function createTab(opts: CreateTabOpts) {
     const rpc = useRpc();
     // Number new tabs by GROUP count, not total panes — splitting a tab adds
@@ -389,22 +431,10 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     const withLabel: CreateTabOpts = opts.label
       ? opts
       : { ...opts, label: String(groupsOf(opts.directoryId).length + 1) };
-    const { tab, group: groupRow } = await rpc.request.tabsCreate(withLabel);
-    const existing = terminalTabsByDirectory.value[opts.directoryId] ?? [];
-    terminalTabsByDirectory.value = {
-      ...terminalTabsByDirectory.value,
-      [opts.directoryId]: [...existing, tab],
-    };
-    const group = groupRow ? rowToPaneGroup(groupRow) : null;
-    if (group) {
-      setGroups(opts.directoryId, [...groupsOf(opts.directoryId), group]);
-      activeGroupIdByDirectory.value = {
-        ...activeGroupIdByDirectory.value,
-        [opts.directoryId]: group.id,
-      };
-    }
-    syncActiveTab(opts.directoryId);
-    return tab;
+    const result = await rpc.request.tabsCreate(withLabel);
+    applyLifecycleSnapshot(result.snapshot, result.snapshot.activeGroupId ?? result.group?.id);
+    syncActiveTab(result.snapshot.directoryId);
+    return result.tab;
   }
 
   /** Guarantee a directory always has ≥1 terminal — spawn a fresh one if empty. */
@@ -417,21 +447,15 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     const loc = locateGroup(paneId);
     if (!loc) return;
     const { group, dirId } = loc;
-    const { tab, group: groupRow } = await useRpc().request.tabsSplitPane({
+    const result = await useRpc().request.tabsSplitPane({
       groupId: group.id,
       paneId,
       direction,
       before,
     });
-    terminalTabsByDirectory.value = {
-      ...terminalTabsByDirectory.value,
-      [dirId]: [...(terminalTabsByDirectory.value[dirId] ?? []), tab],
-    };
-    const next = rowToPaneGroup(groupRow);
-    if (next) replaceGroup(dirId, next);
-    activeGroupIdByDirectory.value = { ...activeGroupIdByDirectory.value, [dirId]: group.id };
+    applyLifecycleSnapshot(result.snapshot, result.snapshot.activeGroupId ?? group.id);
     syncActiveTab(dirId);
-    return tab;
+    return result.tab;
   }
 
   /** Close every pane in a group (= closing the tab-bar pill), then the group. */
@@ -459,14 +483,19 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     for (const sid of sessionIds) {
       if (sid) window.dispatchEvent(new CustomEvent("dispose-terminal-session", { detail: sid }));
     }
-    const remaining = groups.filter((g) => g.id !== groupId);
-    setGroups(dirId, remaining);
-    if (activeGroupIdByDirectory.value[dirId] === groupId) {
-      const nextG = remaining[idx] ?? remaining[idx - 1] ?? remaining[0];
-      activeGroupIdByDirectory.value = { ...activeGroupIdByDirectory.value, [dirId]: nextG?.id };
-    }
-    syncActiveTab(dirId);
-    await ensureTerminal(dirId);
+    const remaining = result.snapshot.groups
+      .map(rowToPaneGroup)
+      .filter((g): g is PaneGroup => Boolean(g));
+    const currentActiveGroupId = activeGroupIdByDirectory.value[dirId];
+    const nextG = currentActiveGroupId === groupId
+      ? remaining[idx] ?? remaining[idx - 1] ?? remaining[0]
+      : undefined;
+    applyLifecycleSnapshot(
+      result.snapshot,
+      currentActiveGroupId === groupId ? nextG?.id : currentActiveGroupId,
+    );
+    syncActiveTab(result.snapshot.directoryId);
+    await ensureTerminal(result.snapshot.directoryId);
   }
 
   // Fully stop a pane's PTY and release its cached xterm. Resolve the session

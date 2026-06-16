@@ -31,6 +31,7 @@ import type {
   SplitPaneResult,
   Tab,
   TabGroup,
+  TabLifecycleSnapshot,
   WorkingDirectory,
 } from "../../src/types/shared";
 
@@ -180,6 +181,20 @@ function groupById(deps: TabLifecycleDeps, db: ReturnType<typeof defaultGetDb>, 
   return deps.getGroups(db, null).find((g) => g.id === groupId);
 }
 
+function snapshotFor(
+  deps: TabLifecycleDeps,
+  db: ReturnType<typeof defaultGetDb>,
+  directoryId: string,
+  activeGroupId?: string | null,
+): TabLifecycleSnapshot {
+  return {
+    directoryId,
+    tabs: deps.getTabs(db, directoryId),
+    groups: deps.getGroups(db, directoryId),
+    activeGroupId,
+  };
+}
+
 export function createTabLifecycleHandlers(
   daemon: RpcClient,
   sidecar: RpcClient,
@@ -220,7 +235,7 @@ export function createTabLifecycleHandlers(
         throw e;
       }
       emit(win, "tab-added", { tab });
-      return { tab, group };
+      return { tab, group, snapshot: snapshotFor(deps, db, tab.directoryId, group?.id ?? null) };
     },
 
     async tabsSplitPane(
@@ -265,7 +280,7 @@ export function createTabLifecycleHandlers(
       }
       emit(win, "tab-added", { tab });
       emit(win, "tab-updated", { tab });
-      return { tab, group: updatedGroup };
+      return { tab, group: updatedGroup, snapshot: snapshotFor(deps, db, tab.directoryId, group.id) };
     },
 
     async tabsClose(params: { id: string }, win: BrowserWindow) {
@@ -293,7 +308,12 @@ export function createTabLifecycleHandlers(
         emit(win, "tab-deleted", { id: tabId });
       }
       deps.deleteGroup(db, group.id);
-      return { directoryId: group.directoryId, groupId: group.id, closedTabIds };
+      return {
+        directoryId: group.directoryId,
+        groupId: group.id,
+        closedTabIds,
+        snapshot: snapshotFor(deps, db, group.directoryId, null),
+      };
     },
 
     tabsSessionId(params: { id: string }) {
