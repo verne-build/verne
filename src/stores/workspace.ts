@@ -370,6 +370,18 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     return tabs;
   }
 
+  function rowToPaneGroup(row: TabGroup): PaneGroup | null {
+    const layout = parseLayout(row.layout);
+    if (!layout) return null;
+    return {
+      id: row.id,
+      directoryId: row.directoryId,
+      sortOrder: row.sortOrder,
+      activePaneId: row.activePaneId,
+      layout,
+    };
+  }
+
   async function createTab(opts: CreateTabOpts) {
     const rpc = useRpc();
     // Number new tabs by GROUP count, not total panes — splitting a tab adds
@@ -377,19 +389,20 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     const withLabel: CreateTabOpts = opts.label
       ? opts
       : { ...opts, label: String(groupsOf(opts.directoryId).length + 1) };
-    const tab = await rpc.request.tabsCreate(withLabel);
+    const { tab, group: groupRow } = await rpc.request.tabsCreate(withLabel);
     const existing = terminalTabsByDirectory.value[opts.directoryId] ?? [];
     terminalTabsByDirectory.value = {
       ...terminalTabsByDirectory.value,
       [opts.directoryId]: [...existing, tab],
     };
-    // A new tab is its own single-pane group.
-    const group = await persistNewGroup(opts.directoryId, { pane: tab.id }, tab.id);
-    setGroups(opts.directoryId, [...groupsOf(opts.directoryId), group]);
-    activeGroupIdByDirectory.value = {
-      ...activeGroupIdByDirectory.value,
-      [opts.directoryId]: group.id,
-    };
+    const group = groupRow ? rowToPaneGroup(groupRow) : null;
+    if (group) {
+      setGroups(opts.directoryId, [...groupsOf(opts.directoryId), group]);
+      activeGroupIdByDirectory.value = {
+        ...activeGroupIdByDirectory.value,
+        [opts.directoryId]: group.id,
+      };
+    }
     syncActiveTab(opts.directoryId);
     return tab;
   }
@@ -409,7 +422,12 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     // New panes inherit the tab's name (the primary pane's label) — they're
     // part of the same tab, not a new numbered tab.
     const primaryLabel = tabsInDir.find((t) => t.id === firstLeaf(group.layout))?.label;
-    const tab = await useRpc().request.tabsCreate({ directoryId: dirId, cwd: srcTab?.cwd, label: primaryLabel });
+    const { tab } = await useRpc().request.tabsCreate({
+      directoryId: dirId,
+      cwd: srcTab?.cwd,
+      label: primaryLabel,
+      createGroup: false,
+    });
     terminalTabsByDirectory.value = {
       ...terminalTabsByDirectory.value,
       [dirId]: [...(terminalTabsByDirectory.value[dirId] ?? []), tab],

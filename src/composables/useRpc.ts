@@ -17,6 +17,7 @@ import type {
   TabUpdatedEvent,
   TabTitleEvent,
   Tab,
+  CreateTabResult,
   CreateTabOpts,
   TabGroup,
   ReviewComment,
@@ -128,7 +129,7 @@ const request = {
     invoke("tab_resize", { tabId: p.tabId, cols: p.cols, rows: p.rows }),
 
   // Terminal tabs (Phase 2 RPC)
-  tabsCreate: (p: CreateTabOpts): Promise<Tab> => invoke("tabs_create", { opts: p }),
+  tabsCreate: (p: CreateTabOpts): Promise<CreateTabResult> => invoke("tabs_create", { opts: p }),
   tabsList: (p: { directoryId?: string | null }): Promise<Tab[]> =>
     invoke("tabs_list", { directoryId: p.directoryId ?? null }),
   tabsRename: (p: { id: string; label: string }): Promise<Tab> =>

@@ -16,8 +16,12 @@ import {
   reorderTabs as defaultReorderTabs,
   tabDisplayLabels as defaultTabDisplayLabels,
 } from "./db/tabs";
+import {
+  createGroup as defaultCreateGroup,
+  deleteGroup as defaultDeleteGroup,
+} from "./db/groups";
 import { forgetTab as defaultForgetNotificationTab } from "./native/notifications";
-import type { CreateTabOpts, Tab, WorkingDirectory } from "../../src/types/shared";
+import type { CreateTabOpts, CreateTabResult, Tab, WorkingDirectory } from "../../src/types/shared";
 
 type Handler = (params: any, win: BrowserWindow) => Promise<unknown> | unknown;
 type RpcClient = Pick<DaemonClient, "request">;
@@ -33,6 +37,8 @@ interface TabLifecycleDeps {
   renameTab: typeof defaultRenameTab;
   reorderTabs: typeof defaultReorderTabs;
   tabDisplayLabels: typeof defaultTabDisplayLabels;
+  createGroup: typeof defaultCreateGroup;
+  deleteGroup: typeof defaultDeleteGroup;
   forgetNotificationTab: typeof defaultForgetNotificationTab;
   randomId: () => string;
   now: () => number;
@@ -49,6 +55,8 @@ const defaultDeps: TabLifecycleDeps = {
   renameTab: defaultRenameTab,
   reorderTabs: defaultReorderTabs,
   tabDisplayLabels: defaultTabDisplayLabels,
+  createGroup: defaultCreateGroup,
+  deleteGroup: defaultDeleteGroup,
   forgetNotificationTab: defaultForgetNotificationTab,
   randomId: () => crypto.randomUUID(),
   now: () => Date.now(),
@@ -94,7 +102,7 @@ export function createTabLifecycleHandlers(
   const deps = { ...defaultDeps, ...partialDeps };
 
   return {
-    async tabsCreate(params: { opts: CreateTabOpts }, win: BrowserWindow) {
+    async tabsCreate(params: { opts: CreateTabOpts }, win: BrowserWindow): Promise<CreateTabResult> {
       const db = deps.getDb();
       const { opts } = params;
       const dir = deps.getDirectory(db, opts.directoryId) as WorkingDirectory | undefined;
@@ -115,16 +123,20 @@ export function createTabLifecycleHandlers(
         userRenamed: false,
       };
       deps.insertTab(db, tab);
+      const group = opts.createGroup === false
+        ? undefined
+        : deps.createGroup(db, tab.directoryId, JSON.stringify({ pane: tab.id }), tab.id);
 
       const plan = spawnPlanFor(deps, db, tab);
       try {
         await daemon.request("tab_spawn", { plan });
       } catch (e) {
+        if (group) deps.deleteGroup(db, group.id);
         deps.deleteTab(db, tab.id);
         throw e;
       }
       emit(win, "tab-added", { tab });
-      return tab;
+      return { tab, group };
     },
 
     async tabsClose(params: { id: string }, win: BrowserWindow) {

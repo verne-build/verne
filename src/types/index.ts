@@ -36,6 +36,7 @@ export type {
   TabSessionRow,
   TabGroup,
   LayoutNode,
+  CreateTabResult,
   CreateTabOpts,
   TabUpdatedEvent,
   TabTitleEvent,

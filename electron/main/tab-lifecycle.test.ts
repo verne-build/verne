@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { BrowserWindow } from "electron";
 import { createTabLifecycleHandlers } from "./tab-lifecycle";
-import type { Tab, WorkingDirectory } from "../../src/types/shared";
+import type { Tab, TabGroup, WorkingDirectory } from "../../src/types/shared";
 
 function fakeWindow() {
   const send = vi.fn();
@@ -13,6 +13,7 @@ function fakeWindow() {
 
 function setup() {
   const tabs: Tab[] = [];
+  const groups: TabGroup[] = [];
   const dirs = new Map<string, WorkingDirectory>([
     ["dir-1", {
       id: "dir-1",
@@ -49,6 +50,22 @@ function setup() {
       directoryName: "repo",
       tabLabel: tabs.find((t) => t.id === tabId)?.label,
     })),
+    createGroup: vi.fn((_db: unknown, directoryId: string, layout: string, activePaneId?: string) => {
+      const group: TabGroup = {
+        id: "group-1",
+        directoryId,
+        sortOrder: groups.length,
+        activePaneId,
+        layout,
+        createdAt: 123,
+      };
+      groups.push(group);
+      return group;
+    }),
+    deleteGroup: vi.fn((_db: unknown, id: string) => {
+      const idx = groups.findIndex((g) => g.id === id);
+      if (idx !== -1) groups.splice(idx, 1);
+    }),
     forgetNotificationTab: vi.fn(),
     randomId: vi.fn(() => "tab-1"),
     now: vi.fn(() => 123),
@@ -56,15 +73,18 @@ function setup() {
   const daemon = { request: vi.fn(async () => "session-1") };
   const sidecar = { request: vi.fn(async () => true) };
   const handlers = createTabLifecycleHandlers(daemon as any, sidecar as any, deps as any);
-  return { tabs, deps, daemon, sidecar, handlers };
+  return { tabs, groups, deps, daemon, sidecar, handlers };
 }
 
 describe("tab lifecycle handlers", () => {
   it("creates a tab, spawns its PTY, and emits after spawn succeeds", async () => {
-    const { tabs, daemon, handlers } = setup();
+    const { tabs, groups, daemon, handlers } = setup();
     const { win, send } = fakeWindow();
 
-    const tab = await handlers.tabsCreate({ opts: { directoryId: "dir-1" } }, win) as Tab;
+    const { tab, group } = await handlers.tabsCreate({ opts: { directoryId: "dir-1" } }, win) as {
+      tab: Tab;
+      group: TabGroup;
+    };
 
     expect(tab).toMatchObject({
       id: "tab-1",
@@ -75,6 +95,13 @@ describe("tab lifecycle handlers", () => {
       userRenamed: false,
     });
     expect(tabs).toHaveLength(1);
+    expect(group).toMatchObject({
+      id: "group-1",
+      directoryId: "dir-1",
+      activePaneId: "tab-1",
+      layout: JSON.stringify({ pane: "tab-1" }),
+    });
+    expect(groups).toEqual([group]);
     expect(daemon.request).toHaveBeenCalledWith("tab_spawn", {
       plan: {
         tabId: "tab-1",
@@ -89,7 +116,7 @@ describe("tab lifecycle handlers", () => {
   });
 
   it("rolls back the tab row and emits nothing when PTY spawn fails", async () => {
-    const { tabs, deps, daemon, handlers } = setup();
+    const { tabs, groups, deps, daemon, handlers } = setup();
     daemon.request.mockRejectedValueOnce(new Error("spawn failed"));
     const { win, send } = fakeWindow();
 
@@ -97,9 +124,24 @@ describe("tab lifecycle handlers", () => {
       .rejects.toThrow("spawn failed");
 
     expect(tabs).toHaveLength(0);
+    expect(groups).toHaveLength(0);
     expect(deps.insertTab).toHaveBeenCalledOnce();
+    expect(deps.deleteGroup).toHaveBeenCalledWith(expect.anything(), "group-1");
     expect(deps.deleteTab).toHaveBeenCalledWith(expect.anything(), "tab-1");
     expect(send).not.toHaveBeenCalled();
+  });
+
+  it("can create a tab row without a new pane group for split-pane migration", async () => {
+    const { tabs, groups, handlers } = setup();
+
+    const result = await handlers.tabsCreate({
+      opts: { directoryId: "dir-1", createGroup: false },
+    }, fakeWindow().win) as { tab: Tab; group?: TabGroup };
+
+    expect(result.tab.id).toBe("tab-1");
+    expect(result.group).toBeUndefined();
+    expect(tabs).toHaveLength(1);
+    expect(groups).toHaveLength(0);
   });
 
   it("closes a tab with best-effort daemon and sidecar cleanup", async () => {
