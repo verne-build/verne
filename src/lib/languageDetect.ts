@@ -75,6 +75,7 @@ const SHIKI_TO_MONACO: Record<string, string> = {
   tf: "hcl",
   tfvars: "hcl",
   mdx: "mdx",
+  mdc: "mdc",
   protobuf: "proto",
   solidity: "sol",
   wgsl: "wgsl",

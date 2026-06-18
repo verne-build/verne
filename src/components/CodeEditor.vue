@@ -210,7 +210,6 @@ function ensureEditorBootstrap(themeSpec: any, themeName: string) {
   return editorBootstrapPromise;
 }
 
-
 // ---- Component ----
 
 const props = withDefaults(
