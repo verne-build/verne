@@ -202,8 +202,34 @@ export class CdpSession {
   }
 
   async screenshotJpeg(): Promise<string> {
-    const { data } = await this.send("Page.captureScreenshot", { format: "jpeg", quality: 70 });
-    return data; // base64
+    // A background browser tab's <webview> is display:none (RightPanel keeps it
+    // mounted but hidden), so it has no compositor surface. The default
+    // surface-based capture then blocks until a frame appears — which never
+    // happens while hidden — and the agent's browser-control socket times out.
+    // Detect the hidden case (guest reports a zero viewport) and force an
+    // offscreen render: a device-metrics override gives the page a layout size
+    // even at 0×0, and captureBeyondViewport paints to a bitmap off the surface.
+    let w = 0, h = 0;
+    try {
+      const { result } = await this.send("Runtime.evaluate", {
+        expression: "[window.innerWidth, window.innerHeight]", returnByValue: true,
+      });
+      if (Array.isArray(result?.value)) [w, h] = result.value;
+    } catch { /* treat as hidden */ }
+    const hidden = !w || !h;
+    if (hidden) {
+      await this.send("Emulation.setDeviceMetricsOverride", {
+        width: 1280, height: 800, deviceScaleFactor: 1, mobile: false,
+      });
+    }
+    try {
+      const { data } = await this.send("Page.captureScreenshot", {
+        format: "jpeg", quality: 70, captureBeyondViewport: hidden,
+      });
+      return data; // base64
+    } finally {
+      if (hidden) await this.send("Emulation.clearDeviceMetricsOverride").catch(() => {});
+    }
   }
 
   async navigate(url: string): Promise<string> {
