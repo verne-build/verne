@@ -217,6 +217,8 @@ const LANG_MAP: Record<string, string> = {
   css: "tailwindcss",
   json: "json",
   markdown: "markdown",
+  mdx: "mdx",
+  mdc: "mdc",
   python: "python",
   rust: "rust",
   sql: "sql",

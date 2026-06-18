@@ -1143,6 +1143,7 @@ fn detect_language(path: &str) -> &'static str {
         ("ts", "typescript"), ("tsx", "typescript"), ("mts", "typescript"), ("cts", "typescript"),
         ("js", "javascript"), ("mjs", "javascript"), ("cjs", "javascript"), ("jsx", "javascript"),
         ("vue", "vue"), ("json", "json"), ("jsonc", "jsonc"), ("md", "markdown"),
+        ("mdx", "mdx"), ("mdc", "mdc"),
         ("css", "css"), ("html", "html"), ("htm", "html"),
         ("py", "python"), ("pyw", "python"), ("rs", "rust"), ("go", "go"),
         ("sh", "shell"), ("bash", "shell"), ("zsh", "shell"),

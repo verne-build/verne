@@ -123,6 +123,21 @@ function registerLanguages() {
   monaco.languages.register({ id: "pug", extensions: [".pug", ".jade"] });
   monaco.languages.register({ id: "fsharp", extensions: [".fs", ".fsi", ".fsx"] });
   monaco.languages.register({ id: "smarty", extensions: [".tpl", ".smarty"] });
+  monaco.languages.register({ id: "mdx", extensions: [".mdx"], aliases: ["MDX"] });
+  monaco.languages.register({ id: "mdc", extensions: [".mdc"], aliases: ["MDC"] });
+
+  monaco.languages.setLanguageConfiguration("mdx", {
+    comments: { blockComment: ["{/*", "*/}"] },
+    brackets: [["{", "}"], ["[", "]"], ["(", ")"]],
+    autoClosingPairs: [
+      { open: "{", close: "}" },
+      { open: "[", close: "]" },
+      { open: "(", close: ")" },
+      { open: "<", close: ">" },
+      { open: '"', close: '"' },
+      { open: "'", close: "'" },
+    ],
+  });
 
   // Existing languages
   registerTextMateLanguage("typescript", "source.ts");
@@ -167,6 +182,8 @@ function registerLanguages() {
   registerTextMateLanguage("pug", "text.pug");
   registerTextMateLanguage("fsharp", "source.fsharp");
   registerTextMateLanguage("smarty", "text.html.smarty");
+  registerTextMateLanguage("mdx", "source.mdx");
+  registerTextMateLanguage("mdc", "text.markdown.mdc");
 }
 
 /**
