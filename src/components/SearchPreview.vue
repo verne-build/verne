@@ -6,6 +6,7 @@ import { useRpc, type ContentSearchMatch } from "@/composables/useRpc";
 import { useSettings } from "@/composables/useSettings";
 import { useTheme } from "@/composables/useTheme";
 import { ensureMonaco } from "@/lib/monacoBootstrap";
+import { detectMonacoLanguage } from "@/lib/languageDetect";
 import { Button } from "./ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "./ui/tooltip";
 
@@ -55,14 +56,14 @@ async function loadMatch(m: ContentSearchMatch | null) {
   const matchLen = m.match.length;
 
   try {
-    const { content, language } = await useRpc().request.readFile({ path: pathSnap });
+    const { content } = await useRpc().request.readFile({ path: pathSnap });
     if (props.match?.path !== pathSnap) return;
 
     const themeSpec = getActiveThemeSpec();
     await ensureMonaco(themeSpec, activeThemeName.value);
 
     const uri = monaco.Uri.file(pathSnap);
-    currentModel = monaco.editor.createModel(content, language, uri);
+    currentModel = monaco.editor.createModel(content, detectMonacoLanguage(pathSnap), uri);
 
     const fontSize = settings.value.editorFontSize;
     const lh = settings.value.editorLineHeight;

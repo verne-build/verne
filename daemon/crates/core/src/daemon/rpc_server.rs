@@ -700,9 +700,10 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
         m if m == crate::protocol::methods::READ_FILE => {
             let path = s(req.params.get("path"));
             let result: Result<serde_json::Value, String> = (|| {
-                let language = detect_language(&path);
+                // Language detection lives in the renderer (src/lib/languageDetect.ts),
+                // which leans on Shiki's filename table shared with the diffs view.
                 let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-                Ok(serde_json::json!({ "content": content, "language": language }))
+                Ok(serde_json::json!({ "content": content }))
             })();
             match result {
                 Ok(v) => Response::ok(req.id, v),
@@ -712,7 +713,10 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
         m if m == crate::protocol::methods::WRITE_FILE => {
             let path = s(req.params.get("path"));
             let content = s(req.params.get("content"));
-            let result: Result<serde_json::Value, String> = (|| {
+            let state = state.clone();
+            // Blocking fs off the async workers — a slow/stalled disk must not
+            // tie up a runtime thread (would wedge every other request).
+            let result = tokio::task::spawn_blocking(move || -> Result<serde_json::Value, String> {
                 std::fs::write(&path, &content).map_err(|e| e.to_string())?;
                 if std::path::Path::new(&path) == crate::settings::settings_path() {
                     state.settings.invalidate();
@@ -725,9 +729,12 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
                     .map(|d| d.as_millis() as i64)
                     .unwrap_or(0);
                 Ok(serde_json::json!({ "ok": true, "mtime": mtime }))
-            })();
+            })
+            .await
+            .map_err(|e| format!("write_file task failed: {e}"));
             match result {
-                Ok(v) => Response::ok(req.id, v),
+                Ok(Ok(v)) => Response::ok(req.id, v),
+                Ok(Err(e)) => Response::err(req.id, e),
                 Err(e) => Response::err(req.id, e),
             }
         }
@@ -776,7 +783,7 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
         }
         m if m == crate::protocol::methods::GET_FILE_MTIME => {
             let path = s(req.params.get("path"));
-            let result: Result<serde_json::Value, String> = (|| {
+            let result = tokio::task::spawn_blocking(move || -> Result<serde_json::Value, String> {
                 let mtime = std::fs::metadata(&path)
                     .map_err(|e| e.to_string())?
                     .modified()
@@ -785,9 +792,12 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
                     .map_err(|e| e.to_string())?
                     .as_millis() as i64;
                 Ok(serde_json::json!({ "mtime": mtime }))
-            })();
+            })
+            .await
+            .map_err(|e| format!("get_file_mtime task failed: {e}"));
             match result {
-                Ok(v) => Response::ok(req.id, v),
+                Ok(Ok(v)) => Response::ok(req.id, v),
+                Ok(Err(e)) => Response::err(req.id, e),
                 Err(e) => Response::err(req.id, e),
             }
         }
@@ -1131,57 +1141,6 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
 // file-index caching + gitignore logic is reproduced faithfully (perf path).
 // ============================================================================
 
-/// Mirror of `commands/files.rs::read_file` language detection.
-fn detect_language(path: &str) -> &'static str {
-    use std::path::Path;
-    let ext = Path::new(path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_string();
-    let lang_map = [
-        ("ts", "typescript"), ("tsx", "typescript"), ("mts", "typescript"), ("cts", "typescript"),
-        ("js", "javascript"), ("mjs", "javascript"), ("cjs", "javascript"), ("jsx", "javascript"),
-        ("vue", "vue"), ("json", "json"), ("jsonc", "jsonc"), ("md", "markdown"),
-        ("mdx", "mdx"), ("mdc", "mdc"),
-        ("css", "css"), ("html", "html"), ("htm", "html"),
-        ("py", "python"), ("pyw", "python"), ("rs", "rust"), ("go", "go"),
-        ("sh", "shell"), ("bash", "shell"), ("zsh", "shell"),
-        ("yml", "yaml"), ("yaml", "yaml"), ("env", "dotenv"), ("toml", "toml"),
-        ("sql", "sql"), ("graphql", "graphql"), ("gql", "graphql"), ("rb", "ruby"),
-        ("xml", "xml"), ("svg", "xml"), ("xsl", "xml"), ("xsd", "xml"), ("plist", "xml"),
-        ("php", "php"), ("scss", "scss"), ("less", "less"), ("dockerfile", "dockerfile"),
-        ("c", "c"), ("h", "c"), ("cpp", "cpp"), ("cc", "cpp"), ("cxx", "cpp"),
-        ("hpp", "cpp"), ("hxx", "cpp"), ("hh", "cpp"),
-        ("java", "java"), ("cs", "csharp"), ("csx", "csharp"), ("swift", "swift"),
-        ("lua", "lua"), ("ini", "ini"), ("cfg", "ini"), ("conf", "ini"), ("properties", "ini"),
-        ("hbs", "handlebars"), ("handlebars", "handlebars"),
-        ("pl", "perl"), ("pm", "perl"),
-        ("ps1", "powershell"), ("psd1", "powershell"), ("psm1", "powershell"),
-        ("r", "r"), ("m", "objective-c"), ("mm", "objective-c"),
-        ("dart", "dart"), ("groovy", "groovy"), ("gradle", "groovy"),
-        ("clj", "clojure"), ("cljs", "clojure"), ("edn", "clojure"),
-        ("tex", "latex"), ("sty", "latex"), ("cls", "latex"),
-        ("pug", "pug"), ("jade", "pug"),
-        ("fs", "fsharp"), ("fsi", "fsharp"), ("fsx", "fsharp"),
-        ("tpl", "smarty"), ("smarty", "smarty"),
-    ];
-    let file_name = Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or("");
-    let jsonc_files = ["tsconfig.json", "jsconfig.json", ".swcrc"];
-    if file_name.starts_with(".env") {
-        "dotenv"
-    } else if file_name == "Dockerfile" || file_name.starts_with("Dockerfile.") {
-        "dockerfile"
-    } else if file_name == "Makefile" || file_name == "makefile" || file_name == "GNUmakefile" {
-        "makefile"
-    } else if jsonc_files.contains(&file_name)
-        || (file_name.starts_with("tsconfig.") && file_name.ends_with(".json"))
-    {
-        "jsonc"
-    } else {
-        lang_map.iter().find(|(k, _)| *k == ext).map(|(_, v)| *v).unwrap_or("plaintext")
-    }
-}
 
 /// Mirror of `commands/files.rs::list_tree` (gitignore-aware single-level listing).
 fn list_tree_impl(state: &crate::state::AppState, dir: &str) -> Result<serde_json::Value, String> {

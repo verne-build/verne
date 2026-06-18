@@ -74,10 +74,14 @@ html[data-scrolling] [data-slot="tooltip-content"] {
   background: transparent;
 }
 .app-scrollbar::-webkit-scrollbar-thumb {
-  background: var(--color-border);
+  background: transparent;
   background-clip: padding-box;
   border: 2px solid transparent;
   border-radius: 9999px;
+}
+/* Thumb only appears while the panel is hovered. */
+.app-scrollbar:hover::-webkit-scrollbar-thumb {
+  background: var(--color-border);
 }
 .app-scrollbar::-webkit-scrollbar-corner {
   background: transparent;
