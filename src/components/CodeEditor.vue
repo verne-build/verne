@@ -27,6 +27,7 @@ import {
 import * as monaco from "monaco-editor";
 import { ensureMonaco } from "@/lib/monacoBootstrap";
 import { ensureGrammar } from "@/lib/textmate";
+import { detectMonacoLanguage } from "@/lib/languageDetect";
 import {
   analyzeEditorContent,
   formatApproxFileSize,
@@ -209,50 +210,6 @@ function ensureEditorBootstrap(themeSpec: any, themeName: string) {
   return editorBootstrapPromise;
 }
 
-const LANG_MAP: Record<string, string> = {
-  typescript: "typescript",
-  javascript: "javascript",
-  vue: "vue",
-  html: "html",
-  css: "tailwindcss",
-  json: "json",
-  markdown: "markdown",
-  python: "python",
-  rust: "rust",
-  sql: "sql",
-  yaml: "yaml",
-  shell: "shell",
-  bash: "shell",
-  dotenv: "dotenv",
-  jsonc: "jsonc",
-  ruby: "ruby",
-  xml: "xml",
-  php: "php",
-  scss: "scss",
-  less: "less",
-  dockerfile: "dockerfile",
-  go: "go",
-  c: "c",
-  cpp: "cpp",
-  java: "java",
-  csharp: "csharp",
-  swift: "swift",
-  lua: "lua",
-  makefile: "makefile",
-  ini: "ini",
-  handlebars: "handlebars",
-  perl: "perl",
-  powershell: "powershell",
-  r: "r",
-  "objective-c": "objective-c",
-  dart: "dart",
-  groovy: "groovy",
-  clojure: "clojure",
-  latex: "latex",
-  pug: "pug",
-  fsharp: "fsharp",
-  smarty: "smarty",
-};
 
 // ---- Component ----
 
@@ -928,7 +885,7 @@ async function loadFile(filePath: string) {
       : "");
   baseContent = parsed.body;
   currentMtime = mtimeResult.mtime;
-  const detectedLanguage = LANG_MAP[result.language] ?? "plaintext";
+  const detectedLanguage = detectMonacoLanguage(filePath);
 
   // Check for dirty content (in-memory cache for external files, shadow for project files)
   let editorContent = baseContent;

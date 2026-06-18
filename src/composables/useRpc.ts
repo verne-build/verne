@@ -182,7 +182,7 @@ const request = {
   getHomePath: (_p: object): Promise<string> => invoke("get_home_path"),
   fileExists: (p: { path: string }): Promise<boolean> => invoke("file_exists", { path: p.path }),
   toggleMaximize: (_p: object): Promise<boolean> => invoke("toggle_maximize"),
-  readFile: (p: { path: string }): Promise<{ content: string; language: string }> =>
+  readFile: (p: { path: string }): Promise<{ content: string }> =>
     invoke("read_file", { path: p.path }),
   writeFile: (p: {
     path: string;
