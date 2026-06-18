@@ -105,4 +105,43 @@ describe("CdpSession", () => {
     await s.attach();
     await expect(s.click("e9")).rejects.toThrow(/snapshot/);
   });
+
+  it("screenshot of a visible tab uses a plain surface capture (no metrics override)", async () => {
+    const { dbg, sent } = mockDebugger();
+    (dbg.sendCommand as any).mockImplementation(async (m: string, params?: any) => {
+      sent.push({ method: m, params });
+      if (m === "Runtime.evaluate") return { result: { value: [1280, 800] } };
+      if (m === "Page.captureScreenshot") return { data: "JPEGBYTES" };
+      return {};
+    });
+    const s = new CdpSession("browser:t1", 42, "/ws", dbg);
+    await s.attach();
+    sent.length = 0;
+    const data = await s.screenshotJpeg();
+    expect(data).toBe("JPEGBYTES");
+    expect(sent.some((c) => c.method === "Emulation.setDeviceMetricsOverride")).toBe(false);
+    const shot = sent.find((c) => c.method === "Page.captureScreenshot");
+    expect(shot?.params.captureBeyondViewport).toBeFalsy();
+  });
+
+  it("screenshot of a hidden (display:none) tab forces an offscreen render", async () => {
+    const { dbg, sent } = mockDebugger();
+    (dbg.sendCommand as any).mockImplementation(async (m: string, params?: any) => {
+      sent.push({ method: m, params });
+      // Hidden <webview>: guest reports a zero viewport.
+      if (m === "Runtime.evaluate") return { result: { value: [0, 0] } };
+      if (m === "Page.captureScreenshot") return { data: "OFFSCREEN" };
+      return {};
+    });
+    const s = new CdpSession("browser:t1", 42, "/ws", dbg);
+    await s.attach();
+    sent.length = 0;
+    const data = await s.screenshotJpeg();
+    expect(data).toBe("OFFSCREEN");
+    const methods = sent.map((c) => c.method);
+    expect(methods).toContain("Emulation.setDeviceMetricsOverride");
+    expect(methods).toContain("Emulation.clearDeviceMetricsOverride"); // restored after
+    const shot = sent.find((c) => c.method === "Page.captureScreenshot");
+    expect(shot?.params.captureBeyondViewport).toBe(true);
+  });
 });
