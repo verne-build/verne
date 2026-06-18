@@ -269,6 +269,9 @@ const error = ref<string | null>(null);
 const stale = ref(false);
 const deleted = ref(false);
 const largeFileMessage = ref<string | null>(null);
+// Surfaces a failed/stalled save to the UI (prod has no devtools console). Sticky
+// until the next successful save or an explicit dismiss.
+const saveError = ref<string | null>(null);
 
 const editor = shallowRef<monaco.editor.IStandaloneCodeEditor | null>(null);
 const currentLanguage = ref("plaintext");
@@ -279,6 +282,7 @@ let fileWatchUnlisten: UnlistenFn | null = null;
 let watchedPath: string | null = null;
 let autoSaveTimer: ReturnType<typeof setTimeout> | null = null;
 let shadowTimer: ReturnType<typeof setTimeout> | null = null;
+let saving = false; // in-flight guard: don't stack overlapping writes if one stalls
 let isDirty = false;
 let currentFilePath: string = ""; // tracks the file we're actually editing (not props which update early)
 const currentFilePathRef = ref(currentFilePath);
@@ -723,6 +727,26 @@ function relPath(): string {
   return relPathFor(currentFilePath || props.filePath);
 }
 
+// The RPC layer has no per-request timeout, so a wedged backend (e.g. a stalled
+// sidecar) would leave save() awaiting forever — dirty dot stuck, no feedback.
+// Race every save IPC against this and surface the failure instead.
+const SAVE_TIMEOUT_MS = 8000;
+
+class SaveTimeoutError extends Error {}
+
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(
+      () => reject(new SaveTimeoutError(`${label} timed out after ${ms / 1000}s — the file backend is unresponsive`)),
+      ms,
+    );
+    p.then(
+      (v) => { clearTimeout(t); resolve(v); },
+      (e) => { clearTimeout(t); reject(e); },
+    );
+  });
+}
+
 async function save() {
   if (!editor.value || !isDirty) return;
   if (props.untitled) {
@@ -730,43 +754,70 @@ async function save() {
     return;
   }
   if (stale.value) return; // conflict — user must choose Reload from disk or Keep my changes first
+  if (saving) return; // a write is already in flight — don't stack on a stalled one
 
-  // Check mtime before writing — watcher event may not have arrived yet
+  saving = true;
   try {
-    const r = await useRpc().request.getFileMtime({ path: currentFilePath || props.filePath });
-    if (r.mtime > currentMtime) {
-      stale.value = true;
-      return;
+    // Check mtime before writing — watcher event may not have arrived yet
+    try {
+      const r = await withTimeout(
+        useRpc().request.getFileMtime({ path: currentFilePath || props.filePath }),
+        SAVE_TIMEOUT_MS,
+        "Save (mtime check)",
+      );
+      if (r.mtime > currentMtime) {
+        stale.value = true;
+        return;
+      }
+    } catch (e: any) {
+      // A timeout means the backend is wedged — surface it rather than charging
+      // into writeFile (which would just hang too). Other errors (e.g. file
+      // deleted) fall through to writeFile, which handles them.
+      if (e instanceof SaveTimeoutError) {
+        saveError.value = e.message;
+        return;
+      }
     }
-  } catch {
-    // File may have been deleted — let writeFile handle it
-  }
 
-  const content = editor.value.getValue();
-  const diskContent = props.preserveFrontmatter
-    ? joinFrontmatter(frontmatterPrefix, content)
-    : content;
-  try {
-    const filePath = currentFilePath || props.filePath;
-    if (shadowTimer) {
-      clearTimeout(shadowTimer);
-      shadowTimer = null;
+    const content = editor.value.getValue();
+    const diskContent = props.preserveFrontmatter
+      ? joinFrontmatter(frontmatterPrefix, content)
+      : content;
+    try {
+      const filePath = currentFilePath || props.filePath;
+      if (shadowTimer) {
+        clearTimeout(shadowTimer);
+        shadowTimer = null;
+      }
+      const result = await withTimeout(
+        useRpc().request.writeFile({ path: filePath, content: diskContent }),
+        SAVE_TIMEOUT_MS,
+        "Save",
+      );
+      currentMtime = result.mtime;
+      baseContent = content;
+      stale.value = false;
+      saveError.value = null;
+      setDirty(false);
+      // Clear dirty state
+      dirtyContentCache.delete(filePath);
+      if (props.rootDir && !isExternalFile(filePath)) {
+        await useRpc()
+          .request.shadowOnSaved({ dir: props.rootDir, relPath: relPathFor(filePath), content });
+        forgetShadowContent(filePath);
+      }
+    } catch (e: any) {
+      console.error("Failed to save:", e);
+      saveError.value = `Failed to save: ${e?.message || e}`;
     }
-    const result = await useRpc().request.writeFile({ path: filePath, content: diskContent });
-    currentMtime = result.mtime;
-    baseContent = content;
-    stale.value = false;
-    setDirty(false);
-    // Clear dirty state
-    dirtyContentCache.delete(filePath);
-    if (props.rootDir && !isExternalFile(filePath)) {
-      await useRpc()
-        .request.shadowOnSaved({ dir: props.rootDir, relPath: relPathFor(filePath), content });
-      forgetShadowContent(filePath);
-    }
-  } catch (e: any) {
-    console.error("Failed to save:", e);
+  } finally {
+    saving = false;
   }
+}
+
+function retrySave() {
+  saveError.value = null;
+  void save();
 }
 
 defineExpose({ save });
@@ -831,6 +882,7 @@ async function loadFile(filePath: string) {
   loading.value = true;
   error.value = null;
   stale.value = false;
+  saveError.value = null;
   deleted.value = false;
   largeFileMessage.value = null;
   currentContentProfile = null;
@@ -1514,6 +1566,27 @@ onUnmounted(() => {
     >
       <AlertTriangle class="size-3.5 shrink-0" />
       <span class="flex-1">{{ largeFileMessage }}</span>
+    </div>
+    <div
+      v-if="saveError"
+      class="flex items-center gap-2 bg-red-500/10 px-4 py-1.5 text-xs text-red-400"
+    >
+      <AlertTriangle class="size-3.5 shrink-0" />
+      <span class="flex-1">{{ saveError }}</span>
+      <button
+        tabindex="0"
+        class="rounded px-2 py-0.5 font-medium text-red-300 hover:bg-red-500/20"
+        @click="retrySave"
+      >
+        Retry
+      </button>
+      <button
+        tabindex="0"
+        class="rounded px-2 py-0.5 font-medium text-red-300 hover:bg-red-500/20"
+        @click="saveError = null"
+      >
+        Dismiss
+      </button>
     </div>
     <MarkdownToolbar v-if="showMarkdownToolbar" @action="onFormatAction" />
     <div class="relative flex-1 overflow-hidden">
