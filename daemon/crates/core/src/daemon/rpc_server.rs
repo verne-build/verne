@@ -713,7 +713,10 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
         m if m == crate::protocol::methods::WRITE_FILE => {
             let path = s(req.params.get("path"));
             let content = s(req.params.get("content"));
-            let result: Result<serde_json::Value, String> = (|| {
+            let state = state.clone();
+            // Blocking fs off the async workers — a slow/stalled disk must not
+            // tie up a runtime thread (would wedge every other request).
+            let result = tokio::task::spawn_blocking(move || -> Result<serde_json::Value, String> {
                 std::fs::write(&path, &content).map_err(|e| e.to_string())?;
                 if std::path::Path::new(&path) == crate::settings::settings_path() {
                     state.settings.invalidate();
@@ -726,9 +729,12 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
                     .map(|d| d.as_millis() as i64)
                     .unwrap_or(0);
                 Ok(serde_json::json!({ "ok": true, "mtime": mtime }))
-            })();
+            })
+            .await
+            .map_err(|e| format!("write_file task failed: {e}"));
             match result {
-                Ok(v) => Response::ok(req.id, v),
+                Ok(Ok(v)) => Response::ok(req.id, v),
+                Ok(Err(e)) => Response::err(req.id, e),
                 Err(e) => Response::err(req.id, e),
             }
         }
@@ -777,7 +783,7 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
         }
         m if m == crate::protocol::methods::GET_FILE_MTIME => {
             let path = s(req.params.get("path"));
-            let result: Result<serde_json::Value, String> = (|| {
+            let result = tokio::task::spawn_blocking(move || -> Result<serde_json::Value, String> {
                 let mtime = std::fs::metadata(&path)
                     .map_err(|e| e.to_string())?
                     .modified()
@@ -786,9 +792,12 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
                     .map_err(|e| e.to_string())?
                     .as_millis() as i64;
                 Ok(serde_json::json!({ "mtime": mtime }))
-            })();
+            })
+            .await
+            .map_err(|e| format!("get_file_mtime task failed: {e}"));
             match result {
-                Ok(v) => Response::ok(req.id, v),
+                Ok(Ok(v)) => Response::ok(req.id, v),
+                Ok(Err(e)) => Response::err(req.id, e),
                 Err(e) => Response::err(req.id, e),
             }
         }
