@@ -17,7 +17,7 @@ import {
 } from "./ui/dropdown-menu";
 import { toast } from "vue-sonner";
 import { syncFilePanelFilePath } from "@/composables/useFilePanelTabs";
-import { setDraggedPath, VERNE_PATHS_MIME } from "@/lib/dropPath";
+import { setDraggedPath } from "@/lib/dropPath";
 
 const props = defineProps<{
   workingDir: string;
@@ -222,7 +222,7 @@ function onRowDragStart(node: TreeNode, e: DragEvent) {
   }
   const paths = [...model.selected.value];
   setDraggedPath(paths[0] ?? node.path);
-  e.dataTransfer?.setData(VERNE_PATHS_MIME, JSON.stringify(paths));
+  e.dataTransfer?.setData("application/x-verne-paths", JSON.stringify(paths));
   // copyMove (not move): explorer dirs drop as "move", but the terminal drops
   // the path as "copy" — effectAllowed=move makes Chromium reject the copy drop
   // (no `drop` event fires), so the terminal never pastes.

@@ -23,34 +23,6 @@ import { useSettings, loadCachedSettings } from "./composables/useSettings";
 import { useTheme, applyCachedThemeSync } from "./composables/useTheme";
 import { listen } from "@/platform";
 import { preloadConfiguredTerminalFont, reconnectAllTerminals } from "./composables/useTerminal";
-import { getDroppedPaths, hasNativeFileDrop, PASTE_PATH_EVENT } from "@/lib/dropPath";
-
-function terminalDropTargetAt(x: number, y: number): Element | null {
-  return document
-    .elementsFromPoint(x, y)
-    .map((el) => el.closest("[data-terminal-drop]"))
-    .find((el): el is Element => !!el) ?? null;
-}
-
-function activeTerminalDropTarget(): Element | null {
-  return document.querySelector("[data-terminal-drop][data-active-terminal='true']")
-    ?? document.querySelector("[data-terminal-drop]");
-}
-
-document.addEventListener("dragover", (e) => {
-  if (!hasNativeFileDrop(e)) return;
-  e.preventDefault();
-  if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
-});
-
-document.addEventListener("drop", (e) => {
-  if (!hasNativeFileDrop(e)) return;
-  const paths = getDroppedPaths(e);
-  e.preventDefault();
-  if (!paths.length) return;
-  const target = terminalDropTargetAt(e.clientX, e.clientY) ?? activeTerminalDropTarget();
-  target?.dispatchEvent(new CustomEvent(PASTE_PATH_EVENT, { detail: paths }));
-});
 
 const pinia = createPinia();
 const app = createApp(App);

@@ -12,9 +12,8 @@ import { useShortcuts } from "@/composables/useShortcuts";
 import { getAgentIcon } from "@/composables/useAgentIcon";
 import GridTerminal from "@/components/terminal/GridTerminal.vue";
 import {
-  getDroppedPaths,
-  hasPathDrop,
-  formatPathsForShell,
+  getDraggedPath,
+  formatPathForShell,
   PASTE_PATH_EVENT,
   PASTE_PATH_ENTER_EVENT,
   PASTE_PATH_LEAVE_EVENT,
@@ -67,15 +66,14 @@ const paneDropEdge = ref<"left" | "right" | "top" | "bottom" | null>(null);
 
 const isActive = computed(() => props.multi && props.activePaneId === props.paneId);
 
-function pastePaths(paths: string[]) {
-  const text = formatPathsForShell(paths);
-  if (text) gridRef.value?.sendText(text);
+function pastePath(path: string) {
+  gridRef.value?.sendText(formatPathForShell(path));
 }
 
-// --- Native file-path drop (file-tree + OS items) ---
+// --- Native file-path drop (file-tree items) ---
 function onDragOver(e: DragEvent) {
   if (paneDragOver(e)) return;
-  if (!hasPathDrop(e)) return;
+  if (!getDraggedPath()) return;
   e.preventDefault();
   e.stopPropagation();
   if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
@@ -89,11 +87,11 @@ function onDragLeave(e: DragEvent) {
 function onDrop(e: DragEvent) {
   if (paneDrop(e)) return;
   dropActive.value = false;
-  const paths = getDroppedPaths(e);
-  if (!paths.length) return;
+  const path = getDraggedPath();
+  if (!path) return;
   e.preventDefault();
   e.stopPropagation();
-  pastePaths(paths);
+  pastePath(path);
 }
 
 // --- Pane rearrange drag (title bar is the handle) ---
@@ -140,9 +138,8 @@ function paneDrop(e: DragEvent): boolean {
 
 // dnd-kit (file tabs) custom-event drop path.
 function onPastePathEvent(e: Event) {
-  const detail = (e as CustomEvent<string | string[]>).detail;
-  const paths = Array.isArray(detail) ? detail : detail ? [detail] : [];
-  pastePaths(paths);
+  const path = (e as CustomEvent<string>).detail;
+  if (path) pastePath(path);
 }
 function onPastePathEnter() { dropActive.value = true; }
 function onPastePathLeave() { dropActive.value = false; }
@@ -273,7 +270,6 @@ onUnmounted(() => {
           ref="terminalWrapper"
           class="flex-1 min-h-0 relative"
           data-terminal-drop
-          :data-active-terminal="!multi || activePaneId === paneId ? 'true' : undefined"
           @dragover.capture="onDragOver"
           @dragleave.capture="onDragLeave"
           @drop.capture="onDrop"

@@ -3,10 +3,7 @@
 // drag) use incompatible drag systems, so both publish the dragged absolute
 // path here and the terminal reads it on drop.
 
-import { filePathForFile } from "@/platform";
-
 let draggedPath: string | null = null;
-export const VERNE_PATHS_MIME = "application/x-verne-paths";
 
 export function setDraggedPath(p: string | null) {
   draggedPath = p;
@@ -14,43 +11,6 @@ export function setDraggedPath(p: string | null) {
 
 export function getDraggedPath(): string | null {
   return draggedPath;
-}
-
-export function hasNativeFileDrop(e: DragEvent): boolean {
-  return Array.from(e.dataTransfer?.types ?? []).includes("Files");
-}
-
-export function hasPathDrop(e: DragEvent): boolean {
-  return !!getDraggedPath() || hasNativeFileDrop(e);
-}
-
-function nativeFilePath(file: File): string {
-  try {
-    return filePathForFile(file);
-  } catch {
-    return (file as unknown as { path?: string }).path ?? "";
-  }
-}
-
-function cleanPaths(paths: string[]): string[] {
-  return paths.filter(Boolean);
-}
-
-export function getDroppedPaths(e: DragEvent): string[] {
-  const raw = e.dataTransfer?.getData(VERNE_PATHS_MIME);
-  if (raw) {
-    try {
-      const paths = JSON.parse(raw);
-      if (Array.isArray(paths)) return cleanPaths(paths.filter((p): p is string => typeof p === "string"));
-    } catch {}
-  }
-
-  const files = Array.from(e.dataTransfer?.files ?? []);
-  const filePaths = cleanPaths(files.map(nativeFilePath));
-  if (filePaths.length) return filePaths;
-
-  const dragged = getDraggedPath();
-  return dragged ? [dragged] : [];
 }
 
 // Custom events a non-native (dnd-kit) drag dispatches on the terminal element
@@ -68,8 +28,4 @@ export function formatPathForShell(path: string): string {
     return `'${path.replace(/'/g, "'\\''")}' `;
   }
   return `${path} `;
-}
-
-export function formatPathsForShell(paths: string[]): string {
-  return paths.map(formatPathForShell).join("");
 }
