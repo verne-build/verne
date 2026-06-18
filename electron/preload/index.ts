@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 const listeners = new Map<string, Set<(payload: unknown) => void>>();
 
@@ -19,4 +19,5 @@ contextBridge.exposeInMainWorld("verne", {
     return () => set!.delete(handler); // UnlistenFn
   },
   assetUrl: (path: string) => `verne-asset://local/${encodeURI(path)}`,
+  filePathForFile: (file: File) => webUtils.getPathForFile(file),
 });
