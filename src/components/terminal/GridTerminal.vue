@@ -35,6 +35,7 @@ const hiddenInput = ref<HTMLTextAreaElement | null>(null);
 const sliderVisible = ref(false);
 const sliderTop = ref(0);
 const sliderHeight = ref(0);
+const sliderDragging = ref(false);
 const showJump = ref(false);
 
 // Find/search overlay state.
@@ -741,6 +742,7 @@ function onSliderDown(e: PointerEvent) {
   (e.target as HTMLElement).setPointerCapture(e.pointerId);
   dragStartY = e.clientY;
   dragStartTop = sliderTop.value - pad.value; // position within the track
+  sliderDragging.value = true;
   window.addEventListener('pointermove', onSliderMove);
   window.addEventListener('pointerup', onSliderUp);
 }
@@ -758,6 +760,7 @@ function onSliderMove(e: PointerEvent) {
   controller.scrollTo(offset);
 }
 function onSliderUp() {
+  sliderDragging.value = false;
   window.removeEventListener('pointermove', onSliderMove);
   window.removeEventListener('pointerup', onSliderUp);
 }
@@ -856,7 +859,7 @@ defineExpose({
 <template>
   <div
     ref="container"
-    class="relative h-full w-full overflow-hidden"
+    class="group relative h-full w-full overflow-hidden"
     :style="{ background: bgColor, padding: `${pad}px` }"
     @mousedown.prevent="focusInput"
     @wheel="onWheel"
@@ -879,7 +882,8 @@ defineExpose({
     <!-- Custom scrollbar (canvas has no native one). -->
     <div
       v-if="sliderVisible"
-      class="absolute right-0.5 w-1.5 cursor-pointer rounded-full bg-foreground/25 hover:bg-foreground/40"
+      class="absolute right-0.5 w-1.5 cursor-pointer rounded-full bg-foreground/25 opacity-0 transition-opacity hover:bg-foreground/40 group-hover:opacity-100"
+      :class="{ 'opacity-100': sliderDragging }"
       :style="{ top: `${sliderTop}px`, height: `${sliderHeight}px` }"
       @pointerdown="onSliderDown"
     />
