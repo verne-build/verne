@@ -15,6 +15,10 @@ export function convertFileSrc(path: string): string {
   return window.verne.assetUrl(path);
 }
 
+export function filePathForFile(file: File): string {
+  return window.verne.filePathForFile(file);
+}
+
 export async function openExternal(url: string): Promise<void> {
   await window.verne.invoke("open_external", { url });
 }
