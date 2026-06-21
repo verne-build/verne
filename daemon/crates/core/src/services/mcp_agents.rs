@@ -347,7 +347,7 @@ impl Codex {
             .join("config.toml")
     }
 
-    /// Add `env_vars = ["VERNE_WORKSPACE_DIR", "VERNE_INTERNAL_DATA_DIR"]` to
+    /// Add `env_vars = ["VERNE_WORKSPACE_DIR", "VERNE_INTERNAL_DATA_DIR", "VERNE_TAB_ID"]` to
     /// `[mcp_servers.verne]`, preserving the rest of the file's formatting. Codex
     /// forwards env by allowlist, so this is required for the server to receive the
     /// workspace root and to locate browser-control.json (other agents inherit the
@@ -360,6 +360,7 @@ impl Codex {
         let mut arr = Array::new();
         arr.push("VERNE_WORKSPACE_DIR");
         arr.push("VERNE_INTERNAL_DATA_DIR");
+        arr.push("VERNE_TAB_ID");
         doc["mcp_servers"][mcp_server_name()]["env_vars"] = Item::Value(TomlValue::Array(arr));
         std::fs::write(&path, doc.to_string()).map_err(|e| e.to_string())
     }
@@ -402,7 +403,7 @@ impl McpAgent for Codex {
     fn manual_commands(&self, _verne: &Path) -> String {
         let name = mcp_server_name();
         format!(
-            "codex mcp add {name} -- {}\n# then add to ~/.codex/config.toml under [mcp_servers.{name}]:\n#   env_vars = [\"VERNE_WORKSPACE_DIR\", \"VERNE_INTERNAL_DATA_DIR\"]",
+            "codex mcp add {name} -- {}\n# then add to ~/.codex/config.toml under [mcp_servers.{name}]:\n#   env_vars = [\"VERNE_WORKSPACE_DIR\", \"VERNE_INTERNAL_DATA_DIR\", \"VERNE_TAB_ID\"]",
             crate::paths::mcp_launcher_path().to_string_lossy()
         )
     }
@@ -436,7 +437,11 @@ impl McpAgent for Cursor {
             serde_json::json!({
                 "command": v,
                 "args": [],
-                "env": { "VERNE_WORKSPACE_DIR": "${env:VERNE_WORKSPACE_DIR}" }
+                "env": {
+                    "VERNE_WORKSPACE_DIR": "${env:VERNE_WORKSPACE_DIR}",
+                    "VERNE_INTERNAL_DATA_DIR": "${env:VERNE_INTERNAL_DATA_DIR}",
+                    "VERNE_TAB_ID": "${env:VERNE_TAB_ID}"
+                }
             }),
         )?;
         save_json_atomic(&path, &cfg)?;
@@ -485,7 +490,7 @@ impl McpAgent for Cursor {
         let name = mcp_server_name();
         format!(
             "# add to ~/.cursor/mcp.json under \"mcpServers\":\n\
-             \"{name}\": {{ \"command\": \"{}\", \"args\": [], \"env\": {{ \"VERNE_WORKSPACE_DIR\": \"${{env:VERNE_WORKSPACE_DIR}}\" }} }}\n\
+             \"{name}\": {{ \"command\": \"{}\", \"args\": [], \"env\": {{ \"VERNE_WORKSPACE_DIR\": \"${{env:VERNE_WORKSPACE_DIR}}\", \"VERNE_INTERNAL_DATA_DIR\": \"${{env:VERNE_INTERNAL_DATA_DIR}}\", \"VERNE_TAB_ID\": \"${{env:VERNE_TAB_ID}}\" }} }}\n\
              # then approve it:\n\
              agent mcp enable {name}",
             crate::paths::mcp_launcher_path().to_string_lossy()

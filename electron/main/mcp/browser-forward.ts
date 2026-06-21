@@ -21,7 +21,7 @@ export function browserControl(
       return;
     }
     const sock = connect(cfg.port, "127.0.0.1");
-    sock.setTimeout(10_000, () => sock.destroy(new Error("browser-control timeout")));
+    sock.setTimeout(30_000, () => sock.destroy(new Error("browser-control timeout")));
     let buf = "";
     sock.on("connect", () => {
       sock.write(JSON.stringify(buildBrowserRequest(body, cfg.secret, workspaceDir)) + "\n");

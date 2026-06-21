@@ -31,6 +31,7 @@ export interface SnapshotElement {
   value?: string;
 }
 export interface Snapshot { url: string; title: string; count: number; elements: SnapshotElement[]; }
+export interface CdpSessionOptions { offscreen?: boolean; }
 
 export class CdpSession {
   private console: ConsoleMessage[] = [];
@@ -48,6 +49,7 @@ export class CdpSession {
     readonly wcId: number,
     readonly workspaceDir: string,
     private dbg: Debugger,
+    private opts: CdpSessionOptions = {},
   ) {}
 
   async attach(): Promise<void> {
@@ -123,6 +125,11 @@ export class CdpSession {
   lifecycle(): string { return this.lastLifecycle; }
   currentUrl(): string { return this.url; }
   send(method: string, params?: object): Promise<any> { return this.dbg.sendCommand(method, params); }
+
+  async beginNavigate(url: string): Promise<void> {
+    this.url = url;
+    await this.send("Page.navigate", { url });
+  }
 
   // ---- action primitives ----
   async snapshot(): Promise<Snapshot> {
@@ -216,7 +223,7 @@ export class CdpSession {
       });
       if (Array.isArray(result?.value)) [w, h] = result.value;
     } catch { /* treat as hidden */ }
-    const hidden = !w || !h;
+    const hidden = this.opts.offscreen || !w || !h;
     if (hidden) {
       await this.send("Emulation.setDeviceMetricsOverride", {
         width: 1280, height: 800, deviceScaleFactor: 1, mobile: false,

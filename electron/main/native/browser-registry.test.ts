@@ -45,9 +45,10 @@ describe("BrowserRegistry", () => {
     reg.setActive("browser:b", "/ws");
     const list = reg.list("/ws");
     expect(list).toEqual([
-      { id: "browser:a", url: "http://site/browser:a", active: false },
-      { id: "browser:b", url: "http://site/browser:b", active: true },
+      { id: "browser:a", url: "http://site/browser:a", active: false, owner: "ui" },
+      { id: "browser:b", url: "http://site/browser:b", active: true, owner: "ui" },
     ]);
+    expect(reg.currentUi("/ws")).toEqual({ id: "browser:b", url: "http://site/browser:b", active: true, owner: "ui" });
   });
 
   it("register is idempotent for the same wcId and re-attaches on a new wcId", async () => {
@@ -64,5 +65,22 @@ describe("BrowserRegistry", () => {
     expect(sessions).toHaveLength(2);
     expect(sessions[0].detach).toHaveBeenCalled();
     expect(reg.get("browser:a", "/ws").wcId).toBe(2);
+  });
+
+  it("tracks automation tabs by owner without marking them active", async () => {
+    const reg = new BrowserRegistry((tabId, wcId, ws) => fakeSession(tabId, wcId, ws));
+    const dispose = vi.fn();
+    const automation = fakeSession("browser:auto", 9, "/ws", "https://x.test");
+    reg.registerAutomation("browser:auto", automation, "terminal-tab-1", dispose);
+
+    expect(reg.findAutomationByOwner("/ws", "terminal-tab-1")).toBe(automation);
+    expect(reg.findAutomationByOwner("/ws", "terminal-tab-2")).toBeNull();
+    expect(reg.list("/ws")).toEqual([
+      { id: "browser:auto", url: "https://x.test", active: false, owner: "automation" },
+    ]);
+    expect(reg.currentUi("/ws")).toBeNull();
+
+    reg.unregister("browser:auto");
+    expect(dispose).toHaveBeenCalled();
   });
 });

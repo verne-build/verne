@@ -6,10 +6,10 @@ import net from "node:net";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import type { BrowserWindow } from "electron";
 import { internalDataDir } from "../paths";
 import type { BrowserRegistry } from "./browser-registry";
 import { normalizeBrowserUrl, sameBrowserUrl } from "../../../src/lib/browserTabs";
+import type { AutomationBrowserSession } from "./browser-automation-window";
 
 // PATH PARITY: must equal Rust crate::paths::browser_control_file()
 // = internal_data_dir()/browser-control.json. The agent's `verne mcp` inherits
@@ -19,20 +19,25 @@ export function browserControlFilePath(): string {
   return path.join(internalDataDir, "browser-control.json");
 }
 
-interface Options { secret?: string; writeDescriptor?: boolean; }
+interface Options {
+  secret?: string;
+  writeDescriptor?: boolean;
+  createAutomationSession?: (tabId: string, url: string, workspaceDir: string) => Promise<AutomationBrowserSession>;
+}
 
 export class BrowserControlServer {
   private server?: net.Server;
   private secret: string;
   private writeDescriptor: boolean;
+  private createAutomationSession?: Options["createAutomationSession"];
 
   constructor(
     private registry: BrowserRegistry,
-    private getWindow: () => BrowserWindow,
     opts: Options = {},
   ) {
     this.secret = opts.secret ?? crypto.randomBytes(24).toString("hex");
     this.writeDescriptor = opts.writeDescriptor ?? true;
+    this.createAutomationSession = opts.createAutomationSession;
   }
 
   start(): Promise<number> {
@@ -79,16 +84,19 @@ export class BrowserControlServer {
       switch (req.action) {
         case "list":
           return { ok: true, browsers: this.registry.list(ws) };
+        case "current":
+          return { ok: true, browser: this.registry.currentUi(ws) };
         case "open": {
           const target = normalizeBrowserUrl(req.url);
-          const match = this.registry.list(ws).find((t) => t.url && sameBrowserUrl(t.url, target));
-          if (match) {
-            // URL already open in this workspace — focus that tab, don't duplicate.
-            this.registry.setActive(match.id, ws);
-            this.getWindow().webContents.send("daemon-event", "browser-focus-request", { tabId: match.id, workspaceDir: ws });
-            return { ok: true, tabId: match.id, reused: true };
+          const automationOwner = this.automationOwner(req.automationOwner, ws);
+          const owned = this.registry.findAutomationByOwner(ws, automationOwner);
+          if (owned) {
+            if (!sameBrowserUrl(owned.currentUrl(), target)) {
+              await owned.navigate(target);
+            }
+            return { ok: true, tabId: owned.tabId, reused: true };
           }
-          const tabId = await this.openTab(req.url, ws);
+          const tabId = await this.openAutomationTab(target, ws, automationOwner);
           return { ok: true, tabId, reused: false };
         }
         case "navigate": {
@@ -144,15 +152,15 @@ export class BrowserControlServer {
     await s.send("Page.navigateToHistoryEntry", { entryId: target.id });
   }
 
-  private openTab(url: string, ws: string): Promise<string> {
+  private automationOwner(raw: unknown, ws: string): string {
+    return typeof raw === "string" && raw.trim() ? raw.trim() : `workspace:${ws}`;
+  }
+
+  private async openAutomationTab(url: string, ws: string, automationOwner: string): Promise<string> {
+    if (!this.createAutomationSession) throw new Error("browser automation unavailable");
     const tabId = `browser:${crypto.randomUUID()}`;
-    this.getWindow().webContents.send("daemon-event", "browser-open-request", { tabId, url, workspaceDir: ws });
-    return new Promise((resolve, reject) => {
-      const deadline = Date.now() + 10000;
-      const poll = setInterval(() => {
-        if (this.registry.has(tabId)) { clearInterval(poll); resolve(tabId); }
-        else if (Date.now() > deadline) { clearInterval(poll); reject(new Error("tab did not register")); }
-      }, 100);
-    });
+    const { session, dispose } = await this.createAutomationSession(tabId, url, ws);
+    this.registry.registerAutomation(tabId, session, automationOwner, dispose);
+    return tabId;
   }
 }
