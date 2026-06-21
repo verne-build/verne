@@ -2,8 +2,12 @@ import { describe, it, expect, vi } from "vitest";
 
 // Registry imports ../ipc-router which imports electron at module load. Mock it so
 // the suite runs in plain Node. The tests inject a factory, so webContents is unused.
+const { mockFromId } = vi.hoisted(() => ({
+  mockFromId: vi.fn((): any => null),
+}));
+
 vi.mock("electron", () => ({
-  webContents: { fromId: () => null },
+  webContents: { fromId: mockFromId },
   ipcMain: { handle: () => {} },
   BrowserWindow: class {},
 }));
@@ -65,6 +69,16 @@ describe("BrowserRegistry", () => {
     expect(sessions).toHaveLength(2);
     expect(sessions[0].detach).toHaveBeenCalled();
     expect(reg.get("browser:a", "/ws").wcId).toBe(2);
+  });
+
+  it("rejects non-webview webContents", async () => {
+    mockFromId.mockReturnValueOnce({
+      getType: () => "window",
+      debugger: {},
+    });
+    const reg = new BrowserRegistry();
+    await expect(reg.register("browser:a", 1, "/ws")).rejects.toThrow(/expected webview/);
+    expect(reg.has("browser:a")).toBe(false);
   });
 
   it("tracks automation tabs by owner without marking them active", async () => {
