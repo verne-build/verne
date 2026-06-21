@@ -23,7 +23,9 @@ interface RegistryEntry {
 function defaultFactory(tabId: string, wcId: number, workspaceDir: string): CdpSession {
   const wc = webContents.fromId(wcId);
   if (!wc) throw new Error(`webContents ${wcId} not found`);
-  return new CdpSession(tabId, wcId, workspaceDir, wc.debugger as unknown as Debugger);
+  const type = wc.getType();
+  if (type !== "webview") throw new Error(`browser tab ${tabId} expected webview webContents, got ${type}`);
+  return new CdpSession(tabId, wcId, workspaceDir, wc.debugger as unknown as Debugger, { page: wc });
 }
 
 export class BrowserRegistry {

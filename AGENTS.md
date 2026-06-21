@@ -193,5 +193,7 @@ Per-tab agent state: `working` | `blocked` | `idle` | `unknown`. Drives the dot 
 ## Style
 
 - Be extremely concise in code and commit messages; sacrifice grammar for brevity.
+- Always use Conventional Commits for commit messages and PR titles.
+- Before creating or updating a PR, read `.github/pull_request_template.md` and the relevant `.github/PULL_REQUEST_TEMPLATE/*` file, then follow that template in the PR body.
 - Keep performance fast — avoid unnecessary re-renders, heavy main-thread work, bloated deps.
 - When rendering the user's path in the UI, always use the `~` shortcut for the home directory.

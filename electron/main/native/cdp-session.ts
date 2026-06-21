@@ -31,7 +31,11 @@ export interface SnapshotElement {
   value?: string;
 }
 export interface Snapshot { url: string; title: string; count: number; elements: SnapshotElement[]; }
-export interface CdpSessionOptions { offscreen?: boolean; }
+export interface BrowserPage {
+  reload(): void;
+  isDestroyed?(): boolean;
+}
+export interface CdpSessionOptions { offscreen?: boolean; page?: BrowserPage; }
 
 export class CdpSession {
   private console: ConsoleMessage[] = [];
@@ -125,6 +129,15 @@ export class CdpSession {
   lifecycle(): string { return this.lastLifecycle; }
   currentUrl(): string { return this.url; }
   send(method: string, params?: object): Promise<any> { return this.dbg.sendCommand(method, params); }
+
+  async reload(): Promise<void> {
+    if (this.opts.page) {
+      if (this.opts.page.isDestroyed?.()) throw new Error(`browser tab ${this.tabId} is destroyed`);
+      this.opts.page.reload();
+      return;
+    }
+    await this.send("Page.reload");
+  }
 
   async beginNavigate(url: string): Promise<void> {
     this.url = url;

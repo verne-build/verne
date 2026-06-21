@@ -56,6 +56,22 @@ describe("CdpSession", () => {
     expect(s.currentUrl()).toBe("http://a.com/#x");
   });
 
+  it("reloads through the owning page when available", async () => {
+    const { dbg, sent } = mockDebugger();
+    const page = { reload: vi.fn(), isDestroyed: vi.fn(() => false) };
+    const s = new CdpSession("browser:t1", 42, "/ws", dbg, { page });
+    await s.reload();
+    expect(page.reload).toHaveBeenCalled();
+    expect(sent.some((c) => c.method === "Page.reload")).toBe(false);
+  });
+
+  it("falls back to CDP reload without an owning page", async () => {
+    const { dbg, sent } = mockDebugger();
+    const s = new CdpSession("browser:t1", 42, "/ws", dbg);
+    await s.reload();
+    expect(sent).toContainEqual({ method: "Page.reload", params: undefined });
+  });
+
   it("snapshot assigns refs to interactive AX nodes only", async () => {
     const { dbg, sent } = mockDebugger();
     (dbg.sendCommand as any).mockImplementation(async (m: string, params?: any) => {

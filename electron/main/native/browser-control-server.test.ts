@@ -20,6 +20,7 @@ function fakeRegistry() {
     workspaceDir: "/ws",
     currentUrl: vi.fn(() => "http://x"),
     navigate: vi.fn(async () => "http://x/landed"),
+    reload: vi.fn(async () => {}),
     snapshot: vi.fn(async () => ({ url: "http://x", title: "T", count: 0, elements: [] })),
     click: vi.fn(async () => {}),
     fill: vi.fn(async () => {}),
@@ -90,6 +91,15 @@ describe("BrowserControlServer", () => {
     const port = await srv.start();
     const resp = await rpc(port, { action: "navigate", tabId: "browser:a", url: "http://x", secret: "good", workspaceDir: "/ws" });
     expect(resp).toEqual({ ok: true, url: "http://x/landed" });
+  });
+
+  it("reloads through the registered browser session", async () => {
+    const reg = fakeRegistry();
+    srv = new BrowserControlServer(reg as any, opts);
+    const port = await srv.start();
+    const resp = await rpc(port, { action: "reload", tabId: "browser:a", secret: "good", workspaceDir: "/ws" });
+    expect(resp).toEqual({ ok: true });
+    expect(reg.session.reload).toHaveBeenCalled();
   });
 
   it("reports a clean error when the session throws", async () => {
