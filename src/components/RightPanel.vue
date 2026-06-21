@@ -11,7 +11,7 @@ const SearchPanel = defineAsyncComponent(() => import("./SearchPanel.vue"));
 // Async so WKWebView plumbing only loads when a browser tab is opened.
 const BrowserView = defineAsyncComponent(() => import("@/components/browser/BrowserView.vue"));
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "./ui/resizable";
-import { listen, ask, type UnlistenFn } from "@/platform";
+import { ask } from "@/platform";
 import { Files } from "@lucide/vue";
 import { EXPLORER_TAB_ID, SC_TAB_ID, COMMITS_TAB_ID, NOTES_TAB_ID, NEW_TAB_ID, type FilePanelBrowserTab } from "@/types";
 import SourceControlTab from "./SourceControlTab.vue";
@@ -195,9 +195,6 @@ const search = usePanelResizeState({
   clamp: clampListPanelPx,
 });
 
-let unlistenBrowserOpenRequest: UnlistenFn | null = null;
-let unlistenBrowserFocusRequest: UnlistenFn | null = null;
-
 // Palette lives in App.vue now (so it works with the right panel collapsed);
 // open it via the same window event the global shortcuts use.
 function handleOpenFileSearch() { window.dispatchEvent(new CustomEvent("open-file-search")); }
@@ -246,15 +243,6 @@ onMounted(async () => {
   window.addEventListener("focus-file-panel", handleFocusFilePanel);
   window.addEventListener("new-file", handleNewFile);
 
-  unlistenBrowserOpenRequest = await listen<{ tabId: string; url: string; workspaceDir: string }>(
-    "browser-open-request",
-    (e) => { openBrowserTab(e.payload.url, undefined, e.payload.tabId); },
-  );
-  unlistenBrowserFocusRequest = await listen<{ tabId: string; workspaceDir: string }>(
-    "browser-focus-request",
-    (e) => { if (browserTabs.value.some((t) => t.id === e.payload.tabId)) setActiveId(e.payload.tabId); },
-  );
-
   const rpc = useRpc();
   try {
     const [explorerPx, vis, searchPx] = await Promise.all([
@@ -271,8 +259,6 @@ onUnmounted(() => {
   window.removeEventListener("close-active-file-tab", handleCloseActiveFileTab);
   window.removeEventListener("focus-file-panel", handleFocusFilePanel);
   window.removeEventListener("new-file", handleNewFile);
-  unlistenBrowserOpenRequest?.();
-  unlistenBrowserFocusRequest?.();
   explorer.dispose();
   search.dispose();
 });

@@ -14,6 +14,7 @@ import { registerMenuCommands } from "./native/menu-cmds";
 import { registerBrowserCommands } from "./native/browser";
 import { BrowserRegistry } from "./native/browser-registry";
 import { BrowserControlServer } from "./native/browser-control-server";
+import { createAutomationBrowserSession } from "./native/browser-automation-window";
 import { registerReviewCommands } from "./native/review-cmds";
 import { registerSettingsCommands, currentSettings } from "./native/settings-cmds";
 import { registerShortcutsCommands, stopShortcutsWatcher } from "./native/shortcuts-cmds";
@@ -153,10 +154,6 @@ function registerTabOrchestration(d: DaemonClient, s: DaemonClient): void {
     const cwd = opts.cwd ?? dir.path;
     const label = opts.label ?? defaultLabel(getTabs(db, opts.directoryId).length);
 
-    const env: Record<string, string> = {};
-    const root = resolveWorkspaceRoot(db, opts.directoryId);
-    if (root) env.VERNE_WORKSPACE_DIR = root;
-
     const now = Date.now();
     const tab: Tab = {
       id: crypto.randomUUID(),
@@ -170,6 +167,9 @@ function registerTabOrchestration(d: DaemonClient, s: DaemonClient): void {
       lastAgentState: undefined,
       userRenamed: false,
     };
+    const env: Record<string, string> = { VERNE_TAB_ID: tab.id };
+    const root = resolveWorkspaceRoot(db, opts.directoryId);
+    if (root) env.VERNE_WORKSPACE_DIR = root;
     insertTab(db, tab);
 
     const labels = tabDisplayLabels(db, tab.id);
@@ -208,7 +208,7 @@ function registerTabOrchestration(d: DaemonClient, s: DaemonClient): void {
     const db = getDb();
     const tab = getTab(db, params.id);
     if (!tab) throw new Error("tab not found");
-    const env: Record<string, string> = {};
+    const env: Record<string, string> = { VERNE_TAB_ID: tab.id };
     const root = resolveWorkspaceRoot(db, tab.directoryId);
     if (root) env.VERNE_WORKSPACE_DIR = root;
     const labels = tabDisplayLabels(db, params.id);
@@ -338,9 +338,11 @@ app.whenReady().then(async () => {
   registerSpeechIpc(getWindow);
   registerDictationHotkey(win);
 
-  // Start the CDP browser-control server once the window exists (open actions
-  // route through it). Writes browser-control.json so `verne mcp` can connect.
-  browserControl = new BrowserControlServer(browserRegistry, getWindow);
+  // Start the CDP browser-control server once the window exists. Writes
+  // browser-control.json so `verne mcp` can connect.
+  browserControl = new BrowserControlServer(browserRegistry, {
+    createAutomationSession: createAutomationBrowserSession,
+  });
   browserControl.start().catch((e) => console.error("browser-control server failed:", e));
 
   try { writeMcpLauncher(); } catch (e) { console.error("[mcp] launcher write failed:", e); }

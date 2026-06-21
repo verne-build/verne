@@ -16,14 +16,19 @@ function resolveWorkspace(): string {
   return process.env.VERNE_WORKSPACE_DIR || process.env.CLAUDE_PROJECT_DIR || process.cwd();
 }
 
+function resolveAutomationOwner(root: string): string {
+  return process.env.VERNE_TAB_ID || `workspace:${root}`;
+}
+
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
 const jsonText = (v: unknown) => text(JSON.stringify(v));
 
 async function main() {
   const root = resolveWorkspace();
+  const automationOwner = resolveAutomationOwner(root);
   const idd = internalDataDir();
   const notes = makeNotesStore(notesDir(idd, root));
-  const bc = (body: Record<string, unknown>) => browserControl(idd, root, body);
+  const bc = (body: Record<string, unknown>) => browserControl(idd, root, { ...body, automationOwner });
 
   const server = new McpServer({ name: "verne", version: "1.0.0" });
 
@@ -40,8 +45,10 @@ async function main() {
     async ({ name, content }) => text(`Appended to note '${notes.append(name, content)}'.`));
 
   // --- browser (forwarders) ---
-  server.registerTool("browser_list", { description: "List open browser tabs in the current workspace. Returns [{id, url, active}].", inputSchema: z.object({}) },
+  server.registerTool("browser_list", { description: "List open browser tabs in the current workspace. Returns [{id, url, active, owner}], where owner is 'ui' for user-visible tabs or 'automation' for hidden automation tabs.", inputSchema: z.object({}) },
     async () => jsonText((await bc({ action: "list" })).browsers));
+  server.registerTool("browser_current", { description: "Return the active user-visible browser tab in the current workspace, or null if none is active. Use this for requests like 'look at this open tab'.", inputSchema: z.object({}) },
+    async () => jsonText((await bc({ action: "current" })).browser ?? null));
   server.registerTool("browser_open", { description: "Open a URL in a browser tab. If the same URL is already open in this workspace, focuses that existing tab instead of creating a duplicate. Returns {id, reused}.", inputSchema: z.object({ url: z.string() }) },
     async ({ url }) => { const r = await bc({ action: "open", url }); return jsonText({ id: r.tabId, reused: !!r.reused }); });
   server.registerTool("browser_navigate", { description: "Navigate a browser tab to a URL. Returns {ok, url}.", inputSchema: z.object({ id: z.string(), url: z.string() }) },
