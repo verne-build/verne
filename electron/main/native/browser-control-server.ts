@@ -110,7 +110,7 @@ export class BrowserControlServer {
           await this.history(req.tabId, ws, +1);
           return { ok: true };
         case "reload":
-          await this.registry.get(req.tabId, ws).send("Page.reload");
+          await this.registry.get(req.tabId, ws).reload();
           return { ok: true };
         case "snapshot": {
           const snap = await this.registry.get(req.tabId, ws).snapshot();
