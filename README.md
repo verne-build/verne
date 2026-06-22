@@ -1,21 +1,15 @@
 <div align="center">
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="src/assets/logo.svg" />
-  <source media="(prefers-color-scheme: light)" srcset="src/assets/logo-light.svg" />
-  <img src="src/assets/logo.svg" alt="Verne" width="200" />
-</picture>
-
-<br />
-
-<img src="src/assets/hero.png" alt="Verne workspace" width="900" />
+<img src="src/assets/hero.png" alt="Verne workspace" width="full" />
 
 
-### An open-source IDE for your coding agents
+### The open-source IDE for your coding agents
 
 <br />
 
 [![License: GPLv3](https://img.shields.io/badge/License-GPLv3-informational.svg)](./LICENSE.txt)
+[![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/verne-build/verne/release.yml)](https://github.com/verne-build/verne/releases)
+[![GitHub release](https://img.shields.io/github/v/release/verne-build/verne?style=flat)](https://github.com/verne-build/verne/releases)
 
 <br />
 
