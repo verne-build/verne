@@ -252,7 +252,7 @@ function resolvedMinimap(): boolean {
   return props.minimap ?? settings.value.editorMinimap;
 }
 const emit = defineEmits<{
-  dirty: [isDirty: boolean];
+  dirty: [isDirty: boolean, filePath?: string];
   saved: [filePath: string];
   close: [];
   viewState: [state: { scrollTop: number; cursorLine: number; cursorColumn: number }];
@@ -296,6 +296,11 @@ const mountedPromise = new Promise<void>((resolve) => {
 const DIRTY_CACHE_MAX = 50;
 const dirtyContentCache = new Map<string, string>();
 const shadowPersistedHashes = new Map<string, number>();
+const shadowDesired = new Map<string, {
+  content: string;
+  hash: number;
+  retainHash: boolean;
+}>();
 
 function contentHash(value: string): number {
   let hash = 2166136261;
@@ -326,6 +331,19 @@ function hasShadow(path: string): boolean {
   return shadowPersistedHashes.has(path);
 }
 
+async function removeProjectShadow(path: string) {
+  if (!props.rootDir || isExternalFile(path)) return;
+  shadowDesired.delete(path);
+  forgetShadowContent(path);
+  const dir = props.rootDir;
+  const relPath = relPathFor(path);
+  try {
+    await useRpc().request.shadowRemove({ dir, relPath });
+  } catch {}
+  const desired = shadowDesired.get(path);
+  if (desired) persistProjectShadow(path, desired.content, { retainHash: desired.retainHash });
+}
+
 function clearModelMarkers(model: monaco.editor.ITextModel | null | undefined) {
   if (!model) return;
   const owners = new Set(
@@ -342,6 +360,7 @@ function clearModelMarkers(model: monaco.editor.ITextModel | null | undefined) {
 function syncShadowTracking(path: string, content: string, base: string) {
   if (content === base) {
     forgetShadowContent(path);
+    shadowDesired.delete(path);
     return;
   }
   rememberShadowContent(path, content);
@@ -355,14 +374,26 @@ function persistProjectShadow(path: string, content: string, options?: { retainH
     if (!retainHash) forgetShadowContent(path);
     return;
   }
+  const dir = props.rootDir;
+  const relPath = relPathFor(path);
+  shadowDesired.set(path, { content, hash: nextHash, retainHash });
   useRpc()
     .request.shadowCommit({
-      dir: props.rootDir,
-      relPath: relPathFor(path),
+      dir,
+      relPath,
       content,
     })
     .then(() => {
-      if (retainHash) shadowPersistedHashes.set(path, nextHash);
+      const desired = shadowDesired.get(path);
+      if (!desired) {
+        useRpc().request.shadowRemove({ dir, relPath }).catch(() => {});
+        return;
+      }
+      if (desired.hash !== nextHash) {
+        persistProjectShadow(path, desired.content, { retainHash: desired.retainHash });
+        return;
+      }
+      if (desired.retainHash) shadowPersistedHashes.set(path, nextHash);
       else forgetShadowContent(path);
     })
     .catch(() => {});
@@ -506,7 +537,7 @@ watch(() => props.svgPreview, (v) => {
 function onClearDirtyCache(e: Event) {
   const path = (e as CustomEvent).detail;
   dirtyContentCache.delete(path);
-  forgetShadowContent(path);
+  void removeProjectShadow(path);
   if (currentFilePath === path) clearModelMarkers(editor.value?.getModel());
   // Reset local dirty flag so loadFile flush won't re-cache
   if (currentFilePath === path) isDirty = false;
@@ -719,7 +750,7 @@ function largeFileStatus(profile: EditorContentProfile): string | null {
 function setDirty(dirty: boolean) {
   if (isDirty === dirty) return;
   isDirty = dirty;
-  emit("dirty", dirty);
+  emit("dirty", dirty, currentFilePath || props.filePath);
 }
 
 function relPath(): string {
@@ -801,9 +832,12 @@ async function save() {
       // Clear dirty state
       dirtyContentCache.delete(filePath);
       if (props.rootDir && !isExternalFile(filePath)) {
+        shadowDesired.delete(filePath);
         await useRpc()
           .request.shadowOnSaved({ dir: props.rootDir, relPath: relPathFor(filePath), content });
-        forgetShadowContent(filePath);
+        const desired = shadowDesired.get(filePath);
+        if (desired) persistProjectShadow(filePath, desired.content, { retainHash: desired.retainHash });
+        else forgetShadowContent(filePath);
       }
     } catch (e: any) {
       console.error("Failed to save:", e);
@@ -1135,6 +1169,8 @@ async function loadFile(filePath: string) {
       shadowTimer = setTimeout(() => {
         persistProjectShadow(fp, content);
       }, 2000);
+    } else if (!dirty && props.rootDir && !isExternalFile(fp)) {
+      void removeProjectShadow(fp);
     }
   });
 
@@ -1197,16 +1233,9 @@ async function reload() {
 }
 
 async function reloadFromDisk() {
-  if (props.rootDir && !isExternalFile(currentFilePath)) {
-    try {
-      await useRpc().request.shadowRemove({
-        dir: props.rootDir,
-        relPath: relPathFor(currentFilePath),
-      });
-    } catch {}
-  }
-  forgetShadowContent(currentFilePath);
+  await removeProjectShadow(currentFilePath);
   dirtyContentCache.delete(currentFilePath);
+  setDirty(false);
   stale.value = false;
   await loadFile(currentFilePath);
 }
