@@ -339,7 +339,7 @@ function activeTabAsFile(): FilePanelFileTab | null {
             :position-version="activeTab.positionVersion"
             :markdown-preview="filePreview && activeFileExt === 'md'"
             :svg-preview="filePreview && activeFileExt === 'svg'"
-            @dirty="(d) => emit('dirty', activeTab!.kind === 'file' ? (activeTab as FilePanelFileTab).filePath : '', d)"
+            @dirty="(d, path) => emit('dirty', path || (activeTab!.kind === 'file' ? (activeTab as FilePanelFileTab).filePath : ''), d)"
             @close="emit('close-tab', activeTab!.id)"
             @view-state="(s) => emit('view-state', activeTab!.id, s)"
           />
