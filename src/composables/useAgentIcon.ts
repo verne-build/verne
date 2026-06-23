@@ -6,8 +6,10 @@ import antigravityIconUrl from "@/assets/agents/antigravity.svg";
 import opencodeDarkIconUrl from "@/assets/agents/opencode-dark.svg";
 import opencodeLightIconUrl from "@/assets/agents/opencode-light.svg";
 
+export type AgentIconSurface = "dark" | "light";
+
 // All agent icons live in src/assets/agents/. Unknown types fall back to Claude.
-const icons: Record<string, string> = {
+const darkSurfaceIcons: Record<string, string> = {
   claude: claudeIconUrl,
   copilot: copilotIconUrl,
   codex: codexDarkIconUrl,
@@ -15,15 +17,21 @@ const icons: Record<string, string> = {
   opencode: opencodeDarkIconUrl,
 };
 
-// Monochrome/inverted contexts (e.g. light surfaces) — same set, with OpenCode's
-// light variant. Others reuse their single asset.
-const monoIcons: Record<string, string> = {
-  ...icons,
+const lightSurfaceIcons: Record<string, string> = {
+  ...darkSurfaceIcons,
   opencode: opencodeLightIconUrl,
   codex: codexLightIconUrl,
 };
 
-export function getAgentIcon(agentType: string, mono = false): string {
-  const map = mono ? monoIcons : icons;
+export function getAgentIconForSurface(agentType: string, surface: AgentIconSurface): string {
+  const map = surface === "dark" ? darkSurfaceIcons : lightSurfaceIcons;
   return map[agentType] ?? map.claude;
+}
+
+export function agentIconSurfaceForTheme(themeType: "dark" | "light"): AgentIconSurface {
+  return themeType === "dark" ? "dark" : "light";
+}
+
+export function getAgentIcon(agentType: string, mono = false): string {
+  return getAgentIconForSurface(agentType, mono ? "light" : "dark");
 }
