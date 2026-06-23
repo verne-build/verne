@@ -1,24 +1,22 @@
 use std::path::{Path, PathBuf};
 
 /// Fields the worktree workspace ops need from the sidecar's `AppState`
-/// (settings for the worktrees-root override, the internal data dir, and
-/// subtree-resource eviction). A trait so the git logic stays decoupled.
+/// (settings for the worktrees-root override and subtree-resource eviction).
+/// A trait so the git logic stays decoupled.
 pub trait WorktreeHost {
     fn settings(&self) -> &crate::settings::SettingsManager;
-    fn internal_data_dir(&self) -> &Path;
     fn evict_directory_resources(&self, id: &str, all_dirs: &[crate::types::WorkingDirectory]);
 }
 
 impl WorktreeHost for crate::state::AppState {
     fn settings(&self) -> &crate::settings::SettingsManager { &self.settings }
-    fn internal_data_dir(&self) -> &Path { &self.internal_data_dir }
     fn evict_directory_resources(&self, id: &str, all_dirs: &[crate::types::WorkingDirectory]) {
         crate::state::AppState::evict_directory_resources(self, id, all_dirs)
     }
 }
 
 // `&self.settings` (an `&Arc<SettingsManager>`) coerces to `&SettingsManager`
-// via deref in the impls above; `internal_data_dir` (`PathBuf`) to `&Path`.
+// via deref in the impls above.
 
 pub const WORKTREE_NAME_POOL: &[&str] = &[
     "magellan", "columbus", "drake", "cook", "shackleton", "amundsen", "scott",
@@ -60,11 +58,12 @@ pub struct WorktreeGitResult {
     pub repo_root: String,
 }
 
-/// Resolve worktrees root: app setting override → `<internal_data>/worktrees`.
-pub fn resolve_root(internal_data_dir: &Path, override_path: Option<&str>) -> PathBuf {
+/// Resolve worktrees root: app setting override → `~/.verne/worktrees`.
+/// Default must match the path advertised in Settings (`user_data_dir`).
+pub fn resolve_root(override_path: Option<&str>) -> PathBuf {
     match override_path {
         Some(p) if !p.trim().is_empty() => PathBuf::from(shellexpand_tilde(p)),
-        _ => internal_data_dir.join("worktrees"),
+        _ => crate::paths::user_data_dir().join("worktrees"),
     }
 }
 
@@ -320,7 +319,7 @@ pub fn create_workspace_worktree_git(
         .ok_or_else(|| "bare repo".to_string())?;
 
     let worktrees_root_override = state.settings().get().worktrees_root;
-    let root = resolve_root(state.internal_data_dir(), worktrees_root_override.as_deref());
+    let root = resolve_root(worktrees_root_override.as_deref());
     fs::create_dir_all(root.join(parent_dir_id))
         .map_err(|e| format!("create worktrees dir: {e}"))?;
 
