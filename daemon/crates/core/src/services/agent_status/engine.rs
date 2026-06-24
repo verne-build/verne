@@ -97,7 +97,7 @@ impl AgentStatusEngine {
                 // though an automated reviewer (not a human) is handling it. Don't
                 // surface Blocked while the review banner is on screen; leave the
                 // prior state (Working) intact. Identity/session/sequence still
-                // update below via `next`.
+                // update above via `next`.
                 let suppress_block =
                     state == AgentState::Blocked && self.review_in_progress;
                 if !suppress_block {
@@ -195,6 +195,7 @@ impl AgentStatusEngine {
             next.source = AgentStatusSource::Screen;
             next.confidence = 80;
             next.visible_blocker = false;
+            next.visible_working = true;
             return self.commit(next, observation.observed_at);
         }
 
