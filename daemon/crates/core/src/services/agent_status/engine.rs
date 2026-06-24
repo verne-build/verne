@@ -11,8 +11,11 @@ pub struct HookReport {
     pub sequence: u64,
     pub agent_type: String,
     pub session_id: Option<String>,
+    pub display_title: Option<String>,
     pub state: Option<AgentState>,
     pub authority: HookAuthority,
+    pub review_in_progress: bool,
+    pub user_prompt_submitted: bool,
     pub observed_at: i64,
 }
 
@@ -45,6 +48,7 @@ pub struct AgentStatusEngine {
     identity_confirmations: u8,
     idle_confirmations: u8,
     review_in_progress: bool,
+    user_prompt_submitted: bool,
     observed_input_sequence: u64,
     observed_output_sequence: u64,
     observed_resize_sequence: u64,
@@ -61,6 +65,7 @@ impl Default for AgentStatusEngine {
             identity_confirmations: 0,
             idle_confirmations: 0,
             review_in_progress: false,
+            user_prompt_submitted: false,
             observed_input_sequence: 0,
             observed_output_sequence: 0,
             observed_resize_sequence: 0,
@@ -84,28 +89,63 @@ impl AgentStatusEngine {
             return None;
         }
         *latest = report.sequence;
-        self.hook_identity = Some(report.agent_type.clone());
+        let agent_type = report.agent_type.clone();
+        self.hook_identity = Some(agent_type.clone());
         self.hook_authority = report.authority;
+        if report.review_in_progress {
+            self.review_in_progress = true;
+        }
+        if agent_type == "codex" {
+            if report.user_prompt_submitted {
+                self.user_prompt_submitted = true;
+            } else if report.state == Some(AgentState::Idle) {
+                self.user_prompt_submitted = false;
+            }
+        } else {
+            self.user_prompt_submitted = false;
+        }
 
         let mut next = self.effective.clone();
-        next.agent_type = Some(report.agent_type);
+        next.agent_type = Some(agent_type.clone());
         next.session_id = report.session_id;
+        if report.display_title.is_some() {
+            next.display_title = report.display_title;
+        }
         next.hook_sequence = report.sequence;
+        if next.agent_state == AgentState::Unknown {
+            next.agent_state = AgentState::Idle;
+            next.source = AgentStatusSource::Hook;
+            next.confidence = 60;
+            next.visible_blocker = false;
+            next.visible_working = false;
+        }
         if report.authority == HookAuthority::FullLifecycle {
             if let Some(state) = report.state {
+                let suppress_working = state == AgentState::Working
+                    && Self::codex_work_locked_for(&agent_type, self.user_prompt_submitted);
                 // Codex auto-review: a permission/pre-tool hook fires Blocked even
                 // though an automated reviewer (not a human) is handling it. Don't
-                // surface Blocked while the review banner is on screen; leave the
-                // prior state (Working) intact. Identity/session/sequence still
-                // update above via `next`.
-                let suppress_block =
-                    state == AgentState::Blocked && self.review_in_progress;
-                if !suppress_block {
+                // surface Blocked while the review banner is on screen. Treat the
+                // review as Working so identity/session/sequence still update.
+                let suppress_block = state == AgentState::Blocked && self.review_in_progress;
+                if suppress_working {
+                    next.agent_state = AgentState::Idle;
+                    next.source = AgentStatusSource::Hook;
+                    next.confidence = 100;
+                    next.visible_blocker = false;
+                    next.visible_working = false;
+                } else if !suppress_block {
                     next.agent_state = state;
                     next.source = AgentStatusSource::Hook;
                     next.confidence = 100;
                     next.visible_blocker = state == AgentState::Blocked;
                     next.visible_working = state == AgentState::Working;
+                } else {
+                    next.agent_state = AgentState::Working;
+                    next.source = AgentStatusSource::Screen;
+                    next.confidence = 80;
+                    next.visible_blocker = false;
+                    next.visible_working = true;
                 }
             }
         }
@@ -119,12 +159,14 @@ impl AgentStatusEngine {
             self.candidate_identity = None;
             self.identity_confirmations = 0;
             self.idle_confirmations = 0;
+            self.user_prompt_submitted = false;
             let mut next = self.effective.clone();
             next.agent_type = None;
             next.agent_state = AgentState::Unknown;
             next.source = AgentStatusSource::Process;
             next.confidence = 100;
             next.session_id = None;
+            next.display_title = None;
             next.visible_blocker = false;
             next.visible_working = false;
             self.observed_input_sequence = observation.input_sequence;
@@ -177,11 +219,28 @@ impl AgentStatusEngine {
                 <= policy::INTERRUPT_RECENT_MS;
 
         let mut next = self.effective.clone();
+        let codex_work_locked =
+            Self::codex_work_locked_for(&agent_type, self.user_prompt_submitted);
+        let identity_source = if strong_identity.is_some() {
+            AgentStatusSource::Process
+        } else {
+            AgentStatusSource::Screen
+        };
         next.agent_type = Some(agent_type);
-        next.visible_blocker = observation.detection.visible_blocker;
-        next.visible_working = observation.detection.visible_working;
+        if next.agent_state == AgentState::Unknown {
+            next.agent_state = AgentState::Idle;
+            next.source = identity_source;
+            next.confidence = 60;
+            next.visible_blocker = false;
+            next.visible_working = false;
+        }
 
         self.review_in_progress = observation.detection.review_in_progress;
+        next.visible_blocker = observation.detection.visible_blocker && !self.review_in_progress;
+        next.visible_working = observation.detection.visible_working || self.review_in_progress;
+        if codex_work_locked {
+            next.visible_working = false;
+        }
 
         // Codex auto-review: a hook already surfaced Blocked, but the screen
         // shows the auto-reviewer is processing the request. Release to Working
@@ -213,19 +272,24 @@ impl AgentStatusEngine {
             return self.commit(next, observation.observed_at);
         }
 
-        if observation.detection.visible_blocker && !output_active && !input_tainted {
+        if next.visible_blocker && !output_active && !input_tainted {
             self.idle_confirmations = 0;
             next.agent_state = AgentState::Blocked;
             next.source = AgentStatusSource::Screen;
             next.confidence = 90;
-        } else if output_advanced && output_active && !input_tainted {
+        } else if output_advanced && output_active && !input_tainted && !codex_work_locked {
             self.idle_confirmations = 0;
             next.agent_state = AgentState::Working;
             next.source = AgentStatusSource::Pty;
             next.confidence = 85;
-        } else if observation.detection.visible_working && !input_tainted {
+        } else if next.visible_working && !input_tainted && !codex_work_locked {
             self.idle_confirmations = 0;
             next.agent_state = AgentState::Working;
+            next.source = AgentStatusSource::Screen;
+            next.confidence = 80;
+        } else if codex_work_locked && observation.detection.state == AgentState::Working {
+            self.idle_confirmations = 0;
+            next.agent_state = AgentState::Idle;
             next.source = AgentStatusSource::Screen;
             next.confidence = 80;
         } else if recent_interrupt
@@ -268,6 +332,10 @@ impl AgentStatusEngine {
         self.commit(next, observation.observed_at)
     }
 
+    fn codex_work_locked_for(agent_type: &str, user_prompt_submitted: bool) -> bool {
+        agent_type == "codex" && !user_prompt_submitted
+    }
+
     fn commit(
         &mut self,
         mut next: EffectiveAgentStatus,
@@ -277,6 +345,7 @@ impl AgentStatusEngine {
             || next.agent_state != self.effective.agent_state
             || next.source != self.effective.source
             || next.session_id != self.effective.session_id
+            || next.display_title != self.effective.display_title
             || next.visible_blocker != self.effective.visible_blocker
             || next.visible_working != self.effective.visible_working;
         if !changed {
@@ -300,10 +369,26 @@ mod tests {
             sequence,
             agent_type: "claude".into(),
             session_id: Some("s1".into()),
+            display_title: None,
             state,
             authority: HookAuthority::FullLifecycle,
+            review_in_progress: false,
+            user_prompt_submitted: false,
             observed_at: sequence as i64,
         }
+    }
+
+    fn codex_hook(sequence: u64, state: Option<AgentState>) -> HookReport {
+        let mut report = hook(sequence, state);
+        report.source = "codex".into();
+        report.agent_type = "codex".into();
+        report
+    }
+
+    fn codex_observation(now: i64) -> AgentObservation {
+        let mut obs = observation(now);
+        obs.process_agent_type = Some("codex".into());
+        obs
     }
 
     fn observation(now: i64) -> AgentObservation {
@@ -340,7 +425,29 @@ mod tests {
         report.authority = HookAuthority::IdentityOnly;
         engine.apply_hook(report);
         assert_eq!(engine.snapshot().agent_type.as_deref(), Some("claude"));
-        assert_eq!(engine.snapshot().agent_state, AgentState::Unknown);
+        assert_eq!(engine.snapshot().agent_state, AgentState::Idle);
+        assert_eq!(engine.snapshot().source, AgentStatusSource::Hook);
+    }
+
+    #[test]
+    fn identity_only_hook_does_not_override_existing_state() {
+        let mut engine = AgentStatusEngine::default();
+        engine.apply_hook(hook(1, Some(AgentState::Working)));
+        let mut report = hook(2, Some(AgentState::Idle));
+        report.authority = HookAuthority::IdentityOnly;
+        engine.apply_hook(report);
+        assert_eq!(engine.snapshot().agent_state, AgentState::Working);
+    }
+
+    #[test]
+    fn process_identity_starts_idle_before_screen_state() {
+        let mut engine = AgentStatusEngine::default();
+        let mut obs = codex_observation(10_000);
+        obs.detection = AgentDetection::default();
+        engine.observe(obs);
+        assert_eq!(engine.snapshot().agent_type.as_deref(), Some("codex"));
+        assert_eq!(engine.snapshot().agent_state, AgentState::Idle);
+        assert_eq!(engine.snapshot().source, AgentStatusSource::Process);
     }
 
     #[test]
@@ -442,6 +549,48 @@ mod tests {
     }
 
     #[test]
+    fn codex_startup_screen_working_stays_idle_until_prompt_submit() {
+        let mut engine = AgentStatusEngine::default();
+        engine.apply_hook(codex_hook(1, Some(AgentState::Idle)));
+        let mut obs = codex_observation(10_000);
+        obs.detection = AgentDetection::from_state(AgentState::Working);
+        obs.output_sequence = 1;
+        obs.last_output_at = 9_950;
+        engine.observe(obs);
+        assert_eq!(engine.snapshot().agent_state, AgentState::Idle);
+        assert!(!engine.snapshot().visible_working);
+    }
+
+    #[test]
+    fn codex_pre_prompt_working_hook_stays_idle() {
+        let mut engine = AgentStatusEngine::default();
+        engine.apply_hook(codex_hook(1, Some(AgentState::Idle)));
+        engine.apply_hook(codex_hook(2, Some(AgentState::Working)));
+        assert_eq!(engine.snapshot().agent_state, AgentState::Idle);
+        assert!(!engine.snapshot().visible_working);
+    }
+
+    #[test]
+    fn codex_user_prompt_submit_allows_working_then_stop_resets_gate() {
+        let mut engine = AgentStatusEngine::default();
+        engine.apply_hook(codex_hook(1, Some(AgentState::Idle)));
+        let mut prompt = codex_hook(2, Some(AgentState::Working));
+        prompt.user_prompt_submitted = true;
+        engine.apply_hook(prompt);
+        assert_eq!(engine.snapshot().agent_state, AgentState::Working);
+        assert!(engine.snapshot().visible_working);
+
+        engine.apply_hook(codex_hook(3, Some(AgentState::Idle)));
+        assert_eq!(engine.snapshot().agent_state, AgentState::Idle);
+
+        let mut obs = codex_observation(10_000);
+        obs.detection = AgentDetection::from_state(AgentState::Working);
+        engine.observe(obs);
+        assert_eq!(engine.snapshot().agent_state, AgentState::Idle);
+        assert!(!engine.snapshot().visible_working);
+    }
+
+    #[test]
     fn review_in_progress_suppresses_hook_block() {
         let mut engine = AgentStatusEngine::default();
         // Establish Working + cache the review flag via a screen observation.
@@ -454,6 +603,18 @@ mod tests {
         // Permission-gate hook arrives while the reviewer is processing.
         engine.apply_hook(hook(2, Some(AgentState::Blocked)));
         assert_eq!(engine.snapshot().agent_state, AgentState::Working);
+        assert!(!engine.snapshot().visible_blocker);
+    }
+
+    #[test]
+    fn hook_review_hint_suppresses_block_before_poll() {
+        let mut engine = AgentStatusEngine::default();
+        engine.apply_hook(hook(1, Some(AgentState::Working)));
+        let mut blocked = hook(2, Some(AgentState::Blocked));
+        blocked.review_in_progress = true;
+        engine.apply_hook(blocked);
+        assert_eq!(engine.snapshot().agent_state, AgentState::Working);
+        assert_eq!(engine.snapshot().source, AgentStatusSource::Screen);
         assert!(!engine.snapshot().visible_blocker);
     }
 
@@ -501,6 +662,20 @@ mod tests {
     }
 
     #[test]
+    fn review_in_progress_prevents_screen_block() {
+        let mut engine = AgentStatusEngine::default();
+        let mut report = hook(1, Some(AgentState::Working));
+        report.authority = HookAuthority::IdentityOnly;
+        engine.apply_hook(report);
+        let mut obs = observation(10_000);
+        obs.detection = AgentDetection::from_state(AgentState::Blocked);
+        obs.detection.review_in_progress = true;
+        engine.observe(obs);
+        assert_eq!(engine.snapshot().agent_state, AgentState::Working);
+        assert!(!engine.snapshot().visible_blocker);
+    }
+
+    #[test]
     fn visible_idle_settles_without_confirmation_delay() {
         let mut engine = AgentStatusEngine::default();
         let mut report = hook(1, Some(AgentState::Working));
@@ -513,5 +688,24 @@ mod tests {
         let out = engine.observe(obs).expect("state should change");
         assert_eq!(out.agent_state, AgentState::Idle);
         assert_eq!(out.source, AgentStatusSource::Screen);
+    }
+
+    #[test]
+    fn title_only_hook_update_revisions() {
+        let mut engine = AgentStatusEngine::default();
+        let mut first = hook(1, Some(AgentState::Working));
+        first.display_title = Some("first prompt".into());
+        let first_status = engine.apply_hook(first).expect("initial hook");
+        assert_eq!(first_status.revision, 1);
+
+        let mut second = hook(2, Some(AgentState::Working));
+        second.display_title = Some("second prompt".into());
+        let second_status = engine.apply_hook(second).expect("title changed");
+        assert_eq!(second_status.revision, 2);
+        assert_eq!(
+            second_status.display_title.as_deref(),
+            Some("second prompt")
+        );
+        assert_eq!(second_status.agent_state, AgentState::Working);
     }
 }

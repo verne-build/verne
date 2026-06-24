@@ -122,6 +122,16 @@ fn codex_review_marker_sets_review_in_progress() {
 }
 
 #[test]
+fn codex_review_marker_matches_outside_bottom_lines() {
+    let mut screen = String::from("Reviewing approval request\n");
+    for i in 0..24 {
+        screen.push_str(&format!("approval detail line {i}\n"));
+    }
+    screen.push_str("Press Enter to confirm or Esc to cancel");
+    assert!(super::detect("codex", &screen).review_in_progress);
+}
+
+#[test]
 fn codex_no_review_marker_leaves_flag_false() {
     let screen = "• Working (5s)";
     assert!(!super::detect("codex", screen).review_in_progress);

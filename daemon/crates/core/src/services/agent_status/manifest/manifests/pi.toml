@@ -1,6 +1,12 @@
 id = "pi"
 version = "2026.06.10"
 
+[title]
+strategy = "hook_prompt"
+prompt_events = ["UserPromptSubmit", "agent_start", "input"]
+prompt_fields = ["prompt", "message", "message.text", "message.content", "input", "text"]
+max_length = 120
+
 [[rules]]
 id = "working"
 state = "working"

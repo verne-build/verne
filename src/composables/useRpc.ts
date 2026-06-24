@@ -149,6 +149,7 @@ const request = {
     source: string;
     changedAt: number;
     lastAgentSessionId?: string | null;
+    displayTitle?: string | null;
     title?: string | null;
   }>> =>
     invoke("get_agent_states"),

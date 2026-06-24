@@ -2,6 +2,12 @@ id = "opencode"
 version = "2026.06.10"
 updated_at = "2026-06-10"
 
+[title]
+strategy = "hook_prompt"
+prompt_events = ["UserPromptSubmit"]
+prompt_fields = ["prompt", "message", "message.text", "message.content", "input", "text"]
+max_length = 120
+
 # blocked = "△ Permission required" (CASE-SENSITIVE) OR ("esc dismiss" AND action AND nav)
 # action = "enter confirm" OR "enter submit" OR "enter toggle"
 # nav    = "↑↓ select" OR "⇆ tab"

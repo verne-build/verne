@@ -3,6 +3,7 @@ import { join, dirname } from "node:path";
 import { internalDataDir } from "../paths";
 import { registerNative } from "../ipc-router";
 import type { DaemonClient } from "../daemon-client";
+import { pushTerminalColorsToDaemon } from "./terminal-colors";
 // Electron owns the default settings — single source shared with the renderer.
 import { DEFAULT_SETTINGS } from "../../../src/lib/defaultSettings";
 
@@ -80,7 +81,7 @@ function listThemes(themesDir: string): Array<{ name: string; json: string }> {
   return out;
 }
 
-export function registerSettingsCommands(sidecar: DaemonClient): void {
+export function registerSettingsCommands(sidecar: DaemonClient, daemon?: DaemonClient): void {
   const filePath = join(internalDataDir, "settings.json");
   const themesDir = join(internalDataDir, "themes");
   const store = makeSettingsStore(filePath);
@@ -93,6 +94,9 @@ export function registerSettingsCommands(sidecar: DaemonClient): void {
     // Push to the sidecar (it consumes filesExclude / worktreesRoot internally),
     // then notify the renderer.
     try { await sidecar.request("set_config", { settings: next }); } catch (e) { console.error("[settings] set_config push failed:", e); }
+    if (daemon) {
+      try { await pushTerminalColorsToDaemon(daemon, next); } catch (e) { console.error("[terminal] color push failed:", e); }
+    }
     win?.webContents.send("daemon-event", "settings-changed", next);
     return next;
   });

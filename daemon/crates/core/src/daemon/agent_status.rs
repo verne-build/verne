@@ -122,6 +122,7 @@ pub fn publish(
             "source": status.source,
             "changedAt": status.changed_at,
             "lastAgentSessionId": status.session_id,
+            "displayTitle": status.display_title,
             "foregroundCommand": foreground_command,
         }),
     );

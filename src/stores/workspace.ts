@@ -145,8 +145,9 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   }
 
   // The owning tab's display name for a pane = the group's primary (first)
-  // pane label. Precedence: manual rename → live OSC title → foreground/agent
-  // process → numbered fallback. Computed live so renames propagate to rows.
+  // pane label. Precedence: manual rename → daemon agent display title → live
+  // OSC title → foreground/agent process → numbered fallback. Computed live so
+  // renames propagate to rows.
   function tabGroupName(paneId: string): string {
     const loc = locateGroup(paneId);
     const dirId = loc?.dirId ?? selectedDirectoryId.value ?? "";
@@ -155,14 +156,16 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
     // 1. Manual rename always wins.
     if (tab?.userRenamed && tab.label) return tab.label;
-    // 2. Live OSC title from the running process.
+    // 2. Hook-derived agent display title from the persistent daemon.
+    const rt = tabRuntime.value.get(primaryId);
+    if (rt?.displayTitle) return rt.displayTitle;
+    // 3. Live OSC title from the running process.
     const osc = oscTitleByTab.value.get(primaryId);
     if (osc) return osc;
-    // 3. Foreground process / agent name from detection.
-    const rt = tabRuntime.value.get(primaryId);
+    // 4. Foreground process / agent name from detection.
     if (rt?.agentType) return rt.agentType.charAt(0).toUpperCase() + rt.agentType.slice(1);
     if (rt?.foregroundCommand) return rt.foregroundCommand;
-    // 4. Fallback: the numbered label.
+    // 5. Fallback: the numbered label.
     return tab?.label ?? "shell";
   }
 
@@ -329,6 +332,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
           source: s.source,
           changedAt: s.changedAt,
           lastAgentSessionId: s.lastAgentSessionId ?? undefined,
+          displayTitle: s.displayTitle ?? undefined,
         });
         if (s.title) applyTabTitle({ tabId: s.tabId, title: s.title });
       }

@@ -46,6 +46,13 @@ fn hook_to_state(event_type: &str, approval_required: bool) -> Option<&'static s
     crate::services::hook_server::hook_to_state(event_type, approval_required)
 }
 
+fn is_user_prompt_submit(event_type: &str) -> bool {
+    matches!(
+        event_type,
+        "UserPromptSubmit" | "userPromptSubmit" | "userPromptSubmitted"
+    )
+}
+
 static FALLBACK_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 fn parse_state(state: Option<&str>) -> Option<crate::services::detect::AgentState> {
@@ -57,6 +64,75 @@ fn parse_state(state: Option<&str>) -> Option<crate::services::detect::AgentStat
         Some("unknown") => Some(AgentState::Unknown),
         _ => None,
     }
+}
+
+fn hook_display_title(agent_type: &str, event: &str, payload: &serde_json::Value) -> Option<String> {
+    use crate::services::agent_status::manifest::TitleStrategy;
+
+    let config = crate::services::agent_status::manifest::title_config(agent_type);
+    if config.strategy == TitleStrategy::Osc {
+        return None;
+    }
+    if !config.prompt_events.iter().any(|candidate| candidate == event) {
+        return None;
+    }
+    for path in &config.prompt_fields {
+        if let Some(value) = value_at_path(payload, path).and_then(value_to_title) {
+            return normalize_title(&value, config.max_length);
+        }
+    }
+    None
+}
+
+fn value_at_path<'a>(value: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
+    let mut current = value;
+    for part in path.split('.') {
+        if part.is_empty() {
+            return None;
+        }
+        current = current.get(part)?;
+    }
+    Some(current)
+}
+
+fn value_to_title(value: &serde_json::Value) -> Option<String> {
+    if let Some(text) = value.as_str() {
+        return Some(text.to_string());
+    }
+    if let Some(object) = value.as_object() {
+        for key in ["prompt", "text", "content", "message", "input"] {
+            if let Some(text) = object.get(key).and_then(value_to_title) {
+                return Some(text);
+            }
+        }
+    }
+    if let Some(array) = value.as_array() {
+        for item in array {
+            if let Some(text) = value_to_title(item) {
+                return Some(text);
+            }
+        }
+    }
+    None
+}
+
+fn normalize_title(value: &str, max_length: usize) -> Option<String> {
+    let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.is_empty() {
+        return None;
+    }
+    let max = max_length.max(8);
+    let mut out = String::new();
+    for ch in normalized.chars().take(max) {
+        out.push(ch);
+    }
+    if normalized.chars().count() > max {
+        while out.ends_with(char::is_whitespace) {
+            out.pop();
+        }
+        out.push_str("...");
+    }
+    Some(out)
 }
 
 /// Start the daemon hook HTTP server. Binds `desired_port` (falls back to
@@ -198,6 +274,8 @@ async fn handle_connection(
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
+        let display_title = hook_display_title(&agent_type, &event, &payload);
+        let user_prompt_submitted = is_user_prompt_submit(&event);
         let approval_required = payload
             .get("approval_required")
             .and_then(|v| v.as_bool())
@@ -245,6 +323,8 @@ async fn handle_connection(
                             &tab,
                             &agent_type,
                             &session_id,
+                            None,
+                            false,
                             &hook_source,
                             hook_sequence,
                             Some(crate::services::detect::AgentState::Blocked),
@@ -257,6 +337,8 @@ async fn handle_connection(
                         tab_id,
                         &agent_type,
                         &session_id,
+                        display_title,
+                        user_prompt_submitted,
                         &hook_source,
                         hook_sequence,
                         parse_state(mapped_state),
@@ -306,25 +388,81 @@ fn apply_hook_report(
     tab_id: &str,
     agent_type: &str,
     session_id: &str,
+    display_title: Option<String>,
+    user_prompt_submitted: bool,
     source: &str,
     sequence: u64,
     state: Option<crate::services::detect::AgentState>,
 ) {
     let change = sessions.lock().ok().and_then(|manager| {
         let session = manager.get_session_by_agent(tab_id)?;
+        let review_in_progress = state == Some(crate::services::detect::AgentState::Blocked)
+            && session
+                .emulator
+                .lock()
+                .ok()
+                .map(|e| {
+                    crate::services::agent_registry::detect(agent_type, &e.screen_text())
+                        .review_in_progress
+                })
+                .unwrap_or(false);
         let mut engine = session.agent_status.lock().ok()?;
         let change = engine.apply_hook(crate::services::agent_status::HookReport {
             source: source.to_string(),
             sequence,
             agent_type: agent_type.to_string(),
             session_id: (!session_id.is_empty()).then(|| session_id.to_string()),
+            display_title,
             state,
             authority: crate::services::agent_status::policy::hook_authority(agent_type),
+            review_in_progress,
+            user_prompt_submitted,
             observed_at: chrono::Utc::now().timestamp_millis(),
         });
         change
     });
     if let Some(status) = change {
         crate::daemon::agent_status::publish(event_bus, tab_id, &status, None);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extracts_codex_prompt_title() {
+        let payload = serde_json::json!({
+            "prompt": "  create   a docs page\nabout Verne  "
+        });
+        assert_eq!(
+            hook_display_title("codex", "UserPromptSubmit", &payload).as_deref(),
+            Some("create a docs page about Verne")
+        );
+    }
+
+    #[test]
+    fn extracts_nested_message_title() {
+        let payload = serde_json::json!({
+            "message": { "text": "Summarize this project" }
+        });
+        assert_eq!(
+            hook_display_title("opencode", "UserPromptSubmit", &payload).as_deref(),
+            Some("Summarize this project")
+        );
+    }
+
+    #[test]
+    fn detects_prompt_submit_events() {
+        assert!(is_user_prompt_submit("UserPromptSubmit"));
+        assert!(is_user_prompt_submit("userPromptSubmit"));
+        assert!(is_user_prompt_submit("userPromptSubmitted"));
+        assert!(!is_user_prompt_submit("SessionStart"));
+    }
+
+    #[test]
+    fn ignores_osc_only_agents() {
+        let payload = serde_json::json!({ "prompt": "keep me out of the title" });
+        assert_eq!(hook_display_title("claude", "UserPromptSubmit", &payload), None);
     }
 }

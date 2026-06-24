@@ -457,6 +457,8 @@ export interface TabUpdatedEvent {
   /** Renderer acknowledgement state: completed while this pane was backgrounded. */
   needsAcknowledgement?: boolean;
   lastAgentSessionId?: string;
+  /** Daemon-resolved agent title, usually a hook-captured user prompt. */
+  displayTitle?: string | null;
   /** Name of the current foreground command when no agent owns the tab. */
   foregroundCommand?: string;
   directoryName?: string;
