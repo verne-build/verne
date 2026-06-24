@@ -45,6 +45,21 @@ export function sendTextToSession(sessionId: string, text: string): boolean {
   return true;
 }
 
+/** Resolve once a session's agent TUI has enabled bracketed-paste mode (DECSET
+ *  2004) — the agent's own signal that its input line is up and ready to accept
+ *  a paste. Lets callers gate a paste on real readiness instead of a fixed sleep.
+ *  Returns false if it stays unready (or no live session is registered) past the
+ *  timeout. The mode bit rides the grid frames into `store.modes.bracketedPaste`. */
+export async function waitForPasteReady(sessionId: string, timeoutMs = 12000): Promise<boolean> {
+  if (!sessionId) return false;
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (registry.get(sessionId)?.session.store.modes.bracketedPaste) return true;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return false;
+}
+
 /** Reopen any dropped sockets (e.g. after system sleep). */
 export function reconnectAllTerminals(): void {
   for (const entry of registry.values()) entry.session.reconnectIfClosed();

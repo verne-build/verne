@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { bareLaunchCommand, bracketedPaste } from "./reviewLaunch";
+import { bareLaunchCommand, bracketedPaste, sanitizeBracketedPaste } from "./reviewLaunch";
 
 describe("bareLaunchCommand", () => {
   it("returns the bare binary for each agent", () => {
@@ -16,5 +16,17 @@ describe("bracketedPaste", () => {
   });
   it("keeps multi-line content intact between the markers", () => {
     expect(bracketedPaste("a\nb")).toBe("\x1b[200~a\nb\x1b[201~");
+  });
+  it("strips embedded markers so they can't terminate the paste early", () => {
+    expect(bracketedPaste("a\x1b[201~b")).toBe("\x1b[200~ab\x1b[201~");
+  });
+});
+
+describe("sanitizeBracketedPaste", () => {
+  it("removes start and end markers, leaving other bytes intact", () => {
+    expect(sanitizeBracketedPaste("x\x1b[200~y\x1b[201~z")).toBe("xyz");
+  });
+  it("is a no-op for content without markers", () => {
+    expect(sanitizeBracketedPaste("plain\ntext")).toBe("plain\ntext");
   });
 });
