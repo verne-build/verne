@@ -10,6 +10,7 @@ import { useScrollFades } from "@/composables/useScrollFades";
 import { ask } from "@/platform";
 import StatusIndicator from "@/components/StatusIndicator.vue";
 import SlotText from "@/components/SlotText.vue";
+import { getAgentIcon } from "@/composables/useAgentIcon";
 import { resolveDisplayState, stripSpinner } from "@/lib/agentStatus";
 import type { DisplayState } from "@/lib/agentStatus";
 import type { AgentState, Tab, WorkingDirectory } from "@/types";
@@ -50,6 +51,11 @@ function state(tabId: string, fallback?: AgentState): DisplayState {
 
 function agentName(tabId: string, fallback?: string): string {
   return titleCase(store.tabRuntime.get(tabId)?.agentType ?? fallback ?? "unknown");
+}
+
+function agentIconSrc(tabId: string): string | null {
+  const agentType = store.tabRuntime.get(tabId)?.agentType;
+  return agentType ? getAgentIcon(agentType) : null;
 }
 
 function titleCase(s: string): string {
@@ -209,6 +215,12 @@ function onDragEnd(e: DragEndPayload) {
           <span class="shrink-0 text-muted-foreground/50">&middot;</span>
           <span class="min-w-0 truncate text-left text-muted-foreground">{{ secondaryLabel(i) }}</span>
         </template>
+        <img
+          v-if="agentIconSrc(i.tab.id)"
+          :src="agentIconSrc(i.tab.id)!"
+          class="ml-auto size-3.5 shrink-0"
+          :alt="agentName(i.tab.id)"
+        />
       </div>
       <div class="flex h-3.5 w-full min-w-0 items-center gap-1.5 pl-[1.125rem] text-[10px] leading-none">
         <SlotText
