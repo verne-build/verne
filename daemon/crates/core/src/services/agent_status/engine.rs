@@ -44,6 +44,7 @@ pub struct AgentStatusEngine {
     candidate_identity: Option<String>,
     identity_confirmations: u8,
     idle_confirmations: u8,
+    review_in_progress: bool,
     observed_input_sequence: u64,
     observed_output_sequence: u64,
     observed_resize_sequence: u64,
@@ -59,6 +60,7 @@ impl Default for AgentStatusEngine {
             candidate_identity: None,
             identity_confirmations: 0,
             idle_confirmations: 0,
+            review_in_progress: false,
             observed_input_sequence: 0,
             observed_output_sequence: 0,
             observed_resize_sequence: 0,
@@ -169,6 +171,23 @@ impl AgentStatusEngine {
         next.agent_type = Some(agent_type);
         next.visible_blocker = observation.detection.visible_blocker;
         next.visible_working = observation.detection.visible_working;
+
+        self.review_in_progress = observation.detection.review_in_progress;
+
+        // Codex auto-review: a hook already surfaced Blocked, but the screen
+        // shows the auto-reviewer is processing the request. Release to Working
+        // so the sidebar dot does not blink blocked → working.
+        if self.review_in_progress
+            && self.effective.source == AgentStatusSource::Hook
+            && self.effective.agent_state == AgentState::Blocked
+        {
+            self.idle_confirmations = 0;
+            next.agent_state = AgentState::Working;
+            next.source = AgentStatusSource::Screen;
+            next.confidence = 80;
+            next.visible_blocker = false;
+            return self.commit(next, observation.observed_at);
+        }
 
         // A complete lifecycle integration remains authoritative until process
         // exit. The only local override is an explicit interrupt followed by a
@@ -410,6 +429,22 @@ mod tests {
         next.session_id = Some("s2".into());
         assert!(engine.apply_hook(next).is_some());
         assert_eq!(engine.snapshot().agent_state, AgentState::Idle);
+    }
+
+    #[test]
+    fn review_in_progress_releases_committed_hook_block() {
+        let mut engine = AgentStatusEngine::default();
+        // Codex hook (FullLifecycle) commits Blocked before the review banner is seen.
+        engine.apply_hook(hook(1, Some(AgentState::Blocked)));
+        assert_eq!(engine.snapshot().agent_state, AgentState::Blocked);
+        // Next screen observation shows the auto-reviewer working.
+        let mut obs = observation(10_000);
+        obs.detection = AgentDetection::from_state(AgentState::Working);
+        obs.detection.review_in_progress = true;
+        engine.observe(obs);
+        assert_eq!(engine.snapshot().agent_state, AgentState::Working);
+        assert_eq!(engine.snapshot().source, AgentStatusSource::Screen);
+        assert!(!engine.snapshot().visible_blocker);
     }
 
     #[test]
