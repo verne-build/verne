@@ -132,8 +132,14 @@ async function confirmCloseIfRunning(g: PaneGroup): Promise<boolean> {
   const running = await groupRunningPanes(g);
   if (running.length === 0) return true;
   const names = running.map(runningProcessLabel);
-  const summary = names.length === 1 ? `${names[0]} is running.` : `${names.join(", ")} are running.`;
-  return await ask(`${summary} Close anyway?`, { title: "Close tab", kind: "warning" });
+  const summary =
+    names.length === 1
+      ? `${names[0]} is still running.`
+      : `${names.join(", ")} are still running.`;
+  return await ask("Close Tab?", {
+    detail: `${summary} If you close the tab the process will be killed.`,
+    confirmLabel: "Close",
+  });
 }
 
 async function close(id: string, e?: MouseEvent) {

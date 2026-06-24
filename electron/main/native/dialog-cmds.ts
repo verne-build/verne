@@ -15,16 +15,17 @@ export function registerDialogCommands(): void {
     return r.canceled ? null : (r.filePath ?? null);
   });
 
-  registerNative("show_message_dialog", async (p: { message: string; title?: string; kind?: "info" | "warning" | "error" }, win) => {
+  registerNative("show_message_dialog", async (p: { message: string; detail?: string | null; confirmLabel?: string | null; title?: string; kind?: "none" | "info" | "warning" | "error" }, win) => {
     const r = await dialog.showMessageBox(win, {
-      type: p.kind ?? "warning",
+      type: p.kind ?? "none",
       message: p.message,
+      detail: p.detail ?? undefined,
       title: p.title ?? "",
-      buttons: ["Cancel", "OK"],
+      buttons: ["Cancel", p.confirmLabel ?? "OK"],
       defaultId: 1,
       cancelId: 0,
       noLink: true,
     });
-    return r.response === 1; // true if OK
+    return r.response === 1; // true if confirm
   });
 }
