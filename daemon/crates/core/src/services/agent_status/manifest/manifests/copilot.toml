@@ -2,6 +2,12 @@ id = "copilot"
 version = "2026.06.10"
 updated_at = "2026-06-10"
 
+[title]
+strategy = "hook_prompt"
+prompt_events = ["userPromptSubmitted", "UserPromptSubmit"]
+prompt_fields = ["prompt", "message", "message.text", "message.content", "input", "text"]
+max_length = 120
+
 [[rules]]
 id = "confirm_prompt"
 state = "blocked"

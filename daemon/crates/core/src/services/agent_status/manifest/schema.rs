@@ -11,7 +11,47 @@ pub struct AgentManifest {
     pub _version: Option<String>,
     #[serde(default, rename = "updated_at")]
     pub _updated_at: Option<String>,
+    #[serde(default)]
+    pub title: TitleConfig,
     pub rules: Vec<Rule>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TitleConfig {
+    #[serde(default)]
+    pub strategy: TitleStrategy,
+    #[serde(default)]
+    pub prompt_events: Vec<String>,
+    #[serde(default)]
+    pub prompt_fields: Vec<String>,
+    #[serde(default = "default_title_max_length")]
+    pub max_length: usize,
+}
+
+impl Default for TitleConfig {
+    fn default() -> Self {
+        Self {
+            strategy: TitleStrategy::Osc,
+            prompt_events: Vec::new(),
+            prompt_fields: Vec::new(),
+            max_length: default_title_max_length(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TitleStrategy {
+    Osc,
+    HookPrompt,
+    OscThenHookPrompt,
+    HookPromptThenOsc,
+}
+
+impl Default for TitleStrategy {
+    fn default() -> Self {
+        Self::Osc
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -98,6 +138,10 @@ impl From<RuleState> for AgentState {
 
 fn default_region() -> String {
     "whole_recent".to_string()
+}
+
+fn default_title_max_length() -> usize {
+    120
 }
 
 pub fn parse(content: &str) -> Result<AgentManifest, String> {

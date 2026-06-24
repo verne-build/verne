@@ -17,6 +17,7 @@ use crate::services::detect::AgentState;
 
 use compile::CompiledGate;
 use explain::{state_label_pub, DetectionExplain};
+pub use schema::{TitleConfig, TitleStrategy};
 use schema::{parse, AgentManifest, Rule};
 
 pub(super) const DEFAULT_MANIFEST: &str = include_str!("manifests/default.toml");
@@ -76,6 +77,16 @@ fn loaded_for(key: &str) -> &'static Loaded {
         return l;
     }
     c.get("default").expect("default manifest present")
+}
+
+/// Title metadata is intentionally resolved dynamically so hook prompt policy can
+/// be updated without restarting the persistent daemon. Detection rules remain
+/// bundled/compiled because they are evaluated every poll tick.
+pub fn title_config(key: &str) -> TitleConfig {
+    if let Some(config) = source::runtime_title_config(key) {
+        return config;
+    }
+    loaded_for(key).manifest.title.clone()
 }
 
 /// Highest-priority matching rule wins. No match (known key) → Idle.

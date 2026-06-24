@@ -17,6 +17,7 @@ import { BrowserControlServer } from "./native/browser-control-server";
 import { createAutomationBrowserSession } from "./native/browser-automation-window";
 import { registerReviewCommands } from "./native/review-cmds";
 import { registerSettingsCommands, currentSettings } from "./native/settings-cmds";
+import { pushTerminalColorsToDaemon } from "./native/terminal-colors";
 import { registerShortcutsCommands, stopShortcutsWatcher } from "./native/shortcuts-cmds";
 import { registerLspCommands, stopAllLsp, lspInstanceCount, lspPids } from "./native/lsp-cmds";
 import { registerMetricsCommands } from "./native/metrics-cmds";
@@ -293,8 +294,11 @@ app.whenReady().then(async () => {
   }
   // Settings live in Electron now; seed the sidecar cache before the renderer
   // can issue file-search/worktree requests that read filesExclude/worktreesRoot.
-  try { await timed("set_config", () => s0.request("set_config", { settings: currentSettings() })); }
+  const startupSettings = currentSettings();
+  try { await timed("set_config", () => s0.request("set_config", { settings: startupSettings })); }
   catch (e) { console.error("[settings] startup set_config push failed:", e); }
+  try { await timed("terminal_set_colors", () => pushTerminalColorsToDaemon(d0, startupSettings)); }
+  catch (e) { console.error("[terminal] startup color push failed:", e); }
 
   // Register the handlers the renderer needs, then bring the window up. Everything
   // not required for first render (session reconcile, hook install, agent-shadow
@@ -303,7 +307,7 @@ app.whenReady().then(async () => {
   // seconds (the daemon/sidecar round-trips + git work in resync).
   registerMetricsCommands(daemon, sidecar, lspInstanceCount, lspPids);
   registerTabOrchestration(daemon, sidecar);
-  registerSettingsCommands(sidecar);
+  registerSettingsCommands(sidecar, daemon);
 
   // Forward `agent-hook-fileops` events from the daemon to the sidecar's
   // agent_shadow_on_hook RPC (fire-and-forget; app may be closing). Cheap to wire

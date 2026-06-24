@@ -240,6 +240,7 @@ async fn dispatch_impl(req: Request, state: Arc<DaemonState>) -> Response {
                         "source": status.source,
                         "changedAt": status.changed_at,
                         "lastAgentSessionId": status.session_id,
+                        "displayTitle": status.display_title,
                         "title": title,
                     })
                 }).collect();

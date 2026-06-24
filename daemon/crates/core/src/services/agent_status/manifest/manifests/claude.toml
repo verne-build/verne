@@ -2,6 +2,12 @@ id = "claude"
 version = "2026.06.11"
 updated_at = "2026-06-11"
 
+[title]
+strategy = "osc"
+prompt_events = []
+prompt_fields = []
+max_length = 120
+
 [[rules]]
 id = "session_limit"
 state = "blocked"

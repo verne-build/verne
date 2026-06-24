@@ -23,3 +23,20 @@ pub fn resolve(key: &str) -> (&'static str, ManifestSource) {
         .unwrap_or(super::DEFAULT_MANIFEST);
     (bundled, ManifestSource::Bundled)
 }
+
+pub fn runtime_title_config(key: &str) -> Option<super::TitleConfig> {
+    #[derive(serde::Deserialize)]
+    struct RuntimeTitleManifest {
+        #[serde(default)]
+        title: super::TitleConfig,
+    }
+
+    let path = crate::paths::internal_data_dir()
+        .join("agent-status")
+        .join("manifests")
+        .join(format!("{key}.toml"));
+    let content = std::fs::read_to_string(path).ok()?;
+    toml::from_str::<RuntimeTitleManifest>(&content)
+        .ok()
+        .map(|manifest| manifest.title)
+}

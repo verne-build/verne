@@ -2,6 +2,12 @@ id = "codex"
 version = "2026.06.11"
 updated_at = "2026-06-11"
 
+[title]
+strategy = "hook_prompt"
+prompt_events = ["UserPromptSubmit"]
+prompt_fields = ["prompt", "message", "message.text", "message.content", "input", "text"]
+max_length = 120
+
 [[rules]]
 id = "session_limit"
 state = "blocked"
@@ -60,6 +66,6 @@ line_regex = ['^\s*•.*Working \(']
 id = "review_in_progress"
 state = "working"
 priority = 780
-region = "bottom_lines(20)"
+region = "whole_recent"
 review_marker = true
 contains = ["reviewing approval request"]

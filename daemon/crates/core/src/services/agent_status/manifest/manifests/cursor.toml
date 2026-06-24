@@ -2,6 +2,12 @@ id = "cursor"
 version = "2026.06.10"
 updated_at = "2026-06-10"
 
+[title]
+strategy = "hook_prompt_then_osc"
+prompt_events = ["beforeSubmitPrompt", "UserPromptSubmit", "userPromptSubmitted"]
+prompt_fields = ["prompt", "message", "message.text", "message.content", "input", "text"]
+max_length = 120
+
 [[rules]]
 id = "approval_prompt"
 state = "blocked"
