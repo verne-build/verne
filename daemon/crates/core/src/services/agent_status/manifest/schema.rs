@@ -31,6 +31,8 @@ pub struct Rule {
     #[serde(default)]
     pub skip_state_update: bool,
     #[serde(default)]
+    pub review_marker: bool,
+    #[serde(default)]
     pub contains: Vec<String>,
     #[serde(default)]
     pub regex: Vec<String>,

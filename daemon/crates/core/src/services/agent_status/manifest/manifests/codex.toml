@@ -53,3 +53,11 @@ priority = 790
 region = "bottom_lines(20)"
 visible_working = true
 line_regex = ['^\s*•.*Working \(']
+
+[[rules]]
+id = "review_in_progress"
+state = "working"
+priority = 780
+region = "bottom_lines(20)"
+review_marker = true
+contains = ["reviewing approval request"]

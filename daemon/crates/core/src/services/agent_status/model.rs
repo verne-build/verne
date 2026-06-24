@@ -17,6 +17,7 @@ pub struct AgentDetection {
     pub visible_working: bool,
     pub visible_idle: bool,
     pub skip_state_update: bool,
+    pub review_in_progress: bool,
 }
 
 impl AgentDetection {
@@ -26,6 +27,7 @@ impl AgentDetection {
             visible_working: state == AgentState::Working,
             visible_idle: false,
             skip_state_update: state == AgentState::Unknown,
+            review_in_progress: false,
             state,
         }
     }
@@ -49,6 +51,13 @@ mod tests {
         assert!(!AgentDetection::from_state(AgentState::Idle).visible_idle);
         assert!(!AgentDetection::from_state(AgentState::Working).visible_idle);
         assert!(!AgentDetection::default().visible_idle);
+    }
+
+    #[test]
+    fn from_state_never_sets_review_in_progress() {
+        assert!(!AgentDetection::from_state(AgentState::Blocked).review_in_progress);
+        assert!(!AgentDetection::from_state(AgentState::Working).review_in_progress);
+        assert!(!AgentDetection::default().review_in_progress);
     }
 }
 

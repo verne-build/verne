@@ -79,12 +79,24 @@ fn loaded_for(key: &str) -> &'static Loaded {
 }
 
 /// Highest-priority matching rule wins. No match (known key) → Idle.
+/// `review_in_progress` is computed independently: it is set whenever ANY
+/// `review_marker` rule matches, regardless of which state rule wins.
 pub fn detect(key: &str, screen: &str) -> AgentDetection {
     let loaded = loaded_for(key);
-    match best_match(loaded, screen) {
+    let review_in_progress = loaded
+        .manifest
+        .rules
+        .iter()
+        .zip(&loaded.compiled)
+        .any(|(rule, compiled)| {
+            rule.review_marker && compiled.matches(regions::region(screen, &rule.region))
+        });
+    let mut detection = match best_match(loaded, screen) {
         Some(rule) => detection_from_rule(rule),
         None => AgentDetection::from_state(AgentState::Idle),
-    }
+    };
+    detection.review_in_progress = review_in_progress;
+    detection
 }
 
 fn best_match<'a>(loaded: &'a Loaded, screen: &str) -> Option<&'a Rule> {
@@ -108,6 +120,7 @@ fn detection_from_rule(rule: &Rule) -> AgentDetection {
         visible_working: rule.visible_working && state == AgentState::Working,
         visible_idle: rule.visible_idle && state == AgentState::Idle,
         skip_state_update: rule.skip_state_update,
+        review_in_progress: false,
     }
 }
 
