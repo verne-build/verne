@@ -116,6 +116,18 @@ use super::{detect, explain};
 use crate::services::detect::AgentState;
 
 #[test]
+fn codex_review_marker_sets_review_in_progress() {
+    let screen = "• Working (5s)\nReviewing approval request";
+    assert!(super::detect("codex", screen).review_in_progress);
+}
+
+#[test]
+fn codex_no_review_marker_leaves_flag_false() {
+    let screen = "• Working (5s)";
+    assert!(!super::detect("codex", screen).review_in_progress);
+}
+
+#[test]
 fn explain_reports_matched_rule_for_blocked_claude() {
     let e = explain("claude", "─────\nDo you want to proceed?\n❯ 1. Yes\n  2. No\nesc to cancel");
     assert_eq!(e.state, "blocked");

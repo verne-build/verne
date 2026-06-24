@@ -27,6 +27,7 @@ const CASES: &[Case] = &[
     // --- codex ---
     Case { key: "codex", label: "blocked_confirm", screen: "Press Enter to confirm or Esc to cancel", want_state: Blocked, want_blocker: true, want_working: false },
     Case { key: "codex", label: "approved_review_not_blocked", screen: "Automatic approval review approved\nPress Enter to confirm or Esc to cancel", want_state: Idle, want_blocker: false, want_working: false },
+    Case { key: "codex", label: "reviewing_request_not_blocked", screen: "Reviewing approval request\nPress Enter to confirm or Esc to cancel", want_state: Working, want_blocker: false, want_working: false },
     Case { key: "codex", label: "blocked_session_limit", screen: "You've hit your usage limit.\nUpgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 3:45 PM.", want_state: Blocked, want_blocker: true, want_working: false },
     Case { key: "codex", label: "working_header", screen: "• Working (12s)", want_state: Working, want_blocker: false, want_working: true },
     Case { key: "codex", label: "idle", screen: ">_ codex\n", want_state: Idle, want_blocker: false, want_working: false },
