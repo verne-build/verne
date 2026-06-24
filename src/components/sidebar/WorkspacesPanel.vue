@@ -163,6 +163,13 @@ function onRenameInputMounted(el: HTMLInputElement | null) {
   });
 }
 
+function onWorktreeMenuCloseAutoFocus(e: Event) {
+  // Started a rename from the context menu: keep focus on the rename input.
+  // Otherwise reka-ui returns focus to the trigger button, blurring the input
+  // and cancelling the rename before any typing (flash-then-revert bug).
+  if (renamingId.value) e.preventDefault();
+}
+
 function onDocMousedown(e: MouseEvent) {
   const id = renamingId.value;
   const el = renameInputEl.value;
@@ -339,7 +346,7 @@ function onDragEnd(e: DragEndPayload) {
             <span v-else class="min-w-0 truncate text-left text-foreground">{{ c.name }}</span>
           </Button>
         </ContextMenuTrigger>
-        <ContextMenuContent>
+        <ContextMenuContent @close-auto-focus="onWorktreeMenuCloseAutoFocus">
           <ContextMenuItem @select="startRenameWorktree(c.id)">
             <Pencil />
             Rename Worktree
