@@ -37,6 +37,8 @@ import {
   writeCachedFileExplorerVisible,
 } from "@/lib/bootstrapCache";
 import { PANEL_SIZES } from "@/lib/panelSizes";
+import { scSelectionStillChanged } from "@/lib/scSelectionReconcile";
+import type { GitStatus } from "@/types";
 
 const props = defineProps<{ maximized?: boolean }>();
 const emit = defineEmits<{ toggleRight: []; toggleMaximize: [] }>();
@@ -233,6 +235,18 @@ function handleCloseGitDiff(e: Event) {
   const sel = scSelection.value;
   if (!sel) return;
   if (detail.all || detail.relPath === sel.relPath) {
+    setScSelection(null);
+  }
+}
+
+// Close the open SC diff when its file is no longer changed — covers external
+// commits/discards (agent in a terminal) that only surface as a status refresh,
+// not just the in-app `close-git-diff` paths. Status here is emitted by the
+// active scope's ChangesPanel, so it lines up with the active scSelection.
+function handleScStatusChanged(s: GitStatus | null) {
+  scGitStatus.value = s;
+  const sel = scSelection.value;
+  if (sel && !scSelectionStillChanged(s, sel.relPath, sel.staged)) {
     setScSelection(null);
   }
 }
@@ -471,7 +485,7 @@ function revertScFile() {
         @open-file="handleOpenFileFromSc"
         @open-diff="handleOpenGitDiff"
         @discard="discardScFile"
-        @status-changed="scGitStatus = $event"
+        @status-changed="handleScStatusChanged"
         @jump="handleJumpToComment"
         @revert="revertScFile"
         @pull="pullSourceControlBranch"
