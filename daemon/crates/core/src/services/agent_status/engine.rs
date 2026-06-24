@@ -93,11 +93,20 @@ impl AgentStatusEngine {
         next.hook_sequence = report.sequence;
         if report.authority == HookAuthority::FullLifecycle {
             if let Some(state) = report.state {
-                next.agent_state = state;
-                next.source = AgentStatusSource::Hook;
-                next.confidence = 100;
-                next.visible_blocker = state == AgentState::Blocked;
-                next.visible_working = state == AgentState::Working;
+                // Codex auto-review: a permission/pre-tool hook fires Blocked even
+                // though an automated reviewer (not a human) is handling it. Don't
+                // surface Blocked while the review banner is on screen; leave the
+                // prior state (Working) intact. Identity/session/sequence still
+                // update below via `next`.
+                let suppress_block =
+                    state == AgentState::Blocked && self.review_in_progress;
+                if !suppress_block {
+                    next.agent_state = state;
+                    next.source = AgentStatusSource::Hook;
+                    next.confidence = 100;
+                    next.visible_blocker = state == AgentState::Blocked;
+                    next.visible_working = state == AgentState::Working;
+                }
             }
         }
         self.commit(next, report.observed_at)
@@ -429,6 +438,49 @@ mod tests {
         next.session_id = Some("s2".into());
         assert!(engine.apply_hook(next).is_some());
         assert_eq!(engine.snapshot().agent_state, AgentState::Idle);
+    }
+
+    #[test]
+    fn review_in_progress_suppresses_hook_block() {
+        let mut engine = AgentStatusEngine::default();
+        // Establish Working + cache the review flag via a screen observation.
+        engine.apply_hook(hook(1, Some(AgentState::Working)));
+        let mut obs = observation(10_000);
+        obs.detection = AgentDetection::from_state(AgentState::Working);
+        obs.detection.review_in_progress = true;
+        engine.observe(obs);
+        assert_eq!(engine.snapshot().agent_state, AgentState::Working);
+        // Permission-gate hook arrives while the reviewer is processing.
+        engine.apply_hook(hook(2, Some(AgentState::Blocked)));
+        assert_eq!(engine.snapshot().agent_state, AgentState::Working);
+        assert!(!engine.snapshot().visible_blocker);
+    }
+
+    #[test]
+    fn block_fires_normally_without_review() {
+        let mut engine = AgentStatusEngine::default();
+        engine.apply_hook(hook(1, Some(AgentState::Working)));
+        engine.apply_hook(hook(2, Some(AgentState::Blocked)));
+        assert_eq!(engine.snapshot().agent_state, AgentState::Blocked);
+        assert!(engine.snapshot().visible_blocker);
+    }
+
+    #[test]
+    fn review_flag_clears_allows_later_block() {
+        let mut engine = AgentStatusEngine::default();
+        engine.apply_hook(hook(1, Some(AgentState::Working)));
+        // Review in progress, then it ends (banner gone → flag false).
+        let mut obs = observation(10_000);
+        obs.detection = AgentDetection::from_state(AgentState::Working);
+        obs.detection.review_in_progress = true;
+        engine.observe(obs);
+        let mut obs2 = observation(11_000);
+        obs2.detection = AgentDetection::from_state(AgentState::Working);
+        obs2.detection.review_in_progress = false;
+        engine.observe(obs2);
+        // A genuine block now must surface.
+        engine.apply_hook(hook(2, Some(AgentState::Blocked)));
+        assert_eq!(engine.snapshot().agent_state, AgentState::Blocked);
     }
 
     #[test]
