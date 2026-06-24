@@ -9,7 +9,8 @@ import {
   incrementMountedTerminalViewCount,
 } from "@/composables/useTerminal";
 import { useShortcuts } from "@/composables/useShortcuts";
-import { getAgentIcon } from "@/composables/useAgentIcon";
+import { agentIconSurfaceForTheme, getAgentIconForSurface } from "@/composables/useAgentIcon";
+import { useTheme } from "@/composables/useTheme";
 import GridTerminal from "@/components/terminal/GridTerminal.vue";
 import {
   getDroppedPaths,
@@ -49,6 +50,7 @@ const props = defineProps<{
 const store = useWorkspaceStore();
 const rpc = useRpc();
 const shortcuts = useShortcuts();
+const { activeThemeName, getActiveThemeSpec } = useTheme();
 
 function shortcutText(name: string): string {
   const keys = shortcuts.displayKeys(name);
@@ -173,7 +175,13 @@ const panelLabel = computed(() => {
   return foregroundCommand.value || "zsh";
 });
 
-const agentIconSrc = computed(() => (agentType.value ? getAgentIcon(agentType.value) : null));
+const agentIconSurface = computed(() => {
+  void activeThemeName.value;
+  return agentIconSurfaceForTheme(getActiveThemeSpec().type);
+});
+const agentIconSrc = computed(() =>
+  agentType.value ? getAgentIconForSurface(agentType.value, agentIconSurface.value) : null,
+);
 
 // tabsSessionId → ensure_tab_session is idempotent (returns the existing
 // session, or respawns after a daemon restart). Only called on mount.

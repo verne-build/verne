@@ -4,7 +4,8 @@ import { useRpc } from "@/composables/useRpc";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useCommands, type Command } from "@/composables/useCommands";
 import FileIcon from "./FileIcon.vue";
-import { getAgentIcon } from "@/composables/useAgentIcon";
+import { agentIconSurfaceForTheme, getAgentIconForSurface } from "@/composables/useAgentIcon";
+import { useTheme } from "@/composables/useTheme";
 import { X } from "@lucide/vue";
 import {
   CommandDialog,
@@ -22,6 +23,7 @@ const emit = defineEmits<{ openFile: [path: string] }>();
 const store = useWorkspaceStore();
 const rpc = useRpc();
 const { list: commandList } = useCommands();
+const { activeThemeName, getActiveThemeSpec } = useTheme();
 
 interface SearchResult {
   name: string;
@@ -100,6 +102,15 @@ const matchingAgents = computed(() => {
   if (!q) return items;
   return items.filter((a) => a.title.toLowerCase().includes(q));
 });
+
+const agentIconSurface = computed(() => {
+  void activeThemeName.value;
+  return agentIconSurfaceForTheme(getActiveThemeSpec().type);
+});
+
+function agentIcon(type: string): string {
+  return getAgentIconForSurface(type, agentIconSurface.value);
+}
 
 async function doSearch(q: string) {
   const generation = ++searchGeneration;
@@ -323,7 +334,7 @@ const noResults = computed(() => {
             :value="`agent:${a.title}`"
             @select="selectAgent(a.tabId, a.directoryId)"
           >
-            <img :src="getAgentIcon(a.agentType)" class="mr-2 size-4 shrink-0" aria-hidden="true" />
+            <img :src="agentIcon(a.agentType)" class="mr-2 size-4 shrink-0" aria-hidden="true" />
             <span class="truncate text-sm">{{ a.title }}</span>
             <span class="text-xs text-muted-foreground">{{ timeAgo(a.updatedAt) }}</span>
           </CommandItem>
