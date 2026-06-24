@@ -11,6 +11,7 @@ visible_blocker = true
 contains = ["you've hit your usage limit"]
 not = [
   { contains = ["automatic approval review approved"] },
+  { contains = ["reviewing approval request"] },
 ]
 
 [[rules]]
@@ -32,6 +33,7 @@ any = [
 ]
 not = [
   { contains = ["automatic approval review approved"] },
+  { contains = ["reviewing approval request"] },
 ]
 
 [[rules]]
