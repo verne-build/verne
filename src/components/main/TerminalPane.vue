@@ -208,9 +208,9 @@ async function closePane() {
   // Same running-process guard the tab pill uses.
   const hasChild = await rpc.request.tabsHasRunningChild({ id: props.paneId }).catch(() => false);
   if (hasChild) {
-    const ok = await ask(`This pane is running ${runningProcessLabel()}. Close anyway?`, {
-      title: "Close pane",
-      kind: "warning",
+    const ok = await ask("Close Pane?", {
+      detail: `${runningProcessLabel()} is still running. If you close the pane the process will be killed.`,
+      confirmLabel: "Close",
     });
     if (!ok) return;
   }

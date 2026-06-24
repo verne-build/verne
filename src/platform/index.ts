@@ -41,10 +41,17 @@ export function startDragging(): void {
 
 export async function ask(
   message: string,
-  options?: { title?: string; kind?: "info" | "warning" | "error" },
+  options?: {
+    title?: string;
+    detail?: string;
+    confirmLabel?: string;
+    kind?: "none" | "info" | "warning" | "error";
+  },
 ): Promise<boolean> {
   return window.verne.invoke("show_message_dialog", {
     message,
+    detail: options?.detail ?? null,
+    confirmLabel: options?.confirmLabel ?? null,
     title: options?.title ?? null,
     kind: options?.kind ?? null,
   });

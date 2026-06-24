@@ -110,9 +110,9 @@ function runningProcessLabel(tabId: string): string {
 async function closeAgent(tabId: string) {
   const running = await rpc.request.tabsHasRunningChild({ id: tabId }).catch(() => false);
   if (running) {
-    const ok = await ask(`${runningProcessLabel(tabId)} is running. Close anyway?`, {
-      title: "Close tab",
-      kind: "warning",
+    const ok = await ask("Close Tab?", {
+      detail: `${runningProcessLabel(tabId)} is still running. If you close the tab the process will be killed.`,
+      confirmLabel: "Close",
     });
     if (!ok) return;
   }
