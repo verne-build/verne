@@ -4,7 +4,7 @@ import type { ReviewComment, ReviewContext } from "@/types/shared";
 import { useRpc } from "./useRpc";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useSettings } from "./useSettings";
-import { sendTextToSession } from "./useTerminal";
+import { sendTextToSession, waitForPasteReady } from "./useTerminal";
 import { filterCommentsForFile, toAnnotations } from "@/lib/reviewAnnotations";
 import { formatReviewPrompt } from "@/lib/reviewPrompt";
 import { bareLaunchCommand, bracketedPaste } from "@/lib/reviewLaunch";
@@ -144,17 +144,6 @@ export function useDiffReview() {
     return { total: list.length, files: new Set(list.map((c) => c.relPath)).size };
   }
 
-  /** Poll until the tab has a foreground child (the launched agent) rather than
-   * just the bare shell, so we don't paste before the agent's TUI is up. */
-  async function waitForAgent(tabId: string, timeoutMs = 12000): Promise<boolean> {
-    const start = Date.now();
-    while (Date.now() - start < timeoutMs) {
-      if (await request.tabsHasRunningChild({ id: tabId }).catch(() => false)) return true;
-      await new Promise((r) => setTimeout(r, 150));
-    }
-    return false;
-  }
-
   /** Build the prompt and spawn-or-reuse the review tab for `scopeKey`. The
    * prompt is pasted into the agent (not passed as a noisy shell arg); comments
    * are only cleared once it has actually been delivered. */
@@ -188,8 +177,9 @@ export function useDiffReview() {
       return;
     }
     reviewTabByScope.set(scopeKey, tab.id);
-    // Wait for the agent process, then let its TUI settle before pasting.
-    if (await waitForAgent(tab.id)) await new Promise((r) => setTimeout(r, 700));
+    // Wait for the agent's TUI to enable bracketed-paste mode — its own signal
+    // that the input line is ready — instead of guessing with a fixed delay.
+    await waitForPasteReady(sessionId);
     if (await sendPrompt(sessionId, prompt)) {
       await clearScope(scopeKey);
     } else {
