@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, nextTick, watch, type Ref } from "vue";
+import { computed, inject, nextTick, ref, watch, type Ref } from "vue";
 import { DragDropProvider } from "@dnd-kit/vue";
 import { ListFilter } from "@lucide/vue";
 import SortableItem from "@/components/dnd/SortableItem.vue";
@@ -37,6 +37,77 @@ const items = computed(() => store.agentsList(scope.value));
 // top/bottom content fades against the fixed header
 const { bodyEl, atStart, atEnd, update } = useScrollFades();
 watch(() => items.value.length, () => nextTick(update));
+
+// Row enter/leave animation. Spawn → height grows + fades in; close → collapses +
+// fades out, siblings glide up via FLIP. Suppressed while dragging (reorder must
+// stay snappy and not fight dnd-kit transforms) and across a scope swap (a
+// deliberate navigation, not a state change).
+const ROW_EASE = "cubic-bezier(0.22, 1, 0.36, 1)";
+const ROW_ENTER_MS = 200; // spawn is a system response — snappier
+const ROW_LEAVE_MS = 220; // close is a deliberate action — slightly slower
+const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+const instant = ref(false);
+function onBeforeEnter(el: Element) {
+  // Drag / scope swap snap instantly; otherwise hide until the enter hook drives it.
+  if (instant.value) return;
+  (el as HTMLElement).style.opacity = "0";
+}
+function onEnter(el: Element, done: () => void) {
+  const e = el as HTMLElement;
+  if (instant.value) { e.style.opacity = ""; done(); return; }
+  const cleanup = () => { e.style.overflow = ""; e.style.opacity = ""; e.style.transformOrigin = ""; done(); };
+  // Reduced motion: keep a gentle opacity fade, drop the height/scale movement.
+  if (reduceMotion.matches) {
+    const anim = e.animate([{ opacity: 0 }, { opacity: 1 }], { duration: ROW_ENTER_MS, easing: ROW_EASE });
+    anim.onfinish = cleanup;
+    anim.oncancel = cleanup;
+    return;
+  }
+  // Height grows 0→full so the list slides down to make room; the row scales up
+  // from 0.96 + fades in so it reads as growing into place, not a shade wiping.
+  const h = e.offsetHeight;
+  e.style.overflow = "hidden";
+  e.style.transformOrigin = "center top";
+  const anim = e.animate(
+    [
+      { height: "0px", opacity: 0, transform: "scale(0.96)" },
+      { height: `${h}px`, opacity: 1, transform: "scale(1)" },
+    ],
+    { duration: ROW_ENTER_MS, easing: ROW_EASE },
+  );
+  anim.onfinish = cleanup;
+  anim.oncancel = cleanup;
+}
+function onLeave(el: Element, done: () => void) {
+  const e = el as HTMLElement;
+  if (instant.value) { done(); return; }
+  // Vue pins leaving rows to position:absolute for sibling FLIP (which slides the
+  // list up) — pin the width too so the row keeps its size as it shrinks out.
+  e.style.width = `${e.offsetWidth}px`;
+  if (reduceMotion.matches) {
+    const anim = e.animate([{ opacity: 1 }, { opacity: 0 }], { duration: ROW_LEAVE_MS, easing: ROW_EASE });
+    anim.onfinish = done;
+    anim.oncancel = done;
+    return;
+  }
+  e.style.overflow = "hidden";
+  e.style.transformOrigin = "center top";
+  const anim = e.animate(
+    [
+      { height: `${e.offsetHeight}px`, opacity: 1, transform: "scale(1)" },
+      { height: "0px", opacity: 0, transform: "scale(0.96)" },
+    ],
+    { duration: ROW_LEAVE_MS, easing: ROW_EASE },
+  );
+  anim.onfinish = done;
+  anim.oncancel = done;
+}
+
+// Scope toggle swaps the whole list — keep that instant.
+watch(scope, () => {
+  instant.value = true;
+  nextTick(() => { instant.value = false; });
+});
 
 function state(tabId: string, fallback?: AgentState): DisplayState {
   const runtime = store.tabRuntime.get(tabId);
@@ -134,7 +205,13 @@ interface DragEndPayload {
   operation: { source: { id?: string; initialIndex?: number; index?: number; group?: string } | null };
   canceled: boolean;
 }
+function onDragStart() {
+  instant.value = true;
+}
 function onDragEnd(e: DragEndPayload) {
+  // Keep `instant` set through the reorder patch so FLIP doesn't fight dnd-kit's
+  // own drop; release once the reordered DOM has settled.
+  nextTick(() => { instant.value = false; });
   if (e.canceled) return;
   const src = e.operation.source;
   if (!src) return;
@@ -175,7 +252,15 @@ function onDragEnd(e: DragEndPayload) {
       :class="atEnd ? 'opacity-0' : 'opacity-100'"
     />
     <div ref="bodyEl" class="app-scrollbar min-h-0 flex-1 overflow-y-auto pb-1" @scroll="update">
-    <DragDropProvider :sensors="sortableSensors" @drag-end="onDragEnd">
+    <DragDropProvider :sensors="sortableSensors" @drag-start="onDragStart" @drag-end="onDragEnd">
+    <TransitionGroup
+      tag="div"
+      name="agent-list"
+      :class="['agent-list flex flex-col gap-0.5', { 'is-instant': instant }]"
+      @before-enter="onBeforeEnter"
+      @enter="onEnter"
+      @leave="onLeave"
+    >
     <SortableItem
       v-for="i in items"
       :id="i.tab.id"
@@ -236,6 +321,7 @@ function onDragEnd(e: DragEndPayload) {
       </ContextMenuContent>
     </ContextMenu>
     </SortableItem>
+    </TransitionGroup>
     </DragDropProvider>
     <div
       v-if="items.length === 0"
@@ -257,5 +343,20 @@ function onDragEnd(e: DragEndPayload) {
   justify-content: center;
   line-height: 0;
   vertical-align: middle;
+}
+
+/* Siblings glide as a row's slot opens/closes (the entering/leaving row itself
+   grows/shrinks its height + scales + fades via WAAPI). */
+.agent-list-move {
+  transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+/* Drag and scope-swap stay instant — no FLIP fighting dnd-kit / bulk swaps. */
+.agent-list.is-instant .agent-list-move {
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-list-move {
+    transition: none;
+  }
 }
 </style>
