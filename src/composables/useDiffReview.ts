@@ -4,10 +4,10 @@ import type { ReviewComment, ReviewContext } from "@/types/shared";
 import { useRpc } from "./useRpc";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useSettings } from "./useSettings";
-import { sendTextToSession, waitForPasteReady } from "./useTerminal";
+import { sendTextToSession, waitForPasteReady, readSessionText } from "./useTerminal";
 import { filterCommentsForFile, toAnnotations } from "@/lib/reviewAnnotations";
 import { formatReviewPrompt } from "@/lib/reviewPrompt";
-import { bareLaunchCommand, bracketedPaste } from "@/lib/reviewLaunch";
+import { bareLaunchCommand, bracketedPaste, pasteReadiness, type PasteReadiness } from "@/lib/reviewLaunch";
 
 // scopeKey -> comments
 const byScope = shallowRef(new Map<string, ReviewComment[]>());
@@ -28,15 +28,91 @@ async function sendWhenReady(sessionId: string, text: string, timeoutMs = 8000):
   return false;
 }
 
+/** Bring a review tab to the foreground. Text injection only reaches a MOUNTED
+ * terminal (backgrounded tabs are unmounted + unregistered), so pasting into a
+ * non-foreground review tab silently fails — without this the reuse path spins
+ * sendWhenReady's full timeout and then spawns a duplicate tab. */
+function focusTab(directoryId: string, tabId: string): void {
+  const store = useWorkspaceStore();
+  const dir = store.directories.find((d) => d.id === directoryId) ?? null;
+  store.selectDirectory(dir);
+  store.setActiveTab(directoryId, tabId);
+}
+
+/** Wait until the agent's composer is genuinely ready for a paste: bracketed-
+ * paste mode enabled (DECSET 2004) AND the boot render gone quiet (on-screen
+ * text unchanged for `quietMs`). Claude flips 2004 ~0.3s before its input box
+ * mounts, so 2004 alone drops the paste; render-quiet adapts to each agent's
+ * actual boot (incl. codex's MCP startup). Caps at `timeoutMs`. */
+async function waitForComposerReady(
+  sessionId: string,
+  { quietMs = 1000, timeoutMs = 9000 }: { quietMs?: number; timeoutMs?: number } = {},
+): Promise<void> {
+  const start = Date.now();
+  await waitForPasteReady(sessionId, timeoutMs);
+  let prev = readSessionText(sessionId);
+  let lastChange = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    await new Promise((r) => setTimeout(r, 150));
+    const cur = readSessionText(sessionId);
+    if (cur !== prev) {
+      prev = cur;
+      lastChange = Date.now();
+    } else if (Date.now() - lastChange >= quietMs) {
+      return;
+    }
+  }
+}
+
+/** A wrap-proof needle from the prompt: whitespace-stripped leading chunk (soft
+ * wraps insert newlines mid-line, so the on-screen text is compared despaced). */
+function pasteNeedle(prompt: string): string {
+  return prompt.replace(/\s+/g, "").slice(0, 24);
+}
+
+/** Has the prompt visibly landed in the composer? Matches the literal text
+ * (small pastes / codex inline) OR a collapsed-paste placeholder — claude
+ * "[Pasted text … +N lines]" / "paste again to expand"; codex "[Pasted
+ * Content …]". */
+function pasteLanded(sessionId: string, needle: string): boolean {
+  const text = readSessionText(sessionId);
+  if (!text) return false;
+  if (/\[pasted (?:text|content)/i.test(text) || /paste again to expand/i.test(text)) return true;
+  return needle.length > 0 && text.replace(/\s+/g, "").includes(needle);
+}
+
 /** Paste a (possibly multi-line) prompt into a live agent's TUI, then submit.
- * Bracketed paste makes the agent treat the whole prompt as one pasted block so
- * its embedded newlines don't submit it line-by-line. Trailing whitespace is
- * trimmed so the closing Enter submits instead of just adding a blank line, and
- * the Enter is sent after a short settle so it isn't swallowed by the paste. */
-async function sendPrompt(sessionId: string, prompt: string): Promise<boolean> {
-  if (!(await sendWhenReady(sessionId, bracketedPaste(prompt.replace(/\s+$/, ""))))) return false;
-  await new Promise((r) => setTimeout(r, 200));
-  return sendTextToSession(sessionId, "\r");
+ * Bracketed paste makes the agent ingest the whole prompt as one block so
+ * embedded newlines don't submit it line-by-line. The submitting CR is always a
+ * SEPARATE write a beat later — claude leaves the prompt editable if paste-end
+ * and Enter arrive in the same write.
+ *
+ * "buffered" agents (codex) reliably queue the paste, so we submit promptly and
+ * trust delivery — keeping it instant. "settle" agents (claude) flakily drop
+ * input, so we confirm the paste actually landed (literal text or a collapsed
+ * placeholder) before submitting and return false without submitting if we
+ * can't — we never blind-retry, since a buffering agent would then double. */
+async function deliverPrompt(
+  sessionId: string,
+  prompt: string,
+  readiness: PasteReadiness,
+): Promise<boolean> {
+  const clean = prompt.replace(/\s+$/, "");
+  if (!(await sendWhenReady(sessionId, bracketedPaste(clean)))) return false;
+  if (readiness === "buffered") {
+    await new Promise((r) => setTimeout(r, 200));
+    return sendTextToSession(sessionId, "\r");
+  }
+  const needle = pasteNeedle(clean);
+  const start = Date.now();
+  while (Date.now() - start < 9000) {
+    if (pasteLanded(sessionId, needle)) {
+      await new Promise((r) => setTimeout(r, 60));
+      return sendTextToSession(sessionId, "\r");
+    }
+    await new Promise((r) => setTimeout(r, 150));
+  }
+  return false;
 }
 
 export function useDiffReview() {
@@ -152,38 +228,49 @@ export function useDiffReview() {
     if (list.length === 0) return;
     const prompt = formatReviewPrompt(list, overall);
     const agent = useSettings().settings.value.reviewAgent ?? "claude";
+    const readiness = pasteReadiness(agent);
+    const store = useWorkspaceStore();
 
-    // Reuse a live review tab (one with a running agent) if we have one.
+    // Reuse a live review tab (one with a running agent) if we have one. Bring
+    // it to the foreground first — injection can't reach a backgrounded
+    // (unmounted) tab, so without this the paste fails and a duplicate spawns.
+    // The agent is already up here, so its composer is ready regardless of kind.
     const existingTabId = reviewTabByScope.get(scopeKey);
     if (existingTabId) {
       const alive = await request.tabsHasRunningChild({ id: existingTabId }).catch(() => false);
       if (alive) {
         const sessionId = await request.tabsSessionId({ id: existingTabId });
-        if (sessionId && (await sendPrompt(sessionId, prompt))) {
-          await clearScope(scopeKey);
-          return;
+        if (sessionId) {
+          focusTab(directoryId, existingTabId);
+          await waitForPasteReady(sessionId);
+          if (await deliverPrompt(sessionId, prompt, readiness)) {
+            await clearScope(scopeKey);
+            return;
+          }
         }
       }
       reviewTabByScope.delete(scopeKey);
     }
 
-    // Spawn a fresh tab and launch the agent BARE (keeps the shell line clean —
-    // just `claude`), wait for it to come up, then paste the review prompt in.
-    const store = useWorkspaceStore();
+    // Spawn a fresh tab and launch the agent BARE (keeps the shell line clean),
+    // foreground it so its terminal mounts, wait for the composer, then paste.
     const tab = await store.createTab({ directoryId, cwd, label: "Suggested changes" });
+    focusTab(directoryId, tab.id);
     const sessionId = await request.tabsSessionId({ id: tab.id });
     if (!sessionId || !(await sendWhenReady(sessionId, bareLaunchCommand(agent) + "\r", 10000))) {
       toast.error("Couldn't start the review agent. Your comments are kept — try Request Changes again.");
       return;
     }
     reviewTabByScope.set(scopeKey, tab.id);
-    // Wait for the agent's TUI to enable bracketed-paste mode — its own signal
-    // that the input line is ready — instead of guessing with a fixed delay.
-    await waitForPasteReady(sessionId);
-    if (await sendPrompt(sessionId, prompt)) {
+    // "buffered" agents (codex) queue input through boot — paste the instant
+    // bracketed-paste mode is on, so it stays instant. "settle" agents (claude)
+    // drop input until the composer mounts, so wait for the boot render to quiet.
+    if (readiness === "settle") await waitForComposerReady(sessionId);
+    else await waitForPasteReady(sessionId);
+    if (await deliverPrompt(sessionId, prompt, readiness)) {
       await clearScope(scopeKey);
     } else {
-      toast.error("Started the agent but couldn't paste the review. Your comments are kept — focus the new tab and try Request Changes again.");
+      toast.error("Started the agent but couldn't confirm the review paste. Your comments are kept — focus the new tab and press Enter, or try Request Changes again.");
     }
   }
 

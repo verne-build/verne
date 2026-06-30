@@ -1,12 +1,28 @@
 import { describe, it, expect } from "vitest";
-import { bareLaunchCommand, bracketedPaste, sanitizeBracketedPaste } from "./reviewLaunch";
+import { bareLaunchCommand, bracketedPaste, sanitizeBracketedPaste, pasteReadiness } from "./reviewLaunch";
 
 describe("bareLaunchCommand", () => {
-  it("returns the bare binary for each agent", () => {
-    expect(bareLaunchCommand("claude")).toBe("claude");
-    expect(bareLaunchCommand("codex")).toBe("codex");
+  it("prefixes update-suppression env so the agent's self-updater can't run", () => {
+    // A pending update otherwise blocks startup (~10s) and its prompt eats the
+    // pasted review. `env` keeps it shell-agnostic (zsh/bash/fish).
+    expect(bareLaunchCommand("claude")).toBe("env DISABLE_AUTOUPDATER=1 claude");
+    expect(bareLaunchCommand("codex")).toBe("env CODEX_CI=1 codex");
+  });
+
+  it("maps the binary name and leaves agents without an updater override bare", () => {
     expect(bareLaunchCommand("cursor")).toBe("cursor-agent");
     expect(bareLaunchCommand("opencode")).toBe("opencode");
+  });
+});
+
+describe("pasteReadiness", () => {
+  it("treats codex as buffered (paste immediately) and claude as settle", () => {
+    expect(pasteReadiness("codex")).toBe("buffered");
+    expect(pasteReadiness("claude")).toBe("settle");
+  });
+  it("defaults uncharacterised agents to the safe settle path", () => {
+    expect(pasteReadiness("opencode")).toBe("settle");
+    expect(pasteReadiness("cursor")).toBe("settle");
   });
 });
 

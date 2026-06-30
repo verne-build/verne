@@ -11,6 +11,7 @@
 // had once it stopped being populated for live tabs.
 
 import type { GridSession } from "@/lib/terminal/GridSession";
+import { gridToText } from "@/lib/terminal/a11y";
 import { useSettings } from "./useSettings";
 
 interface GridEntry {
@@ -43,6 +44,16 @@ export function sendTextToSession(sessionId: string, text: string): boolean {
   if (!entry) return false;
   entry.session.sendText(text);
   return true;
+}
+
+/** Current visible text of a session's terminal grid (one string per row), or
+ *  "" if no live (mounted) session is registered. Used to confirm a pasted
+ *  prompt actually landed in the agent's composer and to detect when the boot
+ *  render has gone quiet. Reads the live viewport only (scrollback excluded). */
+export function readSessionText(sessionId: string): string {
+  const entry = registry.get(sessionId);
+  if (!entry) return "";
+  return gridToText(entry.session.store.screen).join("\n");
 }
 
 /** Resolve once a session's agent TUI has enabled bracketed-paste mode (DECSET
