@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, onUnmounted, watch } from "vue";
-import { MessageSquare, ChevronDown, Send, Copy, Trash2 } from "@lucide/vue";
+import { MessageSquare, ChevronDown, Send, Copy, Check, Trash2, Loader2 } from "@lucide/vue";
 import { toast } from "vue-sonner";
 import { useDiffReview } from "@/composables/useDiffReview";
 import { useRpc } from "@/composables/useRpc";
@@ -19,7 +19,9 @@ const { request } = useRpc();
 
 const expanded = ref(false);
 const confirmingDiscard = ref(false);
+const copied = ref(false);
 let discardTimer: ReturnType<typeof setTimeout> | undefined;
+let copiedTimer: ReturnType<typeof setTimeout> | undefined;
 
 // Paths still present in the working tree; null until first fetched. Comments on
 // files no longer changed (committed/reverted) are filtered out.
@@ -65,13 +67,18 @@ async function refreshValidPaths() {
 onMounted(refreshValidPaths);
 watch(() => [props.scopeKey, props.cwd], refreshValidPaths);
 watch(expanded, (v) => { if (v) void refreshValidPaths(); });
-onUnmounted(() => { if (discardTimer) clearTimeout(discardTimer); });
+onUnmounted(() => {
+  if (discardTimer) clearTimeout(discardTimer);
+  if (copiedTimer) clearTimeout(copiedTimer);
+});
 
 async function copyComments() {
   const text = formatReviewPrompt(navComments.value);
   try {
     await navigator.clipboard.writeText(text);
-    toast.success("Review copied to clipboard");
+    copied.value = true;
+    if (copiedTimer) clearTimeout(copiedTimer);
+    copiedTimer = setTimeout(() => (copied.value = false), 1500);
   } catch {
     toast.error("Couldn't copy review");
   }
@@ -106,13 +113,15 @@ function discard() {
         <SendToAgentMenu :scope-key="scopeKey">
           <template #trigger="{ sending }">
             <Button size="icon-xs" variant="ghost" :disabled="sending" title="Send to agent">
-              <Send />
+              <Loader2 v-if="sending" class="animate-spin" />
+              <Send v-else />
             </Button>
           </template>
         </SendToAgentMenu>
 
-        <Button size="icon-xs" variant="ghost" title="Copy comments" @click="copyComments">
-          <Copy />
+        <Button size="icon-xs" variant="ghost" :title="copied ? 'Copied' : 'Copy comments'" @click="copyComments">
+          <Check v-if="copied" />
+          <Copy v-else />
         </Button>
         <Button
           size="icon-xs"

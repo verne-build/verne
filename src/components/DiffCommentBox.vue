@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, nextTick, onMounted } from "vue";
 import MarkdownIt from "markdown-it";
-import { Send, Pencil, Trash2 } from "@lucide/vue";
+import { Send, Pencil, Trash2, Loader2 } from "@lucide/vue";
 import { useDiffReview } from "@/composables/useDiffReview";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
@@ -105,7 +105,7 @@ onMounted(() => { if (!comment.value?.body) startEdit(); });
         <Button size="sm" variant="ghost" class="h-6 px-2 text-xs" @click="cancel">Cancel</Button>
         <Button size="sm" class="h-6 gap-1 px-2 text-xs" :disabled="!draft.trim()" @click="save">
           {{ isNew ? "Comment" : "Save" }}
-          <Kbd variant="outline" class="h-4 min-w-0 px-1 text-[10px]">↵</Kbd>
+          <Kbd variant="outline">↵</Kbd>
         </Button>
       </div>
     </template>
@@ -117,7 +117,8 @@ onMounted(() => { if (!comment.value?.body) startEdit(); });
         <SendToAgentMenu :scope-key="comment.scopeKey">
           <template #trigger="{ sending }">
             <Button size="icon-xs" variant="ghost" :disabled="sending" title="Send to agent">
-              <Send />
+              <Loader2 v-if="sending" class="animate-spin" />
+              <Send v-else />
             </Button>
           </template>
         </SendToAgentMenu>
