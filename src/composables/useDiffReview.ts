@@ -225,9 +225,10 @@ export function useDiffReview() {
     directoryId: string,
     cwd: string | undefined,
     agentType: string,
+    label?: string,
   ): Promise<{ tabId: string; sessionId: string } | null> {
     const store = useWorkspaceStore();
-    const tab = await store.createTab({ directoryId, cwd, label: "Suggested changes" });
+    const tab = await store.createTab(label === undefined ? { directoryId, cwd } : { directoryId, cwd, label });
     focusTab(directoryId, tab.id);
     const sessionId = await request.tabsSessionId({ id: tab.id });
     if (!sessionId || !(await sendWhenReady(sessionId, bareLaunchCommand(agentType) + "\r", 10000))) {
@@ -242,7 +243,7 @@ export function useDiffReview() {
     if (list.length === 0) return;
     const prompt = formatReviewPrompt(list);
     const readiness = pasteReadiness(agentType);
-    const launched = await launchAgentTab(directoryId, cwd, agentType);
+    const launched = await launchAgentTab(directoryId, cwd, agentType, "Suggested changes");
     if (!launched) {
       toast.error("Couldn't start the agent. Your comments are kept — try again.");
       return;
@@ -264,6 +265,11 @@ export function useDiffReview() {
     const sessionId = await request.tabsSessionId({ id: tabId });
     if (!sessionId) {
       toast.error("That agent tab is no longer available.");
+      return;
+    }
+    const alive = await request.tabsHasRunningChild({ id: tabId }).catch(() => false);
+    if (!alive) {
+      toast.error("That agent is no longer running. Your comments are kept.");
       return;
     }
     focusTab(directoryId, tabId);

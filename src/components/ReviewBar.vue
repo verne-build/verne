@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, onMounted, watch } from "vue";
+import { computed, ref, onMounted, onUnmounted, watch } from "vue";
 import { MessageSquare, ChevronDown, Bot, Copy, Trash2 } from "@lucide/vue";
 import { toast } from "vue-sonner";
 import { useDiffReview } from "@/composables/useDiffReview";
@@ -100,6 +100,8 @@ onMounted(async () => {
   }
 });
 watch(() => [props.scopeKey, props.cwd], refreshValidPaths);
+watch(expanded, (v) => { if (v) void refreshValidPaths(); });
+onUnmounted(() => { if (discardTimer) clearTimeout(discardTimer); });
 
 async function sendToNew(agentType: string) {
   if (sending.value) return;
