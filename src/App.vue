@@ -48,12 +48,16 @@ import DictationOverlay from "@/components/DictationOverlay.vue";
 import DaemonRestartOverlay from "@/components/DaemonRestartOverlay.vue";
 import { useDictation } from "@/composables/useDictation";
 import { useShortcuts } from "@/composables/useShortcuts";
+import { useDiffReview } from "@/composables/useDiffReview";
+import { useSettings } from "@/composables/useSettings";
 import { wireAgentNotifications, unwireAgentNotifications } from "@/composables/useAgentNotifications";
 import { useSettingsScreen } from "@/composables/useSettingsScreen";
 import { useAppUpdates } from "@/composables/useAppUpdates";
 
 const dictation = useDictation();
 const shortcuts = useShortcuts();
+const review = useDiffReview();
+const { settings } = useSettings();
 useAppUpdates();
 const BttfEasterEgg = defineAsyncComponent(() => import("./components/BttfEasterEgg.vue"));
 
@@ -311,6 +315,18 @@ async function newTerminal() {
   }
 }
 
+async function newAgentTerminal() {
+  const dirId = store.selectedDirectoryId;
+  if (!dirId) return;
+  const cwd = store.selectedDirectory?.path;
+  try {
+    const ok = await review.launchAgentTab(dirId, cwd, settings.value.defaultAgent || "claude");
+    if (!ok) console.error("[App] newAgentTerminal: launch failed");
+  } catch (e) {
+    console.error("[App] newAgentTerminal failed:", e);
+  }
+}
+
 async function newWorktree() {
   const dir = store.selectedDirectory;
   if (!dir) return;
@@ -391,6 +407,7 @@ function handleMenuAction(e: Event) {
   if (action === "openSettings") showSettings.value = true;
   else if (action === "openWorkspace") void openWorkspace();
   else if (action === "newTerminal") void newTerminal();
+  else if (action === "newAgentTerminal") void newAgentTerminal();
   else if (action === "newWorktree") void newWorktree();
   else if (action === "toggleLeftPanel") leftCollapsed.value = !leftCollapsed.value;
   else if (action === "toggleRightPanel") rightCollapsed.value = !rightCollapsed.value;
@@ -516,6 +533,12 @@ function handleGlobalKeydown(e: KeyboardEvent) {
   if (shortcuts.matches("shortcuts-help", e)) {
     e.preventDefault();
     showShortcuts.value = !showShortcuts.value;
+    return;
+  }
+  // New agent terminal (⌘⌥T) — launch a tab running the default agent.
+  if (shortcuts.matches("new-agent-terminal", e)) {
+    e.preventDefault();
+    void newAgentTerminal();
     return;
   }
 }
