@@ -16,6 +16,7 @@ import {
   DropdownMenuSeparator,
 } from "./ui/dropdown-menu";
 import { Kbd } from "./ui/kbd";
+import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 
 // Sends the whole scope's review to an agent. Reused by the review bar and by
 // each saved comment box, so the same dropdown is reachable from anywhere.
@@ -80,11 +81,17 @@ async function sendToTab(tabId: string) {
 </script>
 
 <template>
-  <DropdownMenu>
-    <DropdownMenuTrigger as-child>
-      <slot name="trigger" :sending="sending" />
-    </DropdownMenuTrigger>
-    <DropdownMenuContent align="end" class="w-56">
+  <TooltipProvider :delay-duration="300">
+    <DropdownMenu>
+      <Tooltip>
+        <TooltipTrigger as-child>
+          <DropdownMenuTrigger as-child>
+            <slot name="trigger" :sending="sending" />
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">Send to agent</TooltipContent>
+      </Tooltip>
+      <DropdownMenuContent align="end" class="w-56">
       <template v-if="runningAgents.length">
         <DropdownMenuLabel>Open Agents</DropdownMenuLabel>
         <DropdownMenuItem v-for="a in runningAgents" :key="a.tabId" @select="sendToTab(a.tabId)">
@@ -102,6 +109,7 @@ async function sendToTab(tabId: string) {
           {{ defaultKeys.join("") }}
         </Kbd>
       </DropdownMenuItem>
-    </DropdownMenuContent>
-  </DropdownMenu>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  </TooltipProvider>
 </template>

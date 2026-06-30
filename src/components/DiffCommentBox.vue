@@ -7,6 +7,7 @@ import { Button } from "./ui/button";
 import { Card } from "./ui/card";
 import { Textarea } from "./ui/textarea";
 import { Kbd } from "./ui/kbd";
+import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import SendToAgentMenu from "./SendToAgentMenu.vue";
 
 const props = defineProps<{ commentId: string }>();
@@ -116,22 +117,34 @@ onMounted(() => { if (!comment.value?.body) startEdit(); });
     <template v-else>
       <!-- Safe: MarkdownIt has raw HTML disabled (html:false); body is escaped/trusted. v-html allowed for this file in eslint.config.js. -->
       <div v-if="bodyHtml" v-html="bodyHtml" class="text-xs leading-snug [&_a]:underline [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_p]:my-0.5 [&_pre]:overflow-auto [&_pre]:rounded [&_pre]:bg-background [&_pre]:p-1.5 [&_ul]:my-0.5 [&_ul]:list-disc [&_ul]:pl-4" />
-      <div class="flex items-center justify-end gap-0.5">
-        <SendToAgentMenu :scope-key="comment.scopeKey">
-          <template #trigger="{ sending }">
-            <Button size="icon-xs" variant="ghost" :disabled="sending" title="Send to agent">
-              <Loader2 v-if="sending" class="animate-spin" />
-              <Send v-else />
-            </Button>
-          </template>
-        </SendToAgentMenu>
-        <Button size="icon-xs" variant="ghost" title="Edit" @click="startEdit">
-          <Pencil />
-        </Button>
-        <Button size="icon-xs" variant="ghost" title="Delete" @click="remove">
-          <Trash2 />
-        </Button>
-      </div>
+      <TooltipProvider :delay-duration="300">
+        <div class="flex items-center justify-end gap-0.5">
+          <SendToAgentMenu :scope-key="comment.scopeKey">
+            <template #trigger="{ sending }">
+              <Button size="icon-xs" variant="ghost" :disabled="sending">
+                <Loader2 v-if="sending" class="animate-spin" />
+                <Send v-else />
+              </Button>
+            </template>
+          </SendToAgentMenu>
+          <Tooltip>
+            <TooltipTrigger as-child>
+              <Button size="icon-xs" variant="ghost" @click="startEdit">
+                <Pencil />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Edit</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger as-child>
+              <Button size="icon-xs" variant="ghost" @click="remove">
+                <Trash2 />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Delete</TooltipContent>
+          </Tooltip>
+        </div>
+      </TooltipProvider>
     </template>
   </Card>
 </template>

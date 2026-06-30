@@ -9,6 +9,7 @@ import type { ReviewComment } from "@/types/shared";
 import { Button } from "./ui/button";
 import { ScrollArea } from "./ui/scroll-area";
 import SendToAgentMenu from "./SendToAgentMenu.vue";
+import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import FileIcon from "./FileIcon.vue";
 
 const props = defineProps<{ scopeKey: string; cwd: string }>();
@@ -109,30 +110,42 @@ function discard() {
         <ChevronDown class="size-3 transition-transform" :class="expanded ? 'rotate-180' : ''" />
       </button>
 
-      <div class="flex items-center gap-0.5">
-        <SendToAgentMenu :scope-key="scopeKey">
-          <template #trigger="{ sending }">
-            <Button size="icon-xs" variant="ghost" :disabled="sending" title="Send to agent">
-              <Loader2 v-if="sending" class="animate-spin" />
-              <Send v-else />
-            </Button>
-          </template>
-        </SendToAgentMenu>
+      <TooltipProvider :delay-duration="300">
+        <div class="flex items-center gap-0.5">
+          <SendToAgentMenu :scope-key="scopeKey">
+            <template #trigger="{ sending }">
+              <Button size="icon-xs" variant="ghost" :disabled="sending">
+                <Loader2 v-if="sending" class="animate-spin" />
+                <Send v-else />
+              </Button>
+            </template>
+          </SendToAgentMenu>
 
-        <Button size="icon-xs" variant="ghost" :title="copied ? 'Copied' : 'Copy comments'" @click="copyComments">
-          <Check v-if="copied" />
-          <Copy v-else />
-        </Button>
-        <Button
-          size="icon-xs"
-          variant="ghost"
-          :class="confirmingDiscard ? 'text-red-500' : ''"
-          :title="confirmingDiscard ? 'Click again to discard' : 'Discard comments'"
-          @click="discard"
-        >
-          <Trash2 />
-        </Button>
-      </div>
+          <Tooltip>
+            <TooltipTrigger as-child>
+              <Button size="icon-xs" variant="ghost" @click="copyComments">
+                <Check v-if="copied" />
+                <Copy v-else />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">{{ copied ? "Copied" : "Copy comments" }}</TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger as-child>
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                :class="confirmingDiscard ? 'text-red-500' : ''"
+                @click="discard"
+              >
+                <Trash2 />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">{{ confirmingDiscard ? "Click again to discard" : "Discard comments" }}</TooltipContent>
+          </Tooltip>
+        </div>
+      </TooltipProvider>
     </div>
 
     <ScrollArea v-if="expanded" class="max-h-72 border-t border-border">
