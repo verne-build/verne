@@ -81,40 +81,39 @@ async function sendToTab(tabId: string) {
 </script>
 
 <template>
+  <!-- Canonical radix/reka order for a tooltip on a menu trigger: Tooltip is the
+       OUTERMOST, DropdownMenu nested inside it, both triggers as-child on the
+       button, and TooltipContent a sibling of DropdownMenu. Inverting this (menu
+       outside) breaks the trigger's click. -->
   <TooltipProvider :delay-duration="300">
-    <DropdownMenu>
-      <Tooltip>
-        <!-- Tooltip triggers on a wrapper span (hover), the dropdown on the
-             button itself (click) — nesting both as-child triggers on one
-             element makes the tooltip swallow the dropdown's click. -->
+    <Tooltip>
+      <DropdownMenu>
         <TooltipTrigger as-child>
-          <span class="inline-flex">
-            <DropdownMenuTrigger as-child>
-              <slot name="trigger" :sending="sending" />
-            </DropdownMenuTrigger>
-          </span>
+          <DropdownMenuTrigger as-child>
+            <slot name="trigger" :sending="sending" />
+          </DropdownMenuTrigger>
         </TooltipTrigger>
-        <TooltipContent side="bottom">Send to Agent</TooltipContent>
-      </Tooltip>
-      <DropdownMenuContent align="end" class="w-56">
-      <template v-if="runningAgents.length">
-        <DropdownMenuLabel>Open Agents</DropdownMenuLabel>
-        <DropdownMenuItem v-for="a in runningAgents" :key="a.tabId" @select="sendToTab(a.tabId)">
-          <img :src="getAgentIcon(a.agentType)" class="size-4" alt="" />
-          <span class="truncate">{{ titleCase(a.agentType) }}</span>
-          <span class="truncate text-muted-foreground">· {{ a.label }}</span>
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-      </template>
-      <DropdownMenuLabel>New Agent</DropdownMenuLabel>
-      <DropdownMenuItem v-for="a in newAgents" :key="a.key" @select="sendToNew(a.key)">
-        <img :src="getAgentIcon(a.key)" class="size-4" alt="" />
-        <span class="flex-1 truncate">{{ a.displayName }}</span>
-        <Kbd v-if="a.key === settings.defaultAgent && defaultKeys.length" variant="outline">
-          {{ defaultKeys.join("") }}
-        </Kbd>
-      </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+        <DropdownMenuContent align="end" class="w-56">
+          <template v-if="runningAgents.length">
+            <DropdownMenuLabel>Open Agents</DropdownMenuLabel>
+            <DropdownMenuItem v-for="a in runningAgents" :key="a.tabId" @select="sendToTab(a.tabId)">
+              <img :src="getAgentIcon(a.agentType)" class="size-4" alt="" />
+              <span class="truncate">{{ titleCase(a.agentType) }}</span>
+              <span class="truncate text-muted-foreground">· {{ a.label }}</span>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+          </template>
+          <DropdownMenuLabel>New Agent</DropdownMenuLabel>
+          <DropdownMenuItem v-for="a in newAgents" :key="a.key" @select="sendToNew(a.key)">
+            <img :src="getAgentIcon(a.key)" class="size-4" alt="" />
+            <span class="flex-1 truncate">{{ a.displayName }}</span>
+            <Kbd v-if="a.key === settings.defaultAgent && defaultKeys.length" variant="outline">
+              {{ defaultKeys.join("") }}
+            </Kbd>
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <TooltipContent side="bottom">Send to Agent</TooltipContent>
+    </Tooltip>
   </TooltipProvider>
 </template>
