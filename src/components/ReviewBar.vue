@@ -11,7 +11,7 @@ import { ScrollArea } from "./ui/scroll-area";
 import SendToAgentMenu from "./SendToAgentMenu.vue";
 import FileIcon from "./FileIcon.vue";
 
-const props = defineProps<{ scopeKey: string; directoryId: string; cwd: string }>();
+const props = defineProps<{ scopeKey: string; cwd: string }>();
 const emit = defineEmits<{ jump: [comment: ReviewComment] }>();
 
 const review = useDiffReview();

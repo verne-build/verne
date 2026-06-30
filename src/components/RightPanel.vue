@@ -466,7 +466,6 @@ function revertScFile() {
         v-if="activeTab?.kind === 'sourceControl' && rootDir"
         :root-dir="rootDir"
         :scope-key="scopeKey"
-        :active-dir-id="activeDirId"
         :active-cwd="activeCwd"
         :selection="scSelection"
         :comment-counts="fileCommentCounts"

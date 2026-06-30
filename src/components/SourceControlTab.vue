@@ -20,7 +20,6 @@ import { ArrowDown, ArrowUp, UploadCloud, GitCompare } from "@lucide/vue";
 const props = defineProps<{
   rootDir: string;
   scopeKey: string | null;
-  activeDirId: string;
   activeCwd: string;
   selection: ScSelection | null;
   commentCounts: Record<string, number>;
@@ -122,7 +121,6 @@ onUnmounted(() => {
             <ReviewBar
               v-if="scopeKey && reviewTotal > 0"
               :scope-key="scopeKey"
-              :directory-id="activeDirId"
               :cwd="activeCwd"
               @jump="emit('jump', $event)"
             />
