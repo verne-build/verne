@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, nextTick, onMounted } from "vue";
 import MarkdownIt from "markdown-it";
-import { Bot, Pencil, Trash2 } from "@lucide/vue";
+import { SendHorizontal, Pencil, Trash2 } from "@lucide/vue";
 import { useDiffReview } from "@/composables/useDiffReview";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
@@ -117,7 +117,7 @@ onMounted(() => { if (!comment.value?.body) startEdit(); });
         <SendToAgentMenu :scope-key="comment.scopeKey">
           <template #trigger="{ sending }">
             <Button size="icon-xs" variant="ghost" :disabled="sending" title="Send to agent">
-              <Bot />
+              <SendHorizontal />
             </Button>
           </template>
         </SendToAgentMenu>
