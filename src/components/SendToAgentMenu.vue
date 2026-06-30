@@ -84,10 +84,15 @@ async function sendToTab(tabId: string) {
   <TooltipProvider :delay-duration="300">
     <DropdownMenu>
       <Tooltip>
+        <!-- Tooltip triggers on a wrapper span (hover), the dropdown on the
+             button itself (click) — nesting both as-child triggers on one
+             element makes the tooltip swallow the dropdown's click. -->
         <TooltipTrigger as-child>
-          <DropdownMenuTrigger as-child>
-            <slot name="trigger" :sending="sending" />
-          </DropdownMenuTrigger>
+          <span class="inline-flex">
+            <DropdownMenuTrigger as-child>
+              <slot name="trigger" :sending="sending" />
+            </DropdownMenuTrigger>
+          </span>
         </TooltipTrigger>
         <TooltipContent side="bottom">Send to Agent</TooltipContent>
       </Tooltip>
