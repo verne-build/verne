@@ -274,9 +274,69 @@ export function useDiffReview() {
     }
   }
 
+  /** Spawn a fresh tab, foreground it (injection only reaches a mounted
+   * terminal), and launch the agent BARE. Returns the tab + session ids, or
+   * null if the tab/session couldn't be started. */
+  async function launchAgentTab(
+    directoryId: string,
+    cwd: string | undefined,
+    agentType: string,
+  ): Promise<{ tabId: string; sessionId: string } | null> {
+    const store = useWorkspaceStore();
+    const tab = await store.createTab({ directoryId, cwd, label: "Suggested changes" });
+    focusTab(directoryId, tab.id);
+    const sessionId = await request.tabsSessionId({ id: tab.id });
+    if (!sessionId || !(await sendWhenReady(sessionId, bareLaunchCommand(agentType) + "\r", 10000))) {
+      return null;
+    }
+    return { tabId: tab.id, sessionId };
+  }
+
+  /** Spawn a new agent and paste the scope's review into it. */
+  async function sendReviewToNewAgent(scopeKey: string, directoryId: string, cwd: string, agentType: string) {
+    const list = get(scopeKey);
+    if (list.length === 0) return;
+    const prompt = formatReviewPrompt(list);
+    const readiness = pasteReadiness(agentType);
+    const launched = await launchAgentTab(directoryId, cwd, agentType);
+    if (!launched) {
+      toast.error("Couldn't start the agent. Your comments are kept — try again.");
+      return;
+    }
+    if (readiness === "settle") await waitForComposerReady(launched.sessionId);
+    else await waitForPasteReady(launched.sessionId);
+    if (await deliverPrompt(launched.sessionId, prompt, readiness)) {
+      await clearScope(scopeKey);
+    } else {
+      toast.error("Started the agent but couldn't confirm the paste. Your comments are kept — focus the new tab and press Enter.");
+    }
+  }
+
+  /** Inject the scope's review into an already-running agent tab. */
+  async function sendReviewToTab(scopeKey: string, directoryId: string, tabId: string) {
+    const list = get(scopeKey);
+    if (list.length === 0) return;
+    const prompt = formatReviewPrompt(list);
+    const sessionId = await request.tabsSessionId({ id: tabId });
+    if (!sessionId) {
+      toast.error("That agent tab is no longer available.");
+      return;
+    }
+    focusTab(directoryId, tabId);
+    await waitForPasteReady(sessionId);
+    // Running agent: composer already up regardless of kind → "settle" path
+    // confirms the paste landed before submitting.
+    if (await deliverPrompt(sessionId, prompt, "settle")) {
+      await clearScope(scopeKey);
+    } else {
+      toast.error("Couldn't confirm the paste into that agent. Your comments are kept.");
+    }
+  }
+
   return {
     loadScope, addComment, updateComment, removeComment, clearScope,
     commentById, commentsForFile, annotationsForFile, scopeSummary, requestChanges,
     commentsInScope, fileCommentCounts,
+    launchAgentTab, sendReviewToNewAgent, sendReviewToTab,
   };
 }
