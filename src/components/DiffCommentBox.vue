@@ -18,7 +18,7 @@ const editing = ref(false);
 const draft = ref("");
 const textareaRef = ref<InstanceType<typeof Textarea> | null>(null);
 
-// "Add Comment" for a brand-new (never-saved) comment; "Save" when editing an
+// "Comment" for a brand-new (never-saved) comment; "Save" when editing an
 // existing one. Driven by the persisted body, not the live draft.
 const isNew = computed(() => !comment.value?.body);
 
@@ -104,7 +104,7 @@ onMounted(() => { if (!comment.value?.body) startEdit(); });
       <div class="flex items-center justify-end gap-1">
         <Button size="sm" variant="ghost" class="h-6 px-2 text-xs" @click="cancel">Cancel</Button>
         <Button size="sm" class="h-6 gap-1 px-2 text-xs" :disabled="!draft.trim()" @click="save">
-          {{ isNew ? "Add Comment" : "Save" }}
+          {{ isNew ? "Comment" : "Save" }}
           <Kbd variant="outline" class="h-4 min-w-0 px-1 text-[10px]">↵</Kbd>
         </Button>
       </div>
