@@ -105,7 +105,10 @@ onMounted(() => { if (!comment.value?.body) startEdit(); });
         <Button size="sm" variant="ghost" class="h-6 px-2 text-xs" @click="cancel">Cancel</Button>
         <Button size="sm" class="h-6 gap-1 px-2 text-xs" :disabled="!draft.trim()" @click="save">
           {{ isNew ? "Comment" : "Save" }}
-          <Kbd>↵</Kbd>
+          <!-- This button is the primary (light/inverse) surface, so the page's
+               muted token would invert against it. Use the button's own
+               foreground token for a subtle filled chip that adapts to theme. -->
+          <Kbd class="bg-primary-foreground/15 text-primary-foreground">↵</Kbd>
         </Button>
       </div>
     </template>
