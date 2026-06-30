@@ -100,7 +100,7 @@ async function sendToTab(tabId: string) {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" class="w-56">
           <template v-if="runningAgents.length">
-            <DropdownMenuLabel>Open Agents</DropdownMenuLabel>
+            <DropdownMenuLabel>Existing Agents</DropdownMenuLabel>
             <DropdownMenuItem v-for="a in runningAgents" :key="a.tabId" @select="sendToTab(a.tabId)">
               <img :src="getAgentIcon(a.agentType)" class="size-4" alt="" />
               <span class="truncate">{{ titleCase(a.agentType) }}</span>
