@@ -12,8 +12,6 @@ import { bareLaunchCommand, bracketedPaste, pasteReadiness, type PasteReadiness 
 // scopeKey -> comments
 const byScope = shallowRef(new Map<string, ReviewComment[]>());
 const loaded = new Set<string>();
-// scopeKey -> the tab id we spawned for its review
-const reviewTabByScope = new Map<string, string>();
 
 function trigger() { triggerRef(byScope); }
 function get(scopeKey: string): ReviewComment[] { return byScope.value.get(scopeKey) ?? []; }
@@ -220,60 +218,6 @@ export function useDiffReview() {
     return { total: list.length, files: new Set(list.map((c) => c.relPath)).size };
   }
 
-  /** Build the prompt and spawn-or-reuse the review tab for `scopeKey`. The
-   * prompt is pasted into the agent (not passed as a noisy shell arg); comments
-   * are only cleared once it has actually been delivered. */
-  async function requestChanges(scopeKey: string, directoryId: string, cwd: string, overall?: string) {
-    const list = get(scopeKey);
-    if (list.length === 0) return;
-    const prompt = formatReviewPrompt(list, overall);
-    const agent = useSettings().settings.value.defaultAgent ?? "claude";
-    const readiness = pasteReadiness(agent);
-    const store = useWorkspaceStore();
-
-    // Reuse a live review tab (one with a running agent) if we have one. Bring
-    // it to the foreground first — injection can't reach a backgrounded
-    // (unmounted) tab, so without this the paste fails and a duplicate spawns.
-    // The agent is already up here, so its composer is ready regardless of kind.
-    const existingTabId = reviewTabByScope.get(scopeKey);
-    if (existingTabId) {
-      const alive = await request.tabsHasRunningChild({ id: existingTabId }).catch(() => false);
-      if (alive) {
-        const sessionId = await request.tabsSessionId({ id: existingTabId });
-        if (sessionId) {
-          focusTab(directoryId, existingTabId);
-          await waitForPasteReady(sessionId);
-          if (await deliverPrompt(sessionId, prompt, readiness)) {
-            await clearScope(scopeKey);
-            return;
-          }
-        }
-      }
-      reviewTabByScope.delete(scopeKey);
-    }
-
-    // Spawn a fresh tab and launch the agent BARE (keeps the shell line clean),
-    // foreground it so its terminal mounts, wait for the composer, then paste.
-    const tab = await store.createTab({ directoryId, cwd, label: "Suggested changes" });
-    focusTab(directoryId, tab.id);
-    const sessionId = await request.tabsSessionId({ id: tab.id });
-    if (!sessionId || !(await sendWhenReady(sessionId, bareLaunchCommand(agent) + "\r", 10000))) {
-      toast.error("Couldn't start the review agent. Your comments are kept — try Request Changes again.");
-      return;
-    }
-    reviewTabByScope.set(scopeKey, tab.id);
-    // "buffered" agents (codex) queue input through boot — paste the instant
-    // bracketed-paste mode is on, so it stays instant. "settle" agents (claude)
-    // drop input until the composer mounts, so wait for the boot render to quiet.
-    if (readiness === "settle") await waitForComposerReady(sessionId);
-    else await waitForPasteReady(sessionId);
-    if (await deliverPrompt(sessionId, prompt, readiness)) {
-      await clearScope(scopeKey);
-    } else {
-      toast.error("Started the agent but couldn't confirm the review paste. Your comments are kept — focus the new tab and press Enter, or try Request Changes again.");
-    }
-  }
-
   /** Spawn a fresh tab, foreground it (injection only reaches a mounted
    * terminal), and launch the agent BARE. Returns the tab + session ids, or
    * null if the tab/session couldn't be started. */
@@ -335,7 +279,7 @@ export function useDiffReview() {
 
   return {
     loadScope, addComment, updateComment, removeComment, clearScope,
-    commentById, commentsForFile, annotationsForFile, scopeSummary, requestChanges,
+    commentById, commentsForFile, annotationsForFile, scopeSummary,
     commentsInScope, fileCommentCounts,
     launchAgentTab, sendReviewToNewAgent, sendReviewToTab,
   };
