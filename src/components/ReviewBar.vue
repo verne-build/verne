@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, onUnmounted, watch } from "vue";
-import { MessageSquare, ChevronDown, SendHorizontal, Copy, Trash2 } from "@lucide/vue";
+import { MessageSquare, ChevronDown, Send, Copy, Trash2 } from "@lucide/vue";
 import { toast } from "vue-sonner";
 import { useDiffReview } from "@/composables/useDiffReview";
 import { useRpc } from "@/composables/useRpc";
@@ -106,7 +106,7 @@ function discard() {
         <SendToAgentMenu :scope-key="scopeKey">
           <template #trigger="{ sending }">
             <Button size="icon-xs" variant="ghost" :disabled="sending" title="Send to agent">
-              <SendHorizontal />
+              <Send />
             </Button>
           </template>
         </SendToAgentMenu>
