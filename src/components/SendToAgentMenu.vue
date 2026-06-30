@@ -81,19 +81,24 @@ async function sendToTab(tabId: string) {
 </script>
 
 <template>
-  <!-- Canonical radix/reka order for a tooltip on a menu trigger: Tooltip is the
-       OUTERMOST, DropdownMenu nested inside it, both triggers as-child on the
-       button, and TooltipContent a sibling of DropdownMenu. Inverting this (menu
-       outside) breaks the trigger's click. -->
+  <!-- The dropdown trigger and the tooltip trigger must sit on DIFFERENT
+       elements — both as-child on one button makes reka merge them and the
+       dropdown clobbers the tooltip's hover listeners. So the wrapper div is the
+       dropdown trigger (click), and the button inside is the tooltip trigger
+       (hover); the click bubbles from button → div to open the menu. -->
   <TooltipProvider :delay-duration="300">
-    <Tooltip>
-      <DropdownMenu>
-        <TooltipTrigger as-child>
-          <DropdownMenuTrigger as-child>
-            <slot name="trigger" :sending="sending" />
-          </DropdownMenuTrigger>
-        </TooltipTrigger>
-        <DropdownMenuContent align="end" class="w-56">
+    <DropdownMenu>
+      <DropdownMenuTrigger as-child>
+        <div class="inline-flex">
+          <Tooltip>
+            <TooltipTrigger as-child>
+              <slot name="trigger" :sending="sending" />
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Send to Agent</TooltipContent>
+          </Tooltip>
+        </div>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" class="w-56">
           <template v-if="runningAgents.length">
             <DropdownMenuLabel>Open Agents</DropdownMenuLabel>
             <DropdownMenuItem v-for="a in runningAgents" :key="a.tabId" @select="sendToTab(a.tabId)">
@@ -111,9 +116,7 @@ async function sendToTab(tabId: string) {
               {{ defaultKeys.join("") }}
             </Kbd>
           </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-      <TooltipContent side="bottom">Send to Agent</TooltipContent>
-    </Tooltip>
+      </DropdownMenuContent>
+    </DropdownMenu>
   </TooltipProvider>
 </template>
