@@ -7,7 +7,7 @@ import { useSettings } from "./useSettings";
 import { sendTextToSession, waitForPasteReady, readSessionText } from "./useTerminal";
 import { filterCommentsForFile, toAnnotations } from "@/lib/reviewAnnotations";
 import { formatReviewPrompt } from "@/lib/reviewPrompt";
-import { bareLaunchCommand, bracketedPaste, pasteReadiness, type PasteReadiness } from "@/lib/reviewLaunch";
+import { bareLaunchCommand, bracketedPaste, pasteReadiness } from "@/lib/reviewLaunch";
 
 // scopeKey -> comments
 const byScope = shallowRef(new Map<string, ReviewComment[]>());
@@ -85,35 +85,41 @@ function pasteLanded(sessionId: string, needle: string): boolean {
   return needle.length > 0 && text.replace(/\s+/g, "").includes(needle);
 }
 
-/** Paste a (possibly multi-line) prompt into a live agent's TUI, then submit.
- * Bracketed paste makes the agent ingest the whole prompt as one block so
- * embedded newlines don't submit it line-by-line. The submitting CR is always a
- * SEPARATE write a beat later — claude leaves the prompt editable if paste-end
- * and Enter arrive in the same write.
+/** A blocking startup modal is on screen — the agent's self-updater or a
+ * trust/permission prompt. The paste lands in the modal, not the composer, so
+ * bail fast rather than wait out the verify timeout. Codex self-updates with no
+ * disable flag, so this is the backstop that keeps the prompt from eating a
+ * review (comments are kept; the user dismisses it and retries). */
+function agentLaunchBlocked(sessionId: string): boolean {
+  const text = readSessionText(sessionId);
+  if (!text) return false;
+  return /update available|press enter to (?:continue|update)|do you trust|trust this folder/i.test(text);
+}
+
+const PASTE_VERIFY_TIMEOUT_MS = 10000;
+
+/** Paste a (possibly multi-line) prompt into a live agent's TUI, CONFIRM it
+ * landed in the composer, then submit. Bracketed paste makes the agent ingest
+ * the whole prompt as one block so embedded newlines don't submit it
+ * line-by-line. The submitting CR is a SEPARATE write a beat after paste-end —
+ * claude leaves the prompt editable if paste-end and Enter arrive together.
  *
- * "buffered" agents (codex) reliably queue the paste, so we submit promptly and
- * trust delivery — keeping it instant. "settle" agents (claude) flakily drop
- * input, so we confirm the paste actually landed (literal text or a collapsed
- * placeholder) before submitting and return false without submitting if we
- * can't — we never blind-retry, since a buffering agent would then double. */
-async function deliverPrompt(
-  sessionId: string,
-  prompt: string,
-  readiness: PasteReadiness,
-): Promise<boolean> {
+ * Verification gates the caller's comment-clear: every agent (incl. codex,
+ * which buffers) must show the pasted text or its collapsed placeholder before
+ * we submit. Returns false WITHOUT submitting if it can't be confirmed (or a
+ * startup/update modal is blocking) so the comments are kept. We never
+ * blind-retry the paste — a buffering agent would then double it. */
+async function deliverPrompt(sessionId: string, prompt: string): Promise<boolean> {
   const clean = prompt.replace(/\s+$/, "");
   if (!(await sendWhenReady(sessionId, bracketedPaste(clean)))) return false;
-  if (readiness === "buffered") {
-    await new Promise((r) => setTimeout(r, 200));
-    return sendTextToSession(sessionId, "\r");
-  }
   const needle = pasteNeedle(clean);
   const start = Date.now();
-  while (Date.now() - start < 9000) {
+  while (Date.now() - start < PASTE_VERIFY_TIMEOUT_MS) {
     if (pasteLanded(sessionId, needle)) {
       await new Promise((r) => setTimeout(r, 60));
       return sendTextToSession(sessionId, "\r");
     }
+    if (agentLaunchBlocked(sessionId)) return false;
     await new Promise((r) => setTimeout(r, 150));
   }
   return false;
@@ -260,7 +266,7 @@ export function useDiffReview() {
     }
     if (readiness === "settle") await waitForComposerReady(launched.sessionId);
     else await waitForPasteReady(launched.sessionId);
-    if (await deliverPrompt(launched.sessionId, prompt, readiness)) {
+    if (await deliverPrompt(launched.sessionId, prompt)) {
       await clearScope(scopeKey);
     } else {
       toast.error("Started the agent but couldn't confirm the paste. Your comments are kept — focus the new tab and press Enter.");
@@ -284,9 +290,9 @@ export function useDiffReview() {
     }
     focusTab(directoryId, tabId);
     await waitForPasteReady(sessionId);
-    // Running agent: composer already up regardless of kind → "settle" path
-    // confirms the paste landed before submitting.
-    if (await deliverPrompt(sessionId, prompt, "settle")) {
+    // Running agent: composer already up → deliverPrompt confirms the paste
+    // landed before submitting, so comments are only cleared on real delivery.
+    if (await deliverPrompt(sessionId, prompt)) {
       await clearScope(scopeKey);
     } else {
       toast.error("Couldn't confirm the paste into that agent. Your comments are kept.");

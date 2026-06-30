@@ -175,8 +175,26 @@ const mainAreaEl = ref<HTMLElement | null>(null);
 const mainAreaWidth = ref(0);
 const centerMinPct = computed(() => {
   const w = mainAreaWidth.value;
-  if (!w) return 20;
+  // Treat an unsettled/transient measurement (the real main area is ≥ ~520px
+  // given the 940px window min) as "no constraint yet". Spiking the min on a
+  // mid-relayout read is what corrupts reka's inner layout across HMR remounts:
+  // the center gets snapped to ~90% and reevaluatePanelConstraints never shrinks
+  // it back, leaving an un-normalised layout where the handle stops resizing.
+  if (!w || w < CENTER_PANEL_MIN_PX) return 5;
   return Math.max(5, Math.min(90, (CENTER_PANEL_MIN_PX / w) * 100));
+});
+// Right panel floor yields to the center's hard floor so the two px minimums are
+// ALWAYS jointly satisfiable (centerMin% + rightMin% ≤ 100). Without this, a
+// narrow inner area leaves both mins unsatisfiable and reka can settle on an
+// un-normalised layout (sum > 100%) after a remount — the right panel renders
+// squashed and the resize handle goes dead. Capping right at the leftover px
+// keeps the center's 500px backstop intact while letting the right panel shrink
+// below its preferred 500px only when the window genuinely can't fit both.
+const rightMinPx = computed(() => {
+  const w = mainAreaWidth.value;
+  if (!w) return RIGHT_PANEL_MIN_PX;
+  const leftover = Math.floor(w * (1 - centerMinPct.value / 100));
+  return Math.max(0, Math.min(RIGHT_PANEL_MIN_PX, leftover));
 });
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 const legacyPanelPx = (percent: number | null, fallback: number, min: number, max: number) =>
@@ -904,7 +922,7 @@ onUnmounted(() => {
                 id="right-sidebar"
                 :order="2"
                 :default-size="panelSizes.right"
-                :min-size="RIGHT_PANEL_MIN_PX"
+                :min-size="rightMinPx"
                 size-unit="px"
                 class="maximize-right bg-[var(--editor-bg)]"
               >
