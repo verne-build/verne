@@ -42,10 +42,13 @@ let discardTimer: ReturnType<typeof setTimeout> | undefined;
 const validPaths = ref<Set<string> | null>(null);
 
 const navComments = computed(() => {
-  const all = review.commentsInScope(props.scopeKey);
+  // Review is working-changes-only: ignore any non-sourceControl (e.g. legacy
+  // commit-scoped) comments, and drop sourceControl ones whose file is no
+  // longer in the working tree.
+  const scOnly = review.commentsInScope(props.scopeKey).filter((c) => c.source === "sourceControl");
   const valid = validPaths.value;
-  if (!valid) return all;
-  return all.filter((c) => c.source !== "sourceControl" || valid.has(c.relPath));
+  if (!valid) return scOnly;
+  return scOnly.filter((c) => valid.has(c.relPath));
 });
 const total = computed(() => navComments.value.length);
 
