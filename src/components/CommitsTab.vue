@@ -102,17 +102,7 @@ onUnmounted(() => {
           class="bg-sidebar"
           @collapse="preventDragCollapse(commitsList.panelRef.value)"
         >
-          <HistoryPanel
-            :working-dir="rootDir"
-            :active-rel-path="selection?.relPath ?? null"
-            :active-commit-id="selection?.commitId ?? null"
-            class="h-full"
-            @open-diff="(f, c, s) => emit('open-diff', f, c, s)"
-          />
-        </ResizablePanel>
-        <ResizableHandle class="cursor-ew-resize" @dragging="splitDragging = $event" />
-        <ResizablePanel :min-size="20">
-          <div v-if="selection && commitsDiffFilePath" class="flex flex-col h-full">
+          <div class="flex h-full flex-col">
             <ReviewBar
               v-if="scopeKey && reviewTotal > 0"
               :scope-key="scopeKey"
@@ -120,6 +110,18 @@ onUnmounted(() => {
               :cwd="activeCwd"
               @jump="emit('jump', $event)"
             />
+            <HistoryPanel
+              :working-dir="rootDir"
+              :active-rel-path="selection?.relPath ?? null"
+              :active-commit-id="selection?.commitId ?? null"
+              class="min-h-0 flex-1"
+              @open-diff="(f, c, s) => emit('open-diff', f, c, s)"
+            />
+          </div>
+        </ResizablePanel>
+        <ResizableHandle class="cursor-ew-resize" @dragging="splitDragging = $event" />
+        <ResizablePanel :min-size="20">
+          <div v-if="selection && commitsDiffFilePath" class="flex flex-col h-full">
             <DiffView
               :key="`commit:${selection.commitId}:${selection.relPath}`"
               :file-path="commitsDiffFilePath"

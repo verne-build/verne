@@ -118,21 +118,7 @@ onUnmounted(() => {
           class="bg-sidebar"
           @collapse="preventDragCollapse(scList.panelRef.value)"
         >
-          <ChangesPanel
-            :working-dir="rootDir"
-            :active-rel-path="selection?.relPath ?? null"
-            :active-staged="selection?.staged ?? null"
-            :comment-counts="commentCounts"
-            class="h-full"
-            @open-file="emit('open-file', $event)"
-            @open-diff="(r, s) => emit('open-diff', r, s)"
-            @discard="emit('discard', $event)"
-            @status-changed="emit('status-changed', $event)"
-          />
-        </ResizablePanel>
-        <ResizableHandle class="cursor-ew-resize" @dragging="splitDragging = $event" />
-        <ResizablePanel :min-size="20">
-          <div v-if="selection && scDiffFilePath" class="flex flex-col h-full">
+          <div class="flex h-full flex-col">
             <ReviewBar
               v-if="scopeKey && reviewTotal > 0"
               :scope-key="scopeKey"
@@ -140,6 +126,22 @@ onUnmounted(() => {
               :cwd="activeCwd"
               @jump="emit('jump', $event)"
             />
+            <ChangesPanel
+              :working-dir="rootDir"
+              :active-rel-path="selection?.relPath ?? null"
+              :active-staged="selection?.staged ?? null"
+              :comment-counts="commentCounts"
+              class="min-h-0 flex-1"
+              @open-file="emit('open-file', $event)"
+              @open-diff="(r, s) => emit('open-diff', r, s)"
+              @discard="emit('discard', $event)"
+              @status-changed="emit('status-changed', $event)"
+            />
+          </div>
+        </ResizablePanel>
+        <ResizableHandle class="cursor-ew-resize" @dragging="splitDragging = $event" />
+        <ResizablePanel :min-size="20">
+          <div v-if="selection && scDiffFilePath" class="flex flex-col h-full">
             <DiffView
               :key="`sc:${selection.relPath}:${selection.staged}`"
               :file-path="scDiffFilePath"
