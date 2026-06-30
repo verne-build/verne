@@ -34,6 +34,13 @@ pub fn load_from_disk() -> AppSettings {
                 obj.remove("openaiApiKey");
                 obj.remove("githubCopilotToken");
 
+                if obj.contains_key("reviewAgent") {
+                    let v = obj.remove("reviewAgent");
+                    if !obj.contains_key("defaultAgent") {
+                        if let Some(v) = v { obj.insert("defaultAgent".into(), v); }
+                    }
+                }
+
                 // theme → appearance/darkTheme/lightTheme. Gated on `appearance`
                 // absence so re-running on already-migrated settings is a no-op.
                 if !obj.contains_key("appearance") {

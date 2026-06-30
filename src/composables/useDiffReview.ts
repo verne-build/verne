@@ -227,7 +227,7 @@ export function useDiffReview() {
     const list = get(scopeKey);
     if (list.length === 0) return;
     const prompt = formatReviewPrompt(list, overall);
-    const agent = useSettings().settings.value.reviewAgent ?? "claude";
+    const agent = useSettings().settings.value.defaultAgent ?? "claude";
     const readiness = pasteReadiness(agent);
     const store = useWorkspaceStore();
 

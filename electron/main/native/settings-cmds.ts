@@ -10,9 +10,14 @@ import { DEFAULT_SETTINGS } from "../../../src/lib/defaultSettings";
 type Settings = Record<string, unknown>;
 
 /** Mirror of Rust load_from_disk legacy migration. Mutates a parsed object. */
-function migrate(obj: Settings): Settings {
+export function migrate(obj: Settings): Settings {
   for (const k of ["dangerouslySkipPermissions", "autoApproveByDefault", "uiMode", "defaultFormatter", "formatOnSave", "aiProvider", "openaiApiKey", "githubCopilotToken"]) {
     delete obj[k];
+  }
+  // reviewAgent → defaultAgent. Don't clobber an already-set defaultAgent.
+  if ("reviewAgent" in obj) {
+    if (!("defaultAgent" in obj)) obj.defaultAgent = obj.reviewAgent;
+    delete obj.reviewAgent;
   }
   if (!("appearance" in obj)) {
     const legacy = typeof obj.theme === "string" ? (obj.theme as string) : undefined;

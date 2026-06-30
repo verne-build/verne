@@ -3,8 +3,27 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writeFileSync } from "node:fs";
-import { makeSettingsStore } from "./settings-cmds";
+import { makeSettingsStore, migrate } from "./settings-cmds";
 import { DEFAULT_SETTINGS } from "../../../src/lib/defaultSettings";
+
+describe("settings migrate", () => {
+  it("renames reviewAgent to defaultAgent", () => {
+    const out = migrate({ reviewAgent: "codex", appearance: "dark" });
+    expect(out.defaultAgent).toBe("codex");
+    expect("reviewAgent" in out).toBe(false);
+  });
+
+  it("does not overwrite an existing defaultAgent", () => {
+    const out = migrate({ reviewAgent: "codex", defaultAgent: "claude", appearance: "dark" });
+    expect(out.defaultAgent).toBe("claude");
+    expect("reviewAgent" in out).toBe(false);
+  });
+
+  it("leaves settings without reviewAgent untouched", () => {
+    const out = migrate({ defaultAgent: "claude", appearance: "dark" });
+    expect(out.defaultAgent).toBe("claude");
+  });
+});
 
 function freshStore() {
   const dir = mkdtempSync(join(tmpdir(), "verne-settings-"));
