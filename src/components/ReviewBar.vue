@@ -128,7 +128,7 @@ function discard() {
                 <Copy v-else />
               </Button>
             </TooltipTrigger>
-            <TooltipContent side="bottom">{{ copied ? "Copied" : "Copy comments" }}</TooltipContent>
+            <TooltipContent side="bottom">{{ copied ? "Copied" : "Copy Comments" }}</TooltipContent>
           </Tooltip>
 
           <Tooltip>
@@ -142,7 +142,7 @@ function discard() {
                 <Trash2 />
               </Button>
             </TooltipTrigger>
-            <TooltipContent side="bottom">{{ confirmingDiscard ? "Click again to discard" : "Discard comments" }}</TooltipContent>
+            <TooltipContent side="bottom">{{ confirmingDiscard ? "Click Again to Discard" : "Discard Comments" }}</TooltipContent>
           </Tooltip>
         </div>
       </TooltipProvider>

@@ -89,7 +89,7 @@ async function sendToTab(tabId: string) {
             <slot name="trigger" :sending="sending" />
           </DropdownMenuTrigger>
         </TooltipTrigger>
-        <TooltipContent side="bottom">Send to agent</TooltipContent>
+        <TooltipContent side="bottom">Send to Agent</TooltipContent>
       </Tooltip>
       <DropdownMenuContent align="end" class="w-56">
       <template v-if="runningAgents.length">
