@@ -105,10 +105,14 @@ onMounted(() => { if (!comment.value?.body) startEdit(); });
         <Button size="sm" variant="ghost" class="h-6 px-2 text-xs" @click="cancel">Cancel</Button>
         <Button size="sm" class="h-6 gap-1 px-2 text-xs" :disabled="!draft.trim()" @click="save">
           {{ isNew ? "Comment" : "Save" }}
-          <!-- On the solid primary button, recolor the kbd to the button's own
-               foreground token so it reads against the fill (the default muted
-               outline washes out on light buttons). -->
-          <Kbd variant="outline" class="border-primary-foreground/40 text-primary-foreground/90">↵</Kbd>
+          <!-- On the solid primary button the default muted kbd washes out, so
+               give it a faint fill a touch off the button surface, a subtle
+               border, and a full-strength glyph — all in the button's own
+               foreground token so it adapts to theme. -->
+          <Kbd
+            variant="outline"
+            class="border-primary-foreground/30 bg-primary-foreground/15 text-primary-foreground"
+          >↵</Kbd>
         </Button>
       </div>
     </template>
