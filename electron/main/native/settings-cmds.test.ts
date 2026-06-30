@@ -34,8 +34,8 @@ describe("settings store", () => {
   it("returns defaults when the file is missing", () => {
     const { store } = freshStore();
     expect(store.read()).toEqual(DEFAULT_SETTINGS);
-    expect(store.read().editorFontSize).toBe(14);
-    expect(store.read().terminalFontLigatures).toBe(true);
+    expect(store.read().editorFontSize).toBe(DEFAULT_SETTINGS.editorFontSize);
+    expect(store.read().terminalFontLigatures).toBe(DEFAULT_SETTINGS.terminalFontLigatures);
   });
 
   it("merges file values over defaults (top level)", () => {
