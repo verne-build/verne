@@ -4,23 +4,11 @@ import { MessageSquare, ChevronDown, Bot, Copy, Trash2 } from "@lucide/vue";
 import { toast } from "vue-sonner";
 import { useDiffReview } from "@/composables/useDiffReview";
 import { useRpc } from "@/composables/useRpc";
-import { useWorkspaceStore } from "@/stores/workspace";
-import { useSettings } from "@/composables/useSettings";
-import { useShortcuts } from "@/composables/useShortcuts";
-import { getAgentIcon } from "@/composables/useAgentIcon";
 import { formatReviewPrompt } from "@/lib/reviewPrompt";
-import type { McpAgentInfo, ReviewComment } from "@/types/shared";
+import type { ReviewComment } from "@/types/shared";
 import { Button } from "./ui/button";
 import { ScrollArea } from "./ui/scroll-area";
-import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-} from "./ui/dropdown-menu";
-import { Kbd } from "./ui/kbd";
+import SendToAgentMenu from "./SendToAgentMenu.vue";
 import FileIcon from "./FileIcon.vue";
 
 const props = defineProps<{ scopeKey: string; directoryId: string; cwd: string }>();
@@ -28,12 +16,8 @@ const emit = defineEmits<{ jump: [comment: ReviewComment] }>();
 
 const review = useDiffReview();
 const { request } = useRpc();
-const store = useWorkspaceStore();
-const { settings } = useSettings();
-const shortcuts = useShortcuts();
 
 const expanded = ref(false);
-const sending = ref(false);
 const confirmingDiscard = ref(false);
 let discardTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -52,22 +36,6 @@ const navComments = computed(() => {
 });
 const total = computed(() => navComments.value.length);
 
-// Running agents in the current directory — inject the review into one.
-const runningAgents = computed(() =>
-  store.agentsList("current").map(({ tab }) => {
-    const rt = store.tabRuntime.get(tab.id);
-    const agentType = (rt ? rt.agentType : tab.lastAgentType) ?? "claude";
-    return { tabId: tab.id, agentType, label: tab.label };
-  }),
-);
-
-// Launchable agents — spawn a fresh tab.
-const newAgents = ref<McpAgentInfo[]>([]);
-const defaultKeys = computed(() => shortcuts.displayKeys("new-agent-terminal"));
-
-function titleCase(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
 function fileName(relPath: string): string {
   return relPath.split("/").pop() || relPath;
 }
@@ -94,36 +62,10 @@ async function refreshValidPaths() {
   }
 }
 
-onMounted(async () => {
-  void refreshValidPaths();
-  try {
-    newAgents.value = await request.mcpSupportedAgents({});
-  } catch {
-    newAgents.value = [];
-  }
-});
+onMounted(refreshValidPaths);
 watch(() => [props.scopeKey, props.cwd], refreshValidPaths);
 watch(expanded, (v) => { if (v) void refreshValidPaths(); });
 onUnmounted(() => { if (discardTimer) clearTimeout(discardTimer); });
-
-async function sendToNew(agentType: string) {
-  if (sending.value) return;
-  sending.value = true;
-  try {
-    await review.sendReviewToNewAgent(props.scopeKey, props.directoryId, props.cwd, agentType);
-  } finally {
-    sending.value = false;
-  }
-}
-async function sendToTab(directoryId: string, tabId: string) {
-  if (sending.value) return;
-  sending.value = true;
-  try {
-    await review.sendReviewToTab(props.scopeKey, directoryId, tabId);
-  } finally {
-    sending.value = false;
-  }
-}
 
 async function copyComments() {
   const text = formatReviewPrompt(navComments.value);
@@ -156,41 +98,18 @@ function discard() {
         @click="expanded = !expanded"
       >
         <MessageSquare class="size-3" />
-        Comments {{ total }}
+        {{ total }}
         <ChevronDown class="size-3 transition-transform" :class="expanded ? 'rotate-180' : ''" />
       </button>
 
       <div class="flex items-center gap-0.5">
-        <DropdownMenu>
-          <DropdownMenuTrigger as-child>
+        <SendToAgentMenu :scope-key="scopeKey">
+          <template #trigger="{ sending }">
             <Button size="icon-xs" variant="ghost" :disabled="sending" title="Send to agent">
               <Bot />
             </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" class="w-56">
-            <template v-if="runningAgents.length">
-              <DropdownMenuLabel>Open Agents</DropdownMenuLabel>
-              <DropdownMenuItem
-                v-for="a in runningAgents"
-                :key="a.tabId"
-                @select="sendToTab(directoryId, a.tabId)"
-              >
-                <img :src="getAgentIcon(a.agentType)" class="size-4" alt="" />
-                <span class="truncate">{{ titleCase(a.agentType) }}</span>
-                <span class="truncate text-muted-foreground">· {{ a.label }}</span>
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-            </template>
-            <DropdownMenuLabel>New Agent</DropdownMenuLabel>
-            <DropdownMenuItem v-for="a in newAgents" :key="a.key" @select="sendToNew(a.key)">
-              <img :src="getAgentIcon(a.key)" class="size-4" alt="" />
-              <span class="flex-1 truncate">{{ a.displayName }}</span>
-              <Kbd v-if="a.key === settings.defaultAgent && defaultKeys.length" variant="outline">
-                {{ defaultKeys.join("") }}
-              </Kbd>
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+          </template>
+        </SendToAgentMenu>
 
         <Button size="icon-xs" variant="ghost" title="Copy comments" @click="copyComments">
           <Copy />

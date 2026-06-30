@@ -16,6 +16,12 @@ const loaded = new Set<string>();
 function trigger() { triggerRef(byScope); }
 function get(scopeKey: string): ReviewComment[] { return byScope.value.get(scopeKey) ?? []; }
 function set(scopeKey: string, list: ReviewComment[]) { byScope.value.set(scopeKey, list); trigger(); }
+// Comments the user has actually submitted (non-empty body). An empty-body
+// comment is an in-progress draft: it renders in the diff so the user can type,
+// but must not count toward the bar/badges, be listed, or be sent until saved.
+function savedOnly(list: ReviewComment[]): ReviewComment[] {
+  return list.filter((c) => c.body.trim().length > 0);
+}
 
 async function sendWhenReady(sessionId: string, text: string, timeoutMs = 8000): Promise<boolean> {
   const start = Date.now();
@@ -140,11 +146,15 @@ export function useDiffReview() {
     const now = Date.now();
     const comment: ReviewComment = { ...input, id: crypto.randomUUID(), createdAt: now, updatedAt: now };
     set(comment.scopeKey, [...get(comment.scopeKey), comment]);
-    try {
-      await request.reviewUpsert({ comment });
-    } catch (e) {
-      await reloadScope(comment.scopeKey);
-      throw e;
+    // Empty-body comment = unsaved draft: keep it local (renders the box) but
+    // don't persist until it's given a body via updateComment.
+    if (comment.body.trim()) {
+      try {
+        await request.reviewUpsert({ comment });
+      } catch (e) {
+        await reloadScope(comment.scopeKey);
+        throw e;
+      }
     }
     return comment.id;
   }
@@ -193,7 +203,7 @@ export function useDiffReview() {
   /** All pending comments in a scope (for the navigator), newest diff order. */
   function commentsInScope(scopeKey: string): ReviewComment[] {
     byScope.value;
-    return [...get(scopeKey)].sort((a, b) =>
+    return savedOnly(get(scopeKey)).sort((a, b) =>
       a.relPath === b.relPath ? a.startLine - b.startLine : a.relPath.localeCompare(b.relPath));
   }
 
@@ -202,7 +212,7 @@ export function useDiffReview() {
     byScope.value;
     const counts: Record<string, number> = {};
     for (const c of get(scopeKey)) {
-      if (c.source !== "sourceControl") continue;
+      if (c.source !== "sourceControl" || !c.body.trim()) continue;
       counts[c.relPath] = (counts[c.relPath] ?? 0) + 1;
     }
     return counts;
@@ -214,7 +224,7 @@ export function useDiffReview() {
 
   function scopeSummary(scopeKey: string): { total: number; files: number } {
     byScope.value;
-    const list = get(scopeKey);
+    const list = savedOnly(get(scopeKey));
     return { total: list.length, files: new Set(list.map((c) => c.relPath)).size };
   }
 
@@ -239,7 +249,7 @@ export function useDiffReview() {
 
   /** Spawn a new agent and paste the scope's review into it. */
   async function sendReviewToNewAgent(scopeKey: string, directoryId: string, cwd: string, agentType: string) {
-    const list = get(scopeKey);
+    const list = savedOnly(get(scopeKey));
     if (list.length === 0) return;
     const prompt = formatReviewPrompt(list);
     const readiness = pasteReadiness(agentType);
@@ -259,7 +269,7 @@ export function useDiffReview() {
 
   /** Inject the scope's review into an already-running agent tab. */
   async function sendReviewToTab(scopeKey: string, directoryId: string, tabId: string) {
-    const list = get(scopeKey);
+    const list = savedOnly(get(scopeKey));
     if (list.length === 0) return;
     const prompt = formatReviewPrompt(list);
     const sessionId = await request.tabsSessionId({ id: tabId });
