@@ -351,6 +351,10 @@ const request = {
     invoke("git_publish", p),
   gitFetch: (p: { path: string }): Promise<string> =>
     invoke("git_fetch", p),
+  gitForcePush: (p: { path: string }): Promise<string> =>
+    invoke("git_force_push", p),
+  gitFastForward: (p: { path: string }): Promise<string> =>
+    invoke("git_fast_forward", p),
 
   // Sidebar tabs
   getSidebarTabs: (p: { directoryId: string; scopeType?: "directory" | "agent_worktree" }): Promise<SidebarTabRow[]> =>
