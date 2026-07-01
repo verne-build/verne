@@ -5,6 +5,7 @@ import { useWorkspaceStore } from "@/stores/workspace";
 import { useCommands, type Command } from "@/composables/useCommands";
 import FileIcon from "./FileIcon.vue";
 import { agentIconSurfaceForTheme, getAgentIconForSurface } from "@/composables/useAgentIcon";
+import { stripSpinner } from "@/lib/agentStatus";
 import { useTheme } from "@/composables/useTheme";
 import { X } from "@lucide/vue";
 import {
@@ -95,7 +96,7 @@ const matchingAgents = computed(() => {
   const items = store.agentsList("current").map((i) => ({
     tabId: i.tab.id,
     directoryId: i.directory.id,
-    title: i.tab.label,
+    title: stripSpinner(store.tabGroupName(i.tab.id)),
     agentType: store.tabRuntime.get(i.tab.id)?.agentType ?? i.tab.lastAgentType ?? "claude",
     updatedAt: i.tab.createdAt,
   }));
