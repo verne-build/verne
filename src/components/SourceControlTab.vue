@@ -2,6 +2,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import type { ScSelection } from "@/composables/useFilePanelTabs";
 import type { GitStatus } from "@/types";
+import type { GitAction } from "@/composables/useGitOperations";
 import type { ReviewContext } from "@/types/shared";
 import { usePanelResizeState } from "@/composables/usePanelResizeState";
 import { readCachedPanelState, writeCachedScListVisible } from "@/lib/bootstrapCache";
@@ -26,7 +27,7 @@ const props = defineProps<{
   reviewTotal: number;
   reviewContext: ReviewContext | undefined;
   gitStatus: GitStatus | null;
-  gitBusy: "pull" | "push" | "publish" | null;
+  gitBusy: GitAction | null;
   canPublish: boolean;
   canSyncUpstream: boolean;
 }>();
