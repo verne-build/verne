@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
 import type { CommitsSelection } from "@/composables/useFilePanelTabs";
-import type { ReviewContext } from "@/types/shared";
 import { usePanelResizeState } from "@/composables/usePanelResizeState";
 import { readCachedPanelState, writeCachedCommitsListVisible } from "@/lib/bootstrapCache";
 import { PANEL_SIZES } from "@/lib/panelSizes";
@@ -9,24 +8,20 @@ import { useRpc } from "@/composables/useRpc";
 import DiffPanelHeader from "./DiffPanelHeader.vue";
 import HistoryPanel from "./HistoryPanel.vue";
 import DiffView from "./DiffView.vue";
-import ReviewBar from "./ReviewBar.vue";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "./ui/resizable";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "./ui/empty";
 import { GitCompare } from "@lucide/vue";
 
+// Review (comment/send-to-agent) is intentionally working-changes-only — see
+// SourceControlTab. The commits/history view never mounts the review bar or
+// passes a reviewContext, so diffs of old commits are read-only.
 const props = defineProps<{
   rootDir: string;
-  scopeKey: string | null;
-  activeDirId: string;
-  activeCwd: string;
   selection: CommitsSelection | null;
-  reviewTotal: number;
-  reviewContext: ReviewContext | undefined;
 }>();
 
 const emit = defineEmits<{
   "open-diff": [filePath: string, commitId: string, shortId: string];
-  jump: [c: import("@/types/shared").ReviewComment];
   "switch-view": [v: "changes" | "history"];
 }>();
 
@@ -113,13 +108,6 @@ onUnmounted(() => {
         <ResizableHandle class="cursor-ew-resize" @dragging="splitDragging = $event" />
         <ResizablePanel :min-size="20">
           <div v-if="selection && commitsDiffFilePath" class="flex flex-col h-full">
-            <ReviewBar
-              v-if="scopeKey && reviewTotal > 0"
-              :scope-key="scopeKey"
-              :directory-id="activeDirId"
-              :cwd="activeCwd"
-              @jump="emit('jump', $event)"
-            />
             <DiffView
               :key="`commit:${selection.commitId}:${selection.relPath}`"
               :file-path="commitsDiffFilePath"
@@ -127,7 +115,6 @@ onUnmounted(() => {
               :modified="selection.modified"
               :root-dir="rootDir"
               :layout="commitsLayout"
-              :review-context="reviewContext"
               class="flex-1 min-h-0"
               @stats="(s) => (commitsStats = s)"
             />

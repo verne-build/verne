@@ -84,12 +84,6 @@ const scReviewContext = computed<ReviewContext | null>(() => {
   return { scopeKey: k, source: "sourceControl", relPath: sel.relPath, staged: sel.staged };
 });
 
-const commitsReviewContext = computed<ReviewContext | null>(() => {
-  const k = scopeKey.value, sel = commitsSelection.value;
-  if (!k || !sel) return null;
-  return { scopeKey: k, source: "commit", relPath: sel.relPath, commitSha: sel.commitId };
-});
-
 const reviewSummary = computed(() => (scopeKey.value ? review.scopeSummary(scopeKey.value) : { total: 0, files: 0 }));
 const fileCommentCounts = computed(() => (scopeKey.value ? review.fileCommentCounts(scopeKey.value) : {}));
 const activeDirId = computed(() => store.activeRoot?.scopeId ?? "");
@@ -472,7 +466,6 @@ function revertScFile() {
         v-if="activeTab?.kind === 'sourceControl' && rootDir"
         :root-dir="rootDir"
         :scope-key="scopeKey"
-        :active-dir-id="activeDirId"
         :active-cwd="activeCwd"
         :selection="scSelection"
         :comment-counts="fileCommentCounts"
@@ -498,14 +491,8 @@ function revertScFile() {
       <CommitsTab
         v-if="activeTab?.kind === 'commits' && rootDir"
         :root-dir="rootDir"
-        :scope-key="scopeKey"
-        :active-dir-id="activeDirId"
-        :active-cwd="activeCwd"
         :selection="commitsSelection"
-        :review-total="reviewSummary.total"
-        :review-context="commitsReviewContext ?? undefined"
         @open-diff="handleOpenCommitDiff"
-        @jump="handleJumpToComment"
         @switch-view="handleSwitchScView"
       />
     </KeepAlive>

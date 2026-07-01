@@ -327,7 +327,7 @@ export interface AppSettings {
   /** Play a sound with notifications. */
   notificationsSound: boolean;
   markdownDefaultView: "preview" | "edit";
-  reviewAgent: string;
+  defaultAgent: string;
   defaultEditor?: string;
   directoryEditors?: Record<string, string>;
   directoryAgentTypes?: Record<string, string>;

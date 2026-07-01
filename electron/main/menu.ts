@@ -92,6 +92,7 @@ export function buildAppMenu(getWindow: () => BrowserWindow, onRestartDaemon?: (
       submenu: [
         { label: "Open Workspace…", accelerator: accel("open-workspace"), click: () => send("openWorkspace") },
         { label: "New Terminal", accelerator: accel("new-terminal"), click: () => send("newTerminal") },
+        { label: "New Agent Terminal", accelerator: accel("new-agent-terminal"), click: () => send("newAgentTerminal") },
         { label: "New File", accelerator: accel("new-file"), click: () => send("newFile") },
         { type: "separator" },
         { label: "New Worktree", click: () => send("newWorktree") },

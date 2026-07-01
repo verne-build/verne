@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { shallowRef, watch, onUnmounted, onMounted, useTemplateRef, createApp, type App } from "vue";
+import { pinia } from "@/stores/pinia";
 import { FileDiff, parseDiffFromFile } from "@pierre/diffs";
 import type { FileContents, DiffLineAnnotation, SelectedLineRange } from "@pierre/diffs";
 import { useDiffHighlighter } from "@/composables/useDiffHighlighter";
@@ -254,6 +255,9 @@ function renderAnnotation(a: DiffLineAnnotation<{ commentId: string }>): HTMLEle
     commentId: id,
     onClearSelection: clearReviewSelection,
   });
+  // Reuse the shared Pinia so the comment box's send-to-agent menu can read the
+  // workspace store (this island has its own app instance).
+  app.use(pinia);
   app.mount(host);
   mounted.set(id, { app, host });
   return host;

@@ -16,7 +16,7 @@ document.addEventListener("contextmenu", (e) => {
 });
 import App from "./App.vue";
 import { createApp } from "vue";
-import { createPinia } from "pinia";
+import { pinia } from "@/stores/pinia";
 import { initRpc } from "./composables/useRpc";
 import { useWorkspaceStore } from "./stores/workspace";
 import { useSettings, loadCachedSettings } from "./composables/useSettings";
@@ -52,7 +52,6 @@ document.addEventListener("drop", (e) => {
   target?.dispatchEvent(new CustomEvent(PASTE_PATH_EVENT, { detail: paths }));
 });
 
-const pinia = createPinia();
 const app = createApp(App);
 app.use(pinia);
 app.directive("focus", {

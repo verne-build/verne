@@ -5,6 +5,8 @@ import codexLightIconUrl from "@/assets/agents/codex-light.svg";
 import antigravityIconUrl from "@/assets/agents/antigravity.svg";
 import opencodeDarkIconUrl from "@/assets/agents/opencode-dark.svg";
 import opencodeLightIconUrl from "@/assets/agents/opencode-light.svg";
+import cursorDarkIconUrl from "@/assets/agents/cursor-dark.svg";
+import cursorLightIconUrl from "@/assets/agents/cursor-light.svg";
 
 export type AgentIconSurface = "dark" | "light";
 
@@ -13,6 +15,7 @@ const darkSurfaceIcons: Record<string, string> = {
   claude: claudeIconUrl,
   copilot: copilotIconUrl,
   codex: codexDarkIconUrl,
+  cursor: cursorDarkIconUrl,
   antigravity: antigravityIconUrl,
   opencode: opencodeDarkIconUrl,
 };
@@ -21,6 +24,7 @@ const lightSurfaceIcons: Record<string, string> = {
   ...darkSurfaceIcons,
   opencode: opencodeLightIconUrl,
   codex: codexLightIconUrl,
+  cursor: cursorLightIconUrl,
 };
 
 export function getAgentIconForSurface(agentType: string, surface: AgentIconSurface): string {

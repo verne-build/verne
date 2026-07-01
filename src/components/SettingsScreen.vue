@@ -781,10 +781,10 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
             <CardContent class="!p-0">
               <div class="flex items-center justify-between px-6 py-4">
                 <div>
-                  <div class="text-sm font-medium">Review Agent</div>
-                  <div class="text-xs text-muted-foreground">Agent used when sending a diff review</div>
+                  <div class="text-sm font-medium">Default Agent</div>
+                  <div class="text-xs text-muted-foreground">Agent launched by ⌘⌥T and used as the default review target</div>
                 </div>
-                <Select :model-value="settings.reviewAgent" @update:model-value="(v) => update({ reviewAgent: String(v) })">
+                <Select :model-value="settings.defaultAgent" @update:model-value="(v) => update({ defaultAgent: String(v) })">
                   <SelectTrigger class="w-48 h-8 text-xs" tabindex="0"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem v-for="agent in supportedAgents" :key="agent.key" :value="agent.key">

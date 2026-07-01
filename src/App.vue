@@ -48,12 +48,16 @@ import DictationOverlay from "@/components/DictationOverlay.vue";
 import DaemonRestartOverlay from "@/components/DaemonRestartOverlay.vue";
 import { useDictation } from "@/composables/useDictation";
 import { useShortcuts } from "@/composables/useShortcuts";
+import { useDiffReview } from "@/composables/useDiffReview";
+import { useSettings } from "@/composables/useSettings";
 import { wireAgentNotifications, unwireAgentNotifications } from "@/composables/useAgentNotifications";
 import { useSettingsScreen } from "@/composables/useSettingsScreen";
 import { useAppUpdates } from "@/composables/useAppUpdates";
 
 const dictation = useDictation();
 const shortcuts = useShortcuts();
+const review = useDiffReview();
+const { settings } = useSettings();
 useAppUpdates();
 const BttfEasterEgg = defineAsyncComponent(() => import("./components/BttfEasterEgg.vue"));
 
@@ -171,8 +175,26 @@ const mainAreaEl = ref<HTMLElement | null>(null);
 const mainAreaWidth = ref(0);
 const centerMinPct = computed(() => {
   const w = mainAreaWidth.value;
-  if (!w) return 20;
+  // Treat an unsettled/transient measurement (the real main area is ≥ ~520px
+  // given the 940px window min) as "no constraint yet". Spiking the min on a
+  // mid-relayout read is what corrupts reka's inner layout across HMR remounts:
+  // the center gets snapped to ~90% and reevaluatePanelConstraints never shrinks
+  // it back, leaving an un-normalised layout where the handle stops resizing.
+  if (!w || w < CENTER_PANEL_MIN_PX) return 5;
   return Math.max(5, Math.min(90, (CENTER_PANEL_MIN_PX / w) * 100));
+});
+// Right panel floor yields to the center's hard floor so the two px minimums are
+// ALWAYS jointly satisfiable (centerMin% + rightMin% ≤ 100). Without this, a
+// narrow inner area leaves both mins unsatisfiable and reka can settle on an
+// un-normalised layout (sum > 100%) after a remount — the right panel renders
+// squashed and the resize handle goes dead. Capping right at the leftover px
+// keeps the center's 500px backstop intact while letting the right panel shrink
+// below its preferred 500px only when the window genuinely can't fit both.
+const rightMinPx = computed(() => {
+  const w = mainAreaWidth.value;
+  if (!w) return RIGHT_PANEL_MIN_PX;
+  const leftover = Math.floor(w * (1 - centerMinPct.value / 100));
+  return Math.max(0, Math.min(RIGHT_PANEL_MIN_PX, leftover));
 });
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 const legacyPanelPx = (percent: number | null, fallback: number, min: number, max: number) =>
@@ -311,6 +333,18 @@ async function newTerminal() {
   }
 }
 
+async function newAgentTerminal() {
+  const dirId = store.selectedDirectoryId;
+  if (!dirId) return;
+  const cwd = store.selectedDirectory?.path;
+  try {
+    const ok = await review.launchAgentTab(dirId, cwd, settings.value.defaultAgent || "claude");
+    if (!ok) console.error("[App] newAgentTerminal: launch failed");
+  } catch (e) {
+    console.error("[App] newAgentTerminal failed:", e);
+  }
+}
+
 async function newWorktree() {
   const dir = store.selectedDirectory;
   if (!dir) return;
@@ -391,6 +425,7 @@ function handleMenuAction(e: Event) {
   if (action === "openSettings") showSettings.value = true;
   else if (action === "openWorkspace") void openWorkspace();
   else if (action === "newTerminal") void newTerminal();
+  else if (action === "newAgentTerminal") void newAgentTerminal();
   else if (action === "newWorktree") void newWorktree();
   else if (action === "toggleLeftPanel") leftCollapsed.value = !leftCollapsed.value;
   else if (action === "toggleRightPanel") rightCollapsed.value = !rightCollapsed.value;
@@ -516,6 +551,12 @@ function handleGlobalKeydown(e: KeyboardEvent) {
   if (shortcuts.matches("shortcuts-help", e)) {
     e.preventDefault();
     showShortcuts.value = !showShortcuts.value;
+    return;
+  }
+  // New agent terminal (⌘⌥T) — launch a tab running the default agent.
+  if (shortcuts.matches("new-agent-terminal", e)) {
+    e.preventDefault();
+    void newAgentTerminal();
     return;
   }
 }
@@ -881,7 +922,7 @@ onUnmounted(() => {
                 id="right-sidebar"
                 :order="2"
                 :default-size="panelSizes.right"
-                :min-size="RIGHT_PANEL_MIN_PX"
+                :min-size="rightMinPx"
                 size-unit="px"
                 class="maximize-right bg-[var(--editor-bg)]"
               >

@@ -19,7 +19,7 @@ const props = withDefaults(
         '[&_svg:not([class*=\'size-\'])]:size-3',
         props.variant === 'outline'
           ? 'border text-muted-foreground'
-          : 'bg-border text-muted-foreground',
+          : 'bg-muted text-muted-foreground',
         props.class,
       )
     "

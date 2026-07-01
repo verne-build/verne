@@ -300,7 +300,7 @@ pub struct AppSettings {
     pub notifications_focus_gate: bool,
     /// Default view for markdown files: "preview" or "edit".
     pub markdown_default_view: String,
-    pub review_agent: String,
+    pub default_agent: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_editor: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

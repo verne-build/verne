@@ -14,6 +14,7 @@ export const SHORTCUT_CATALOG: ShortcutDef[] = [
   // File
   { name: "open-workspace", label: "Open Workspace", category: "File", defaultBinding: "Mod+O", target: "menu" },
   { name: "new-terminal", label: "New Terminal", category: "File", defaultBinding: "Mod+T", target: "menu" },
+  { name: "new-agent-terminal", label: "New Agent Terminal", category: "File", defaultBinding: "Mod+Alt+T", target: "menu" },
   { name: "new-file", label: "New File", category: "File", defaultBinding: "Mod+N", target: "menu" },
   { name: "close-tab", label: "Close Tab", category: "File", defaultBinding: "Mod+W", target: "menu" },
 

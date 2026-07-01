@@ -46,7 +46,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   notificationsInApp: true,
   notificationsSound: true,
   markdownDefaultView: "preview",
-  reviewAgent: "claude",
+  defaultAgent: "claude",
   voice: {
     enabled: false,
     sttModel: "parakeet-tdt-0.6b-v3-int8",
