@@ -33,6 +33,16 @@ import {
 import { Textarea } from "./ui/textarea";
 import { Kbd } from "./ui/kbd";
 import { ScrollArea } from "./ui/scroll-area";
+import { ButtonGroup } from "./ui/button-group";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuLabel,
+} from "./ui/dropdown-menu";
+import { useGitOperations } from "@/composables/useGitOperations";
 import {
   Collapsible,
   CollapsibleContent,
@@ -44,6 +54,7 @@ import {
   Minus,
   Check,
   Loader2,
+  ChevronDown,
 } from "@lucide/vue";
 import { toast } from "vue-sonner";
 import type { GitStatus, GitFileEntry, GitOperationProgress } from "@/types";
@@ -122,6 +133,24 @@ const stagedOpen = ref(true);
 const changesOpen = ref(true);
 const committing = ref(false);
 const initializing = ref(false);
+
+const gitOps = useGitOperations(() => props.workingDir);
+const { canPublish, canSyncUpstream, push, pull, sync, publish, forcePush, fastForward } = gitOps;
+const gitFetch = gitOps.fetch;
+
+watch(
+  status,
+  (s) => {
+    gitOps.gitStatus.value = s;
+  },
+  { immediate: true },
+);
+
+const hasRemote = computed(() => !!status.value?.hasRemote);
+const commitDisabled = computed(
+  () => !commitMessage.value.trim() || !status.value?.staged.length || committing.value,
+);
+
 const scrollAreaRef = ref<HTMLElement | null>(null);
 const stagedListRef = ref<HTMLElement | null>(null);
 const changesListRef = ref<HTMLElement | null>(null);
@@ -437,8 +466,8 @@ async function unstageAll() {
   refresh();
 }
 
-async function doCommit() {
-  if (!commitMessage.value.trim() || !status.value?.staged.length) return;
+async function doCommit(): Promise<boolean> {
+  if (!commitMessage.value.trim() || !status.value?.staged.length) return false;
   committing.value = true;
   commitError.value = "";
   try {
@@ -451,14 +480,24 @@ async function doCommit() {
       new CustomEvent("close-git-diff", { detail: { all: true } }),
     );
     refresh();
+    return true;
   } catch (e) {
     console.error("commit:", e);
     commitError.value = String(e);
     clearTimeout(commitErrorTimer);
     commitErrorTimer = setTimeout(() => (commitError.value = ""), 5000);
+    return false;
   } finally {
     committing.value = false;
   }
+}
+
+async function commitAndPush() {
+  if (await doCommit()) push();
+}
+
+async function commitAndSync() {
+  if (await doCommit()) sync();
 }
 
 async function initRepo() {
@@ -632,19 +671,76 @@ watch(
             spellcheck="false"
             @keydown.meta.enter="doCommit"
           />
-          <Button
-            size="xs"
-            variant="outline"
-            class="w-full justify-between cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
-            :disabled="!commitMessage.trim() || !status.staged.length || committing"
-            @click="doCommit"
-          >
-            <span class="flex items-center gap-1.5">
-              <Check class="size-4" />
-              Commit
-            </span>
-            <Kbd variant="outline" class="h-4 min-w-0 px-1 text-[10px]">⌘↵</Kbd>
-          </Button>
+          <ButtonGroup class="w-full">
+            <Button
+              size="xs"
+              variant="outline"
+              class="flex-1 justify-between cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+              :disabled="commitDisabled"
+              @click="doCommit"
+            >
+              <span class="flex items-center gap-1.5">
+                <Check class="size-4" />
+                Commit
+              </span>
+              <Kbd variant="outline" class="h-4 min-w-0 px-1 text-[10px]">⌘↵</Kbd>
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger as-child>
+                <Button
+                  size="xs"
+                  variant="outline"
+                  class="px-1.5 cursor-pointer"
+                  aria-label="More Git Operations"
+                >
+                  <ChevronDown class="size-3.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" class="w-48">
+                <DropdownMenuItem
+                  :disabled="commitDisabled || !canSyncUpstream"
+                  @select="commitAndPush"
+                >
+                  Commit & Push
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  :disabled="commitDisabled || !canSyncUpstream"
+                  @select="commitAndSync"
+                >
+                  Commit & Sync
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel>Remote</DropdownMenuLabel>
+                <DropdownMenuItem :disabled="!canSyncUpstream" @select="push">
+                  Push
+                </DropdownMenuItem>
+                <DropdownMenuItem :disabled="!canSyncUpstream" @select="pull">
+                  Pull
+                </DropdownMenuItem>
+                <DropdownMenuItem :disabled="!canSyncUpstream" @select="sync">
+                  Sync
+                </DropdownMenuItem>
+                <DropdownMenuItem :disabled="!hasRemote" @select="gitFetch">
+                  Fetch
+                </DropdownMenuItem>
+                <DropdownMenuItem :disabled="!canPublish" @select="publish">
+                  Publish Branch
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel>Advanced</DropdownMenuLabel>
+                <DropdownMenuItem :disabled="!canSyncUpstream" @select="fastForward">
+                  Fast-Forward
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  variant="destructive"
+                  :disabled="!canSyncUpstream"
+                  @select="forcePush"
+                >
+                  Force Push
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </ButtonGroup>
           <p v-if="commitError" class="text-[10px] text-red-500">
             {{ commitError }}
           </p>
