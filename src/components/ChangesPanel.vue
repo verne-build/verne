@@ -8,6 +8,7 @@ import {
   onActivated,
   onDeactivated,
   watch,
+  inject,
 } from "vue";
 import { useVirtualizer } from "@tanstack/vue-virtual";
 import { listen } from "@/platform";
@@ -41,7 +42,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
 } from "./ui/dropdown-menu";
-import { useGitOperations } from "@/composables/useGitOperations";
+import { GIT_OPS_KEY } from "@/composables/useGitOperations";
 import {
   Collapsible,
   CollapsibleContent,
@@ -133,17 +134,9 @@ const changesOpen = ref(true);
 const committing = ref(false);
 const initializing = ref(false);
 
-const gitOps = useGitOperations(() => props.workingDir);
-const { canPublish, canSyncUpstream, push, pull, sync, publish, forcePush, fastForward } = gitOps;
+const gitOps = inject(GIT_OPS_KEY)!;
+const { canPublish, canSyncUpstream, push, pull, sync, publish, forcePush, fastForward, gitBusy } = gitOps;
 const gitFetch = gitOps.fetch;
-
-watch(
-  status,
-  (s) => {
-    gitOps.gitStatus.value = s;
-  },
-  { immediate: true },
-);
 
 const hasRemote = computed(() => !!status.value?.hasRemote);
 const commitDisabled = computed(
@@ -697,38 +690,38 @@ watch(
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" class="w-48">
                 <DropdownMenuItem
-                  :disabled="commitDisabled || !canSyncUpstream"
+                  :disabled="commitDisabled || !canSyncUpstream || !!gitBusy"
                   @select="commitAndPush"
                 >
                   Commit & Push
                 </DropdownMenuItem>
                 <DropdownMenuItem
-                  :disabled="commitDisabled || !canSyncUpstream"
+                  :disabled="commitDisabled || !canSyncUpstream || !!gitBusy"
                   @select="commitAndSync"
                 >
                   Commit & Sync
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem :disabled="!canSyncUpstream" @select="push">
+                <DropdownMenuItem :disabled="!canSyncUpstream || !!gitBusy" @select="push">
                   Push
                 </DropdownMenuItem>
-                <DropdownMenuItem :disabled="!canSyncUpstream" @select="pull">
+                <DropdownMenuItem :disabled="!canSyncUpstream || !!gitBusy" @select="pull">
                   Pull
                 </DropdownMenuItem>
-                <DropdownMenuItem :disabled="!canSyncUpstream" @select="sync">
+                <DropdownMenuItem :disabled="!canSyncUpstream || !!gitBusy" @select="sync">
                   Sync
                 </DropdownMenuItem>
-                <DropdownMenuItem :disabled="!hasRemote" @select="gitFetch">
+                <DropdownMenuItem :disabled="!hasRemote || !!gitBusy" @select="gitFetch">
                   Fetch
                 </DropdownMenuItem>
-                <DropdownMenuItem :disabled="!canPublish" @select="publish">
+                <DropdownMenuItem :disabled="!canPublish || !!gitBusy" @select="publish">
                   Publish Branch
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem :disabled="!canSyncUpstream" @select="fastForward">
+                <DropdownMenuItem :disabled="!canSyncUpstream || !!gitBusy" @select="fastForward">
                   Fast-Forward
                 </DropdownMenuItem>
-                <DropdownMenuItem :disabled="!canSyncUpstream" @select="forcePush">
+                <DropdownMenuItem :disabled="!canSyncUpstream || !!gitBusy" @select="forcePush">
                   Force Push
                 </DropdownMenuItem>
               </DropdownMenuContent>

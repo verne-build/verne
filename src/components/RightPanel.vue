@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch, onMounted, onUnmounted, nextTick, defineAsyncComponent } from "vue";
+import { computed, ref, watch, onMounted, onUnmounted, nextTick, defineAsyncComponent, provide } from "vue";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useFilePanelTabs, type ScSelection, type CommitsSelection } from "@/composables/useFilePanelTabs";
 import { useRpc } from "@/composables/useRpc";
@@ -17,7 +17,7 @@ import { EXPLORER_TAB_ID, SC_TAB_ID, COMMITS_TAB_ID, NOTES_TAB_ID, NEW_TAB_ID, t
 import SourceControlTab from "./SourceControlTab.vue";
 import CommitsTab from "./CommitsTab.vue";
 import FileEditorTab from "./FileEditorTab.vue";
-import { useGitOperations } from "@/composables/useGitOperations";
+import { useGitOperations, GIT_OPS_KEY } from "@/composables/useGitOperations";
 import { usePanelResizeState } from "@/composables/usePanelResizeState";
 import { Button } from "./ui/button";
 import { useDiffReview } from "@/composables/useDiffReview";
@@ -88,6 +88,7 @@ const reviewSummary = computed(() => (scopeKey.value ? review.scopeSummary(scope
 const fileCommentCounts = computed(() => (scopeKey.value ? review.fileCommentCounts(scopeKey.value) : {}));
 const activeDirId = computed(() => store.activeRoot?.scopeId ?? "");
 const activeCwd = computed(() => store.activeRoot?.path ?? "");
+const gitOps = useGitOperations(() => rootDir.value);
 const {
   gitStatus: scGitStatus,
   gitBusy: scGitBusy,
@@ -96,7 +97,8 @@ const {
   pull: pullSourceControlBranch,
   push: pushSourceControlBranch,
   publish: publishSourceControlBranch,
-} = useGitOperations(() => rootDir.value);
+} = gitOps;
+provide(GIT_OPS_KEY, gitOps);
 
 // All browser tabs for the current scope. Each gets a persistently-mounted
 // BrowserView (see template) that stays alive in the background — switching

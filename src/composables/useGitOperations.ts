@@ -1,8 +1,12 @@
 import { ref, computed } from "vue";
+import type { InjectionKey } from "vue";
 import type { GitStatus } from "@/types";
 import { toast } from "vue-sonner";
 import { useRpc } from "./useRpc";
 import { openExternal, ask } from "@/platform";
+
+export type GitOperations = ReturnType<typeof useGitOperations>;
+export const GIT_OPS_KEY: InjectionKey<GitOperations> = Symbol("gitOps");
 
 export function remoteWebUrl(gitOutput: string): string | null {
   const m = gitOutput.match(/^To\s+(.+)$/m);
