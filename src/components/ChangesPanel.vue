@@ -40,7 +40,6 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
-  DropdownMenuLabel,
 } from "./ui/dropdown-menu";
 import { useGitOperations } from "@/composables/useGitOperations";
 import {
@@ -675,7 +674,7 @@ watch(
             <Button
               size="xs"
               variant="outline"
-              class="flex-1 justify-between cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+              class="flex-1 justify-between cursor-pointer disabled:opacity-100"
               :disabled="commitDisabled"
               @click="doCommit"
             >
@@ -710,7 +709,6 @@ watch(
                   Commit & Sync
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuLabel>Remote</DropdownMenuLabel>
                 <DropdownMenuItem :disabled="!canSyncUpstream" @select="push">
                   Push
                 </DropdownMenuItem>
@@ -727,15 +725,10 @@ watch(
                   Publish Branch
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuLabel>Advanced</DropdownMenuLabel>
                 <DropdownMenuItem :disabled="!canSyncUpstream" @select="fastForward">
                   Fast-Forward
                 </DropdownMenuItem>
-                <DropdownMenuItem
-                  variant="destructive"
-                  :disabled="!canSyncUpstream"
-                  @select="forcePush"
-                >
+                <DropdownMenuItem :disabled="!canSyncUpstream" @select="forcePush">
                   Force Push
                 </DropdownMenuItem>
               </DropdownMenuContent>
