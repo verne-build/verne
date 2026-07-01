@@ -409,6 +409,44 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
                 Err(e) => Response::err(req.id, e),
             }
         }
+        m if m == crate::protocol::methods::GIT_FORCE_PUSH => {
+            let path = s(req.params.get("path"));
+            let res = tokio::task::spawn_blocking({
+                let path = path.clone();
+                move || crate::services::git::git_force_push(&path)
+            })
+            .await
+            .map_err(|e| format!("git force push task failed: {e}"));
+            match res {
+                Ok(Ok(result)) => {
+                    if let Ok(handle) = git_handle(&state, &path) {
+                        let _ = handle.schedule_refresh(std::time::Duration::ZERO);
+                    }
+                    Response::ok(req.id, serde_json::to_value(result).unwrap())
+                }
+                Ok(Err(e)) => Response::err(req.id, e),
+                Err(e) => Response::err(req.id, e),
+            }
+        }
+        m if m == crate::protocol::methods::GIT_FAST_FORWARD => {
+            let path = s(req.params.get("path"));
+            let res = tokio::task::spawn_blocking({
+                let path = path.clone();
+                move || crate::services::git::git_fast_forward(&path)
+            })
+            .await
+            .map_err(|e| format!("git fast-forward task failed: {e}"));
+            match res {
+                Ok(Ok(result)) => {
+                    if let Ok(handle) = git_handle(&state, &path) {
+                        let _ = handle.schedule_refresh(std::time::Duration::ZERO);
+                    }
+                    Response::ok(req.id, serde_json::to_value(result).unwrap())
+                }
+                Ok(Err(e)) => Response::err(req.id, e),
+                Err(e) => Response::err(req.id, e),
+            }
+        }
         m if m == crate::protocol::methods::GIT_WATCH => {
             let path = s(req.params.get("path"));
             // Reserve the watcher entry atomically under the lock BEFORE spawning,

@@ -885,6 +885,38 @@ pub fn git_fetch(path: &str) -> Result<String, String> {
     }
 }
 
+pub fn git_force_push(path: &str) -> Result<String, String> {
+    let repo_path = repo_key(path);
+    check_upstream(&repo_path)?;
+    log::info!("git_force_push: {repo_path}");
+    let mut cmd = git_cmd();
+    cmd.args(["push", "--force-with-lease"]).current_dir(&repo_path);
+    let output = run_git_timed(cmd, 120)?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        log::warn!("git_force_push failed: {stderr}");
+        Err(format!("force push failed: {stderr}"))
+    }
+}
+
+pub fn git_fast_forward(path: &str) -> Result<String, String> {
+    let repo_path = repo_key(path);
+    check_upstream(&repo_path)?;
+    log::info!("git_fast_forward: {repo_path}");
+    let mut cmd = git_cmd();
+    cmd.args(["pull", "--ff-only"]).current_dir(&repo_path);
+    let output = run_git_timed(cmd, 120)?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        log::warn!("git_fast_forward failed: {stderr}");
+        Err(format!("fast-forward failed: {stderr}"))
+    }
+}
+
 /// Get paginated commit log with parent IDs and ref decorations
 pub fn commit_log(path: &str, count: usize, skip: usize) -> Result<CommitLogResult, String> {
     let repo = Repository::discover(path).map_err(|e| format!("git open: {e}"))?;
