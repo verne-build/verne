@@ -146,8 +146,12 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
         }
         m if m == crate::protocol::methods::GIT_INIT => {
             let path = s(req.params.get("path"));
-            match crate::services::git::init(&path) {
-                Ok(()) => Response::ok(req.id, serde_json::Value::Null),
+            let res = tokio::task::spawn_blocking(move || crate::services::git::init(&path))
+                .await
+                .map_err(|e| format!("git init task failed: {e}"));
+            match res {
+                Ok(Ok(())) => Response::ok(req.id, serde_json::Value::Null),
+                Ok(Err(e)) => Response::err(req.id, e),
                 Err(e) => Response::err(req.id, e),
             }
         }
@@ -238,16 +242,24 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
             let path = s(req.params.get("path"));
             let count = req.params.get("count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
             let skip = req.params.get("skip").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-            match crate::services::git::commit_log(&path, count, skip) {
-                Ok(log) => Response::ok(req.id, serde_json::to_value(log).unwrap()),
+            let res = tokio::task::spawn_blocking(move || crate::services::git::commit_log(&path, count, skip))
+                .await
+                .map_err(|e| format!("git commit_log task failed: {e}"));
+            match res {
+                Ok(Ok(log)) => Response::ok(req.id, serde_json::to_value(log).unwrap()),
+                Ok(Err(e)) => Response::err(req.id, e),
                 Err(e) => Response::err(req.id, e),
             }
         }
         m if m == crate::protocol::methods::GIT_COMMIT_FILES => {
             let path = s(req.params.get("path"));
             let commit_id = s(req.params.get("commitId"));
-            match crate::services::git::commit_files(&path, &commit_id) {
-                Ok(files) => Response::ok(req.id, serde_json::json!({ "files": files })),
+            let res = tokio::task::spawn_blocking(move || crate::services::git::commit_files(&path, &commit_id))
+                .await
+                .map_err(|e| format!("git commit_files task failed: {e}"));
+            match res {
+                Ok(Ok(files)) => Response::ok(req.id, serde_json::json!({ "files": files })),
+                Ok(Err(e)) => Response::err(req.id, e),
                 Err(e) => Response::err(req.id, e),
             }
         }
@@ -255,38 +267,58 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
             let path = s(req.params.get("path"));
             let commit_id = s(req.params.get("commitId"));
             let file = s(req.params.get("file"));
-            match crate::services::git::commit_file_diff(&path, &commit_id, &file) {
-                Ok(diff) => Response::ok(req.id, serde_json::to_value(diff).unwrap()),
+            let res = tokio::task::spawn_blocking(move || crate::services::git::commit_file_diff(&path, &commit_id, &file))
+                .await
+                .map_err(|e| format!("git commit_file_diff task failed: {e}"));
+            match res {
+                Ok(Ok(diff)) => Response::ok(req.id, serde_json::to_value(diff).unwrap()),
+                Ok(Err(e)) => Response::err(req.id, e),
                 Err(e) => Response::err(req.id, e),
             }
         }
         m if m == crate::protocol::methods::GIT_CHERRY_PICK => {
             let path = s(req.params.get("path"));
             let commit_id = s(req.params.get("commitId"));
-            match crate::services::git::cherry_pick(&path, &commit_id) {
-                Ok(_) => Response::ok(req.id, serde_json::Value::Null),
+            let res = tokio::task::spawn_blocking(move || crate::services::git::cherry_pick(&path, &commit_id))
+                .await
+                .map_err(|e| format!("git cherry_pick task failed: {e}"));
+            match res {
+                Ok(Ok(_)) => Response::ok(req.id, serde_json::Value::Null),
+                Ok(Err(e)) => Response::err(req.id, e),
                 Err(e) => Response::err(req.id, e),
             }
         }
         m if m == crate::protocol::methods::GIT_REVERT => {
             let path = s(req.params.get("path"));
             let commit_id = s(req.params.get("commitId"));
-            match crate::services::git::revert_commit(&path, &commit_id) {
-                Ok(_) => Response::ok(req.id, serde_json::Value::Null),
+            let res = tokio::task::spawn_blocking(move || crate::services::git::revert_commit(&path, &commit_id))
+                .await
+                .map_err(|e| format!("git revert task failed: {e}"));
+            match res {
+                Ok(Ok(_)) => Response::ok(req.id, serde_json::Value::Null),
+                Ok(Err(e)) => Response::err(req.id, e),
                 Err(e) => Response::err(req.id, e),
             }
         }
         m if m == crate::protocol::methods::GIT_BRANCH_NAME => {
             let path = s(req.params.get("path"));
-            match crate::services::git::branch_name(&path) {
-                Ok(name) => Response::ok(req.id, serde_json::to_value(name).unwrap()),
+            let res = tokio::task::spawn_blocking(move || crate::services::git::branch_name(&path))
+                .await
+                .map_err(|e| format!("git branch_name task failed: {e}"));
+            match res {
+                Ok(Ok(name)) => Response::ok(req.id, serde_json::to_value(name).unwrap()),
+                Ok(Err(e)) => Response::err(req.id, e),
                 Err(e) => Response::err(req.id, e),
             }
         }
         m if m == crate::protocol::methods::GIT_LIST_BRANCHES => {
             let path = s(req.params.get("path"));
-            match crate::services::git::list_branches(&path) {
-                Ok(branches) => Response::ok(req.id, serde_json::to_value(branches).unwrap()),
+            let res = tokio::task::spawn_blocking(move || crate::services::git::list_branches(&path))
+                .await
+                .map_err(|e| format!("git list_branches task failed: {e}"));
+            match res {
+                Ok(Ok(branches)) => Response::ok(req.id, serde_json::to_value(branches).unwrap()),
+                Ok(Err(e)) => Response::err(req.id, e),
                 Err(e) => Response::err(req.id, e),
             }
         }
@@ -294,13 +326,20 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
             let path = s(req.params.get("path"));
             let name = s(req.params.get("name"));
             let from_ref = opt_s(req.params.get("fromRef"));
-            match crate::services::git::create_branch(&path, &name, from_ref.as_deref()) {
-                Ok(()) => {
+            let res = tokio::task::spawn_blocking({
+                let path = path.clone();
+                move || crate::services::git::create_branch(&path, &name, from_ref.as_deref())
+            })
+            .await
+            .map_err(|e| format!("git create_branch task failed: {e}"));
+            match res {
+                Ok(Ok(())) => {
                     if let Ok(handle) = git_handle(&state, &path) {
                         let _ = handle.schedule_refresh(std::time::Duration::ZERO);
                     }
                     Response::ok(req.id, serde_json::Value::Null)
                 }
+                Ok(Err(e)) => Response::err(req.id, e),
                 Err(e) => Response::err(req.id, e),
             }
         }
@@ -308,13 +347,20 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
             let path = s(req.params.get("path"));
             let old_name = s(req.params.get("oldName"));
             let new_name = s(req.params.get("newName"));
-            match crate::services::git::rename_branch(&path, &old_name, &new_name) {
-                Ok(()) => {
+            let res = tokio::task::spawn_blocking({
+                let path = path.clone();
+                move || crate::services::git::rename_branch(&path, &old_name, &new_name)
+            })
+            .await
+            .map_err(|e| format!("git rename_branch task failed: {e}"));
+            match res {
+                Ok(Ok(())) => {
                     if let Ok(handle) = git_handle(&state, &path) {
                         let _ = handle.schedule_refresh(std::time::Duration::ZERO);
                     }
                     Response::ok(req.id, serde_json::Value::Null)
                 }
+                Ok(Err(e)) => Response::err(req.id, e),
                 Err(e) => Response::err(req.id, e),
             }
         }
@@ -323,13 +369,20 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
             let name = s(req.params.get("name"));
             let is_remote = req.params.get("isRemote").and_then(|v| v.as_bool()).unwrap_or(false);
             let remote_ref = opt_s(req.params.get("remoteRef"));
-            match crate::services::git::checkout_branch(&path, &name, is_remote, remote_ref.as_deref()) {
-                Ok(()) => {
+            let res = tokio::task::spawn_blocking({
+                let path = path.clone();
+                move || crate::services::git::checkout_branch(&path, &name, is_remote, remote_ref.as_deref())
+            })
+            .await
+            .map_err(|e| format!("git checkout_branch task failed: {e}"));
+            match res {
+                Ok(Ok(())) => {
                     if let Ok(handle) = git_handle(&state, &path) {
                         let _ = handle.schedule_refresh(std::time::Duration::ZERO);
                     }
                     Response::ok(req.id, serde_json::Value::Null)
                 }
+                Ok(Err(e)) => Response::err(req.id, e),
                 Err(e) => Response::err(req.id, e),
             }
         }
