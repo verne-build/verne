@@ -26,7 +26,7 @@ import { registerDictationHotkey } from "./speech/hotkey";
 import { initAutoUpdater, stopAutoUpdater } from "./native/updater";
 import { registerDbCommands } from "./native/db-cmds";
 import { getDb } from "./db/connection";
-import { getDirectory, resolveWorkspaceRoot } from "./db/directories";
+import { getDirectory, getDirectories, resolveWorkspaceRoot } from "./db/directories";
 import {
   insertTab,
   getTab,
@@ -244,7 +244,18 @@ function registerTabOrchestration(d: DaemonClient, s: DaemonClient): void {
 }
 
 app.whenReady().then(async () => {
-  handleAssetProtocol();
+  // Allowlist for verne-asset://: open workspace/worktree dirs (DB), app
+  // resource dir, and internal data dir. Evaluated per request (dirs change).
+  handleAssetProtocol(() => {
+    const resourceDir = app.isPackaged
+      ? process.resourcesPath
+      : join(app.getAppPath(), "resources");
+    return [
+      ...getDirectories(getDb()).map((d) => d.path),
+      resourceDir,
+      internalDataDir,
+    ];
+  });
 
   // Register all native command handlers before the router can route an invoke.
   registerWindowCommands();
