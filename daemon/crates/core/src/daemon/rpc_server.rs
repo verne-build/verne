@@ -790,14 +790,19 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
         // ---- files.rs (filesystem CRUD + tree) ----
         m if m == crate::protocol::methods::READ_FILE => {
             let path = s(req.params.get("path"));
-            let result: Result<serde_json::Value, String> = (|| {
+            // Blocking fs off the async workers — a slow/stalled disk must not
+            // tie up a runtime thread (would wedge every other request).
+            let result = tokio::task::spawn_blocking(move || -> Result<serde_json::Value, String> {
                 // Language detection lives in the renderer (src/lib/languageDetect.ts),
                 // which leans on Shiki's filename table shared with the diffs view.
                 let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
                 Ok(serde_json::json!({ "content": content }))
-            })();
+            })
+            .await
+            .map_err(|e| format!("read_file task failed: {e}"));
             match result {
-                Ok(v) => Response::ok(req.id, v),
+                Ok(Ok(v)) => Response::ok(req.id, v),
+                Ok(Err(e)) => Response::err(req.id, e),
                 Err(e) => Response::err(req.id, e),
             }
         }
@@ -831,7 +836,7 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
         }
         m if m == crate::protocol::methods::CREATE_FILE => {
             let path = s(req.params.get("path"));
-            let result: Result<(), String> = (|| {
+            let result = tokio::task::spawn_blocking(move || -> Result<(), String> {
                 let p = std::path::Path::new(&path);
                 if p.exists() {
                     return Err("File already exists".to_string());
@@ -840,23 +845,29 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
                     std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
                 }
                 std::fs::write(p, "").map_err(|e| e.to_string())
-            })();
+            })
+            .await
+            .map_err(|e| format!("create_file task failed: {e}"));
             match result {
-                Ok(()) => Response::ok(req.id, serde_json::Value::Null),
+                Ok(Ok(())) => Response::ok(req.id, serde_json::Value::Null),
+                Ok(Err(e)) => Response::err(req.id, e),
                 Err(e) => Response::err(req.id, e),
             }
         }
         m if m == crate::protocol::methods::CREATE_DIR => {
             let path = s(req.params.get("path"));
-            let result: Result<(), String> = (|| {
+            let result = tokio::task::spawn_blocking(move || -> Result<(), String> {
                 let p = std::path::Path::new(&path);
                 if p.exists() {
                     return Err("Directory already exists".to_string());
                 }
                 std::fs::create_dir_all(p).map_err(|e| e.to_string())
-            })();
+            })
+            .await
+            .map_err(|e| format!("create_dir task failed: {e}"));
             match result {
-                Ok(()) => Response::ok(req.id, serde_json::Value::Null),
+                Ok(Ok(())) => Response::ok(req.id, serde_json::Value::Null),
+                Ok(Err(e)) => Response::err(req.id, e),
                 Err(e) => Response::err(req.id, e),
             }
         }
@@ -896,27 +907,46 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
             let source = s(req.params.get("source"));
             let target_dir = s(req.params.get("targetDir"));
             let cut = req.params.get("cut").and_then(|v| v.as_bool()).unwrap_or(false);
-            match paste_path_impl(&source, &target_dir, cut) {
-                Ok(v) => Response::ok(req.id, v),
+            let res = tokio::task::spawn_blocking(move || paste_path_impl(&source, &target_dir, cut))
+                .await
+                .map_err(|e| format!("paste_path task failed: {e}"));
+            match res {
+                Ok(Ok(v)) => Response::ok(req.id, v),
+                Ok(Err(e)) => Response::err(req.id, e),
                 Err(e) => Response::err(req.id, e),
             }
         }
         m if m == crate::protocol::methods::FIND_PROJECT_ICON => {
             let dir = s(req.params.get("dir"));
-            let icon = find_project_icon_impl(&dir);
-            Response::ok(req.id, serde_json::to_value(icon).unwrap())
+            let res = tokio::task::spawn_blocking(move || find_project_icon_impl(&dir))
+                .await
+                .map_err(|e| format!("find_project_icon task failed: {e}"));
+            match res {
+                Ok(icon) => Response::ok(req.id, serde_json::to_value(icon).unwrap()),
+                Err(e) => Response::err(req.id, e),
+            }
         }
         m if m == crate::protocol::methods::RENAME_PATH => {
             let old_path = s(req.params.get("oldPath"));
             let new_path = s(req.params.get("newPath"));
-            match std::fs::rename(&old_path, &new_path) {
-                Ok(()) => Response::ok(req.id, serde_json::json!(true)),
-                Err(e) => Response::err(req.id, e.to_string()),
+            let res = tokio::task::spawn_blocking(move || std::fs::rename(&old_path, &new_path))
+                .await
+                .map_err(|e| format!("rename_path task failed: {e}"));
+            match res {
+                Ok(Ok(())) => Response::ok(req.id, serde_json::json!(true)),
+                Ok(Err(e)) => Response::err(req.id, e.to_string()),
+                Err(e) => Response::err(req.id, e),
             }
         }
         m if m == crate::protocol::methods::FILE_EXISTS => {
             let path = s(req.params.get("path"));
-            Response::ok(req.id, serde_json::json!(std::path::Path::new(&path).is_file()))
+            let res = tokio::task::spawn_blocking(move || std::path::Path::new(&path).is_file())
+                .await
+                .map_err(|e| format!("file_exists task failed: {e}"));
+            match res {
+                Ok(v) => Response::ok(req.id, serde_json::json!(v)),
+                Err(e) => Response::err(req.id, e),
+            }
         }
 
         // ---- file_search.rs (index + fuzzy search + recent files) ----
@@ -975,8 +1005,13 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
         }
         m if m == crate::protocol::methods::LIST_DIRECTORY_PATHS => {
             let partial = s(req.params.get("partial"));
-            match list_directory_paths_impl(&state, &partial) {
-                Ok(v) => Response::ok(req.id, v),
+            let state = state.clone();
+            let res = tokio::task::spawn_blocking(move || list_directory_paths_impl(&state, &partial))
+                .await
+                .map_err(|e| format!("list_directory_paths task failed: {e}"));
+            match res {
+                Ok(Ok(v)) => Response::ok(req.id, v),
+                Ok(Err(e)) => Response::err(req.id, e),
                 Err(e) => Response::err(req.id, e),
             }
         }
