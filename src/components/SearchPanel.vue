@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, watch, onBeforeUnmount, onMounted, toRef } from "vue";
+import { computed, ref, watch, onBeforeUnmount, onMounted, toRef } from "vue";
 import { CaseSensitive, CopyMinus, CopyPlus, SlidersHorizontal } from "@lucide/vue";
 import { useRpc, type ContentSearchMatch } from "@/composables/useRpc";
 import { searchMatchKey, useSearchPanelState } from "@/composables/useSearchPanelState";
@@ -27,6 +27,7 @@ const {
 } = useSearchPanelState(scopeKeyRef);
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+const searchError = ref<string | null>(null);
 
 interface FileGroup {
   relPath: string;
@@ -75,11 +76,13 @@ async function runSearch() {
     results.value = [];
     truncated.value = false;
     selected.value = null;
+    searchError.value = null;
     return;
   }
 
   const snap = q;
   searching.value = true;
+  searchError.value = null;
   try {
     const out = await useRpc().request.searchContent({
       dir: props.rootDir,
@@ -90,6 +93,7 @@ async function runSearch() {
     });
     if (query.value !== snap) return;
     resetCollapsedFiles();
+    searchError.value = null;
     results.value = out.results;
     truncated.value = out.truncated;
     if (!selected.value || !out.results.some(m => searchMatchKey(m) === searchMatchKey(selected.value!))) {
@@ -101,6 +105,7 @@ async function runSearch() {
       results.value = [];
       truncated.value = false;
       selected.value = null;
+      searchError.value = String(err);
     }
   } finally {
     if (query.value === snap) searching.value = false;
@@ -251,6 +256,10 @@ onBeforeUnmount(() => {
             </template>
           </div>
         </template>
+        <div v-else-if="searchError && !searching" class="flex flex-col items-start gap-2 px-2 py-4 text-xs text-muted-foreground">
+          <span>Search failed — {{ searchError }}</span>
+          <Button size="xs" variant="secondary" @click="runSearch()">Retry</Button>
+        </div>
         <div v-else-if="query.trim() && !searching" class="px-2 py-4 text-xs text-muted-foreground">
           No results
         </div>

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, onActivated, onDeactivated, nextTick } from "vue";
 import { useRpc } from "@/composables/useRpc";
-import { listen, type UnlistenFn } from "@/platform";
+import { listen, ask, type UnlistenFn } from "@/platform";
 import type { GitCommitInfo, GitCommitFileEntry } from "@/types";
 import { RefreshCw, GitBranch, Cloud } from "@lucide/vue";
 import { Button } from "./ui/button";
@@ -209,7 +209,9 @@ async function toggleExpand(commitId: string) {
         commitId,
       });
       fileCache.value.set(commitId, result.files);
-    } catch {}
+    } catch (e) {
+      toast.error(`Couldn't load commit files: ${e}`);
+    }
     loadingFiles.value = new Set([...loadingFiles.value].filter(id => id !== commitId));
   }
 }
@@ -237,6 +239,12 @@ function copyMessage(commit: GitCommitInfo) {
 }
 
 async function cherryPick(commit: GitCommitInfo) {
+  const ok = await ask("Cherry-pick this commit onto the current branch?", {
+    detail: "Applies the commit's changes; may cause conflicts.",
+    confirmLabel: "Cherry-Pick",
+    kind: "warning",
+  });
+  if (!ok) return;
   try {
     await useRpc().request.gitCherryPick({ path: props.workingDir, commitId: commit.id });
     toast.success("Cherry-picked");
@@ -247,6 +255,12 @@ async function cherryPick(commit: GitCommitInfo) {
 }
 
 async function revert(commit: GitCommitInfo) {
+  const ok = await ask("Revert this commit?", {
+    detail: "Creates a new commit undoing its changes.",
+    confirmLabel: "Revert",
+    kind: "warning",
+  });
+  if (!ok) return;
   try {
     await useRpc().request.gitRevert({ path: props.workingDir, commitId: commit.id });
     toast.success("Reverted");
@@ -362,7 +376,7 @@ watch(() => props.workingDir, () => {
               <ContextMenuItem @select="copySha(commit)">Copy SHA</ContextMenuItem>
               <ContextMenuItem @select="copyMessage(commit)">Copy Commit Message</ContextMenuItem>
               <ContextMenuSeparator />
-              <ContextMenuItem @select="cherryPick(commit)">Cherry-pick Commit</ContextMenuItem>
+              <ContextMenuItem @select="cherryPick(commit)">Cherry-Pick Commit</ContextMenuItem>
               <ContextMenuItem @select="revert(commit)">Revert Commit</ContextMenuItem>
             </ContextMenuContent>
           </ContextMenu>
