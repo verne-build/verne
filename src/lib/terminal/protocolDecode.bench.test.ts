@@ -37,6 +37,6 @@ describe('protocol decode/apply cost (phase-5 measurement)', () => {
       );
 
       expect(frame).toBeTruthy();
-    });
+    }, 30_000);
   }
 });
