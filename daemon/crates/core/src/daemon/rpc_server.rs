@@ -1064,27 +1064,45 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
             let dir = s(req.params.get("dir"));
             let rel_path = s(req.params.get("relPath"));
             let content = s(req.params.get("content"));
-            let result = shadow_with_tree(&state, &dir, |tree| tree.commit_file(&rel_path, &content));
+            let state = state.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                shadow_with_tree(&state, &dir, |tree| tree.commit_file(&rel_path, &content))
+            })
+            .await
+            .map_err(|e| format!("shadow_commit task failed: {e}"));
             match result {
-                Ok(v) => Response::ok(req.id, serde_json::Value::String(v)),
+                Ok(Ok(v)) => Response::ok(req.id, serde_json::Value::String(v)),
+                Ok(Err(e)) => Response::err(req.id, e),
                 Err(e) => Response::err(req.id, e),
             }
         }
         m if m == crate::protocol::methods::SHADOW_READ => {
             let dir = s(req.params.get("dir"));
             let rel_path = s(req.params.get("relPath"));
-            let result = shadow_with_tree(&state, &dir, |tree| Ok(tree.read_file(&rel_path)));
+            let state = state.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                shadow_with_tree(&state, &dir, |tree| Ok(tree.read_file(&rel_path)))
+            })
+            .await
+            .map_err(|e| format!("shadow_read task failed: {e}"));
             match result {
-                Ok(v) => Response::ok(req.id, serde_json::to_value(v).unwrap()),
+                Ok(Ok(v)) => Response::ok(req.id, serde_json::to_value(v).unwrap()),
+                Ok(Err(e)) => Response::err(req.id, e),
                 Err(e) => Response::err(req.id, e),
             }
         }
         m if m == crate::protocol::methods::SHADOW_READ_WITH_BASELINE => {
             let dir = s(req.params.get("dir"));
             let rel_path = s(req.params.get("relPath"));
-            let result = shadow_with_tree(&state, &dir, |tree| tree.read_file_with_baseline(&rel_path));
+            let state = state.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                shadow_with_tree(&state, &dir, |tree| tree.read_file_with_baseline(&rel_path))
+            })
+            .await
+            .map_err(|e| format!("shadow_read_with_baseline task failed: {e}"));
             match result {
-                Ok(v) => Response::ok(req.id, serde_json::to_value(v).unwrap()),
+                Ok(Ok(v)) => Response::ok(req.id, serde_json::to_value(v).unwrap()),
+                Ok(Err(e)) => Response::err(req.id, e),
                 Err(e) => Response::err(req.id, e),
             }
         }
@@ -1092,18 +1110,30 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
             let dir = s(req.params.get("dir"));
             let rel_path = s(req.params.get("relPath"));
             let disk_content = s(req.params.get("diskContent"));
-            let result = shadow_with_tree(&state, &dir, |tree| tree.diff_file(&rel_path, &disk_content));
+            let state = state.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                shadow_with_tree(&state, &dir, |tree| tree.diff_file(&rel_path, &disk_content))
+            })
+            .await
+            .map_err(|e| format!("shadow_diff task failed: {e}"));
             match result {
-                Ok(v) => Response::ok(req.id, serde_json::to_value(v).unwrap()),
+                Ok(Ok(v)) => Response::ok(req.id, serde_json::to_value(v).unwrap()),
+                Ok(Err(e)) => Response::err(req.id, e),
                 Err(e) => Response::err(req.id, e),
             }
         }
         m if m == crate::protocol::methods::SHADOW_HISTORY => {
             let dir = s(req.params.get("dir"));
             let rel_path = s(req.params.get("relPath"));
-            let result = shadow_with_tree(&state, &dir, |tree| tree.file_history(&rel_path));
+            let state = state.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                shadow_with_tree(&state, &dir, |tree| tree.file_history(&rel_path))
+            })
+            .await
+            .map_err(|e| format!("shadow_history task failed: {e}"));
             match result {
-                Ok(v) => Response::ok(req.id, serde_json::to_value(v).unwrap()),
+                Ok(Ok(v)) => Response::ok(req.id, serde_json::to_value(v).unwrap()),
+                Ok(Err(e)) => Response::err(req.id, e),
                 Err(e) => Response::err(req.id, e),
             }
         }
@@ -1111,9 +1141,15 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
             let dir = s(req.params.get("dir"));
             let rel_path = s(req.params.get("relPath"));
             let oid = s(req.params.get("oid"));
-            let result = shadow_with_tree(&state, &dir, |tree| tree.read_at_commit(&rel_path, &oid));
+            let state = state.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                shadow_with_tree(&state, &dir, |tree| tree.read_at_commit(&rel_path, &oid))
+            })
+            .await
+            .map_err(|e| format!("shadow_read_at task failed: {e}"));
             match result {
-                Ok(v) => Response::ok(req.id, serde_json::Value::String(v)),
+                Ok(Ok(v)) => Response::ok(req.id, serde_json::Value::String(v)),
+                Ok(Err(e)) => Response::err(req.id, e),
                 Err(e) => Response::err(req.id, e),
             }
         }
@@ -1121,18 +1157,30 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
             let dir = s(req.params.get("dir"));
             let rel_path = s(req.params.get("relPath"));
             let content = s(req.params.get("content"));
-            let result = shadow_with_tree(&state, &dir, |tree| tree.on_file_saved(&rel_path, &content));
+            let state = state.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                shadow_with_tree(&state, &dir, |tree| tree.on_file_saved(&rel_path, &content))
+            })
+            .await
+            .map_err(|e| format!("shadow_on_saved task failed: {e}"));
             match result {
-                Ok(()) => Response::ok(req.id, serde_json::Value::Null),
+                Ok(Ok(())) => Response::ok(req.id, serde_json::Value::Null),
+                Ok(Err(e)) => Response::err(req.id, e),
                 Err(e) => Response::err(req.id, e),
             }
         }
         m if m == crate::protocol::methods::SHADOW_REMOVE => {
             let dir = s(req.params.get("dir"));
             let rel_path = s(req.params.get("relPath"));
-            let result = shadow_with_tree(&state, &dir, |tree| tree.remove_file(&rel_path));
+            let state = state.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                shadow_with_tree(&state, &dir, |tree| tree.remove_file(&rel_path))
+            })
+            .await
+            .map_err(|e| format!("shadow_remove task failed: {e}"));
             match result {
-                Ok(()) => Response::ok(req.id, serde_json::Value::Null),
+                Ok(Ok(())) => Response::ok(req.id, serde_json::Value::Null),
+                Ok(Err(e)) => Response::err(req.id, e),
                 Err(e) => Response::err(req.id, e),
             }
         }
