@@ -183,6 +183,7 @@ export interface GitStatus {
   upstream?: string | null;
   hasRemote?: boolean;
   defaultRemote?: string | null;
+  isRepo?: boolean;
 }
 
 export interface GitOperationProgress {

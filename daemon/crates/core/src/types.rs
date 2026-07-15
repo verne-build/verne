@@ -105,6 +105,7 @@ pub struct GitStatus {
     pub upstream: Option<String>,
     pub has_remote: bool,
     pub default_remote: Option<String>,
+    pub is_repo: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

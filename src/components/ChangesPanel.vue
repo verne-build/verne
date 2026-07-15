@@ -55,6 +55,7 @@ import {
   Check,
   Loader2,
   ChevronDown,
+  TriangleAlert,
 } from "@lucide/vue";
 import { toast } from "vue-sonner";
 import type { GitStatus, GitFileEntry, GitOperationProgress } from "@/types";
@@ -128,6 +129,7 @@ const status = ref<GitStatus | null>(initialCachedStatus);
 const commitMessage = ref("");
 const loading = ref(!initialCachedStatus);
 const noRepo = ref(false);
+const statusError = ref<string | null>(null);
 const commitError = ref("");
 const stagedOpen = ref(true);
 const changesOpen = ref(true);
@@ -366,13 +368,14 @@ async function refresh() {
     status.value = s;
     gitStatusCache.set(workingDir, s);
     emit("statusChanged", s);
-    noRepo.value = false;
+    noRepo.value = s.isRepo === false;
+    statusError.value = null;
     void updateVirtualLayout();
   } catch (e) {
     if (generation !== refreshGeneration || workingDir !== props.workingDir) return;
     console.error("git status:", e);
     emit("statusChanged", null);
-    if (!status.value) noRepo.value = true;
+    statusError.value = String(e);
   } finally {
     if (generation === refreshGeneration && workingDir === props.workingDir) {
       loading.value = false;
@@ -536,7 +539,8 @@ onMounted(async () => {
   status.value = gitStatusCache.get(props.workingDir) ?? null;
   emit("statusChanged", status.value);
   loading.value = !status.value;
-  noRepo.value = false;
+  noRepo.value = status.value?.isRepo === false;
+  statusError.value = null;
   restoreGitProgressToast(props.workingDir);
   request.setSourceControlVisible({ visible: true }).catch(() => {});
   await request.gitWatch({ path: props.workingDir });
@@ -592,7 +596,8 @@ watch(
     status.value = cached;
     emit("statusChanged", cached);
     loading.value = !cached;
-    noRepo.value = false;
+    noRepo.value = cached?.isRepo === false;
+    statusError.value = null;
     restoreGitProgressToast(newPath);
     request.gitWatch({ path: newPath });
     if (!shouldSkipImmediateRefresh(newPath)) {
@@ -639,6 +644,25 @@ watch(
             <Loader2 v-if="initializing" class="size-4 animate-spin" />
             Initialize Repository
           </Button>
+        </EmptyContent>
+      </Empty>
+    </div>
+
+    <!-- Status failed to load (transient error) -->
+    <div
+      v-else-if="!loading && statusError && !noRepo"
+      class="h-full flex items-center justify-center"
+    >
+      <Empty>
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <TriangleAlert class="size-5" />
+          </EmptyMedia>
+          <EmptyTitle class="text-base">Couldn't Load Status</EmptyTitle>
+          <EmptyDescription>The Git status couldn't be read. This is usually temporary.</EmptyDescription>
+        </EmptyHeader>
+        <EmptyContent>
+          <Button size="sm" tabindex="0" @click="refresh">Retry</Button>
         </EmptyContent>
       </Empty>
     </div>

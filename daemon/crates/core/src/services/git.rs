@@ -143,6 +143,7 @@ pub fn status(path: &str) -> Result<GitStatus, String> {
             upstream: None,
             has_remote: false,
             default_remote: None,
+            is_repo: false,
         });
     }
     status_git2(path)
@@ -282,6 +283,7 @@ fn status_git2(path: &str) -> Result<GitStatus, String> {
         upstream,
         has_remote,
         default_remote,
+        is_repo: true,
     })
 }
 

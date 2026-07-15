@@ -584,6 +584,7 @@ mod tests {
             upstream: None,
             has_remote: false,
             default_remote: None,
+            is_repo: true,
         }
     }
 
