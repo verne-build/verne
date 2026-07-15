@@ -125,12 +125,21 @@ fn manifest_matches_golden_table() {
         {
             mismatches.push(format!(
                 "{}::{} want={:?}/{}/{} got={:?}/{}/{}",
-                case.key, case.label,
-                case.want_state, case.want_blocker, case.want_working,
-                got.state, got.visible_blocker, got.visible_working,
+                case.key,
+                case.label,
+                case.want_state,
+                case.want_blocker,
+                case.want_working,
+                got.state,
+                got.visible_blocker,
+                got.visible_working,
             ));
         }
     }
-    assert!(mismatches.is_empty(), "parity mismatches:\n{}", mismatches.join("\n"));
+    assert!(
+        mismatches.is_empty(),
+        "parity mismatches:\n{}",
+        mismatches.join("\n")
+    );
     assert!(CASES.len() >= 9, "corpus shrank unexpectedly");
 }

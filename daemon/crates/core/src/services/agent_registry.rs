@@ -195,7 +195,14 @@ mod tests {
             assert_eq!(get(key).map(|a| a.hooks), Some(want), "{key}");
         };
         // FullLifecycle: reliable start+stop lifecycle hooks/plugins installed.
-        for k in ["claude", "codex", "copilot", "antigravity", "opencode", "pi"] {
+        for k in [
+            "claude",
+            "codex",
+            "copilot",
+            "antigravity",
+            "opencode",
+            "pi",
+        ] {
             expect(k, FullLifecycle);
         }
         // Identity: hooks installed but partial lifecycle (cursor: shell-exec only).
@@ -218,7 +225,15 @@ mod tests {
         installed.sort_unstable();
         assert_eq!(
             installed,
-            ["antigravity", "claude", "codex", "copilot", "cursor", "opencode", "pi"]
+            [
+                "antigravity",
+                "claude",
+                "codex",
+                "copilot",
+                "cursor",
+                "opencode",
+                "pi"
+            ]
         );
     }
 
@@ -239,7 +254,10 @@ mod tests {
         use crate::services::detect::AgentState;
         let blocked = "─────\nDo you want to proceed?\n❯ 1. Yes\n  2. No\nesc to cancel";
         assert_eq!(detect("claude", blocked).state, AgentState::Blocked);
-        assert_eq!(detect("gemini", "│ Apply this change\n❯ Yes\nEsc to cancel").state, AgentState::Blocked);
+        assert_eq!(
+            detect("gemini", "│ Apply this change\n❯ Yes\nEsc to cancel").state,
+            AgentState::Blocked
+        );
     }
 
     #[test]

@@ -19,7 +19,11 @@ fn s(v: Option<&serde_json::Value>) -> String {
 
 fn opt_s(v: Option<&serde_json::Value>) -> Option<String> {
     v.and_then(|x| {
-        if x.is_null() { None } else { x.as_str().map(|s| s.to_string()) }
+        if x.is_null() {
+            None
+        } else {
+            x.as_str().map(|s| s.to_string())
+        }
     })
 }
 
@@ -41,7 +45,11 @@ fn git_files(req: &Request) -> Vec<String> {
     req.params
         .get("files")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -58,7 +66,11 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
         }
         "__debug_hook_secret" => {
             if cfg!(debug_assertions) {
-                let secret = state.hook_secret.lock().map(|g| g.clone()).unwrap_or_default();
+                let secret = state
+                    .hook_secret
+                    .lock()
+                    .map(|g| g.clone())
+                    .unwrap_or_default();
                 Response::ok(req.id, serde_json::json!(secret))
             } else {
                 Response::err(req.id, "debug method disabled in release build".to_string())
@@ -82,10 +94,13 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
             let result: Result<crate::types::SidecarDiagnostics, String> = (|| {
                 let (file_watchers, directory_watchers) = {
                     let w = state.file_watchers.lock().map_err(|e| e.to_string())?;
-                    (w.keys().filter(|k| !k.starts_with("dir:")).count() as u32,
-                     w.keys().filter(|k| k.starts_with("dir:")).count() as u32)
+                    (
+                        w.keys().filter(|k| !k.starts_with("dir:")).count() as u32,
+                        w.keys().filter(|k| k.starts_with("dir:")).count() as u32,
+                    )
                 };
-                let git_watchers = state.git_watchers.lock().map_err(|e| e.to_string())?.len() as u32;
+                let git_watchers =
+                    state.git_watchers.lock().map_err(|e| e.to_string())?.len() as u32;
                 let (cached_file_indexes, cached_file_paths) = {
                     let c = state.picker_cache.lock().map_err(|e| e.to_string())?;
                     let paths: u32 = c
@@ -105,9 +120,14 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
                 Ok(crate::types::SidecarDiagnostics {
                     sidecar_pid: std::process::id(),
                     agent_count: 0,
-                    file_watchers, directory_watchers, git_watchers,
-                    cached_file_indexes, cached_file_paths,
-                    source_control_visible: state.source_control_visible.load(std::sync::atomic::Ordering::Relaxed),
+                    file_watchers,
+                    directory_watchers,
+                    git_watchers,
+                    cached_file_indexes,
+                    cached_file_paths,
+                    source_control_visible: state
+                        .source_control_visible
+                        .load(std::sync::atomic::Ordering::Relaxed),
                 })
             })();
             match result {
@@ -133,7 +153,9 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
         m if m == crate::protocol::methods::GIT_STATUS => {
             let path = s(req.params.get("path"));
             let emitter = crate::emitter::Emitter::daemon(state.event_bus.clone());
-            let visible = state.source_control_visible.load(std::sync::atomic::Ordering::Relaxed);
+            let visible = state
+                .source_control_visible
+                .load(std::sync::atomic::Ordering::Relaxed);
             let handle = match crate::services::git_worker::handle_for_path(
                 &state.git_workers,
                 &emitter,
@@ -232,7 +254,11 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
         m if m == crate::protocol::methods::GIT_DIFF => {
             let path = s(req.params.get("path"));
             let file = s(req.params.get("file"));
-            let staged = req.params.get("staged").and_then(|v| v.as_bool()).unwrap_or(false);
+            let staged = req
+                .params
+                .get("staged")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             let handle = match git_handle(&state, &path) {
                 Ok(h) => h,
                 Err(e) => return Response::err(req.id, e),
@@ -244,7 +270,11 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
         }
         m if m == crate::protocol::methods::GIT_COMMIT_LOG => {
             let path = s(req.params.get("path"));
-            let count = req.params.get("count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            let count = req
+                .params
+                .get("count")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as usize;
             let skip = req.params.get("skip").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
             let res = tokio::task::spawn_blocking(move || {
                 crate::services::git::commit_log(&path, count, skip)
@@ -327,11 +357,10 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
         }
         m if m == crate::protocol::methods::GIT_LIST_BRANCHES => {
             let path = s(req.params.get("path"));
-            let res = tokio::task::spawn_blocking(move || {
-                crate::services::git::list_branches(&path)
-            })
-            .await
-            .map_err(|e| format!("git list_branches task failed: {e}"));
+            let res =
+                tokio::task::spawn_blocking(move || crate::services::git::list_branches(&path))
+                    .await
+                    .map_err(|e| format!("git list_branches task failed: {e}"));
             match res {
                 Ok(Ok(branches)) => Response::ok(req.id, serde_json::to_value(branches).unwrap()),
                 Ok(Err(e)) => Response::err(req.id, e),
@@ -383,11 +412,22 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
         m if m == crate::protocol::methods::GIT_CHECKOUT_BRANCH => {
             let path = s(req.params.get("path"));
             let name = s(req.params.get("name"));
-            let is_remote = req.params.get("isRemote").and_then(|v| v.as_bool()).unwrap_or(false);
+            let is_remote = req
+                .params
+                .get("isRemote")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             let remote_ref = opt_s(req.params.get("remoteRef"));
             let res = tokio::task::spawn_blocking({
                 let path = path.clone();
-                move || crate::services::git::checkout_branch(&path, &name, is_remote, remote_ref.as_deref())
+                move || {
+                    crate::services::git::checkout_branch(
+                        &path,
+                        &name,
+                        is_remote,
+                        remote_ref.as_deref(),
+                    )
+                }
             })
             .await
             .map_err(|e| format!("git checkout_branch task failed: {e}"));
@@ -535,12 +575,16 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
             let worker = match git_handle(&state, &path) {
                 Ok(w) => w,
                 Err(e) => {
-                    if let Ok(mut w) = state.git_watchers.lock() { w.remove(&path); }
+                    if let Ok(mut w) = state.git_watchers.lock() {
+                        w.remove(&path);
+                    }
                     return Response::err(req.id, e);
                 }
             };
             if let Err(e) = worker.register_watch(path.clone()) {
-                if let Ok(mut w) = state.git_watchers.lock() { w.remove(&path); }
+                if let Ok(mut w) = state.git_watchers.lock() {
+                    w.remove(&path);
+                }
                 return Response::err(req.id, e);
             }
             // Status refresh is driven solely by the worker's own poll timer
@@ -569,7 +613,11 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
             Response::ok(req.id, serde_json::Value::Null)
         }
         m if m == crate::protocol::methods::SET_SOURCE_CONTROL_VISIBLE => {
-            let visible = req.params.get("visible").and_then(|v| v.as_bool()).unwrap_or(false);
+            let visible = req
+                .params
+                .get("visible")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             state
                 .source_control_visible
                 .store(visible, std::sync::atomic::Ordering::Relaxed);
@@ -616,8 +664,11 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
             let state = state.clone();
             let result = tokio::task::spawn_blocking(move || {
                 crate::services::worktrees::create_workspace_worktree_git(
-                    &*state, &parent_path, default_base_ref.as_deref(),
-                    &parent_directory_id, &branch,
+                    &*state,
+                    &parent_path,
+                    default_base_ref.as_deref(),
+                    &parent_directory_id,
+                    &branch,
                 )
             })
             .await
@@ -631,10 +682,16 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
         m if m == crate::protocol::methods::WORKTREE_REMOVE_GIT => {
             let parent_path = s(req.params.get("parentPath"));
             let dir_path = s(req.params.get("dirPath"));
-            let force = req.params.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
+            let force = req
+                .params
+                .get("force")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             let result = tokio::task::spawn_blocking(move || {
                 crate::services::worktrees::remove_workspace_worktree_git(
-                    &parent_path, &dir_path, force,
+                    &parent_path,
+                    &dir_path,
+                    force,
                 )
             })
             .await
@@ -651,7 +708,9 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
             let branch = s(req.params.get("branch"));
             let result = tokio::task::spawn_blocking(move || {
                 crate::services::worktrees::rename_workspace_worktree_branch_git(
-                    &parent_path, &dir_path, &branch,
+                    &parent_path,
+                    &dir_path,
+                    &branch,
                 )
             })
             .await
@@ -688,9 +747,15 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
             }
         }
         m if m == crate::protocol::methods::UPDATE_SETTINGS => {
-            let settings = req.params.get("settings").cloned().unwrap_or(serde_json::Value::Null);
+            let settings = req
+                .params
+                .get("settings")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
             let updated = state.settings.update(&settings);
-            state.event_bus.emit("settings-changed", serde_json::Value::Null);
+            state
+                .event_bus
+                .emit("settings-changed", serde_json::Value::Null);
             Response::ok(req.id, serde_json::to_value(updated).unwrap())
         }
         m if m == crate::protocol::methods::SET_CONFIG => {
@@ -702,30 +767,36 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
             Response::ok(req.id, serde_json::Value::Null)
         }
         m if m == crate::protocol::methods::LIST_USER_THEMES => {
-            let result = tokio::task::spawn_blocking(move || -> Result<Vec<serde_json::Value>, String> {
-                let dir = crate::paths::user_data_dir().join("themes");
-                std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-                let mut themes = Vec::new();
-                for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())?.flatten() {
-                    let path = entry.path();
-                    if path.extension().is_some_and(|e| e == "json") {
-                        if let Ok(json) = std::fs::read_to_string(&path) {
-                            let is_verne = serde_json::from_str::<serde_json::Value>(&json)
-                                .ok()
-                                .and_then(|v| v.get("$schema").and_then(|s| s.as_str()).map(String::from))
-                                .is_some_and(|s| s == "verne-theme/v1");
-                            if !is_verne {
-                                continue;
+            let result =
+                tokio::task::spawn_blocking(move || -> Result<Vec<serde_json::Value>, String> {
+                    let dir = crate::paths::user_data_dir().join("themes");
+                    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+                    let mut themes = Vec::new();
+                    for entry in std::fs::read_dir(&dir)
+                        .map_err(|e| e.to_string())?
+                        .flatten()
+                    {
+                        let path = entry.path();
+                        if path.extension().is_some_and(|e| e == "json") {
+                            if let Ok(json) = std::fs::read_to_string(&path) {
+                                let is_verne = serde_json::from_str::<serde_json::Value>(&json)
+                                    .ok()
+                                    .and_then(|v| {
+                                        v.get("$schema").and_then(|s| s.as_str()).map(String::from)
+                                    })
+                                    .is_some_and(|s| s == "verne-theme/v1");
+                                if !is_verne {
+                                    continue;
+                                }
+                                let name = path.file_stem().unwrap().to_string_lossy().to_string();
+                                themes.push(serde_json::json!({ "name": name, "json": json }));
                             }
-                            let name = path.file_stem().unwrap().to_string_lossy().to_string();
-                            themes.push(serde_json::json!({ "name": name, "json": json }));
                         }
                     }
-                }
-                Ok(themes)
-            })
-            .await
-            .map_err(|e| format!("theme list task failed: {e}"));
+                    Ok(themes)
+                })
+                .await
+                .map_err(|e| format!("theme list task failed: {e}"));
             match result {
                 Ok(Ok(v)) => Response::ok(req.id, serde_json::Value::Array(v)),
                 Ok(Err(e)) => Response::err(req.id, e),
@@ -765,13 +836,14 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
         m if m == crate::protocol::methods::NOTES_CREATE => {
             let workspace_root = s(req.params.get("workspaceRoot"));
             let title = s(req.params.get("title"));
-            let result = tokio::task::spawn_blocking(move || -> Result<crate::notes::NoteMeta, String> {
-                let dir = notes_dir_for(&workspace_root);
-                let slug = crate::notes::create(&dir, &title, "")?;
-                Ok(crate::notes::NoteMeta { slug, title })
-            })
-            .await
-            .map_err(|e| format!("notes_create task failed: {e}"));
+            let result =
+                tokio::task::spawn_blocking(move || -> Result<crate::notes::NoteMeta, String> {
+                    let dir = notes_dir_for(&workspace_root);
+                    let slug = crate::notes::create(&dir, &title, "")?;
+                    Ok(crate::notes::NoteMeta { slug, title })
+                })
+                .await
+                .map_err(|e| format!("notes_create task failed: {e}"));
             match result {
                 Ok(Ok(v)) => Response::ok(req.id, serde_json::to_value(v).unwrap()),
                 Ok(Err(e)) => Response::err(req.id, e),
@@ -813,14 +885,15 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
             let path = s(req.params.get("path"));
             // Blocking fs off the async workers — a slow/stalled disk must not
             // tie up a runtime thread (would wedge every other request).
-            let result = tokio::task::spawn_blocking(move || -> Result<serde_json::Value, String> {
-                // Language detection lives in the renderer (src/lib/languageDetect.ts),
-                // which leans on Shiki's filename table shared with the diffs view.
-                let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-                Ok(serde_json::json!({ "content": content }))
-            })
-            .await
-            .map_err(|e| format!("read_file task failed: {e}"));
+            let result =
+                tokio::task::spawn_blocking(move || -> Result<serde_json::Value, String> {
+                    // Language detection lives in the renderer (src/lib/languageDetect.ts),
+                    // which leans on Shiki's filename table shared with the diffs view.
+                    let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+                    Ok(serde_json::json!({ "content": content }))
+                })
+                .await
+                .map_err(|e| format!("read_file task failed: {e}"));
             match result {
                 Ok(Ok(v)) => Response::ok(req.id, v),
                 Ok(Err(e)) => Response::err(req.id, e),
@@ -833,22 +906,25 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
             let state = state.clone();
             // Blocking fs off the async workers — a slow/stalled disk must not
             // tie up a runtime thread (would wedge every other request).
-            let result = tokio::task::spawn_blocking(move || -> Result<serde_json::Value, String> {
-                std::fs::write(&path, &content).map_err(|e| e.to_string())?;
-                if std::path::Path::new(&path) == crate::settings::settings_path() {
-                    state.settings.invalidate();
-                    state.event_bus.emit("settings-changed", serde_json::Value::Null);
-                }
-                let mtime = std::fs::metadata(&path)
-                    .ok()
-                    .and_then(|m| m.modified().ok())
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| d.as_millis() as i64)
-                    .unwrap_or(0);
-                Ok(serde_json::json!({ "ok": true, "mtime": mtime }))
-            })
-            .await
-            .map_err(|e| format!("write_file task failed: {e}"));
+            let result =
+                tokio::task::spawn_blocking(move || -> Result<serde_json::Value, String> {
+                    std::fs::write(&path, &content).map_err(|e| e.to_string())?;
+                    if std::path::Path::new(&path) == crate::settings::settings_path() {
+                        state.settings.invalidate();
+                        state
+                            .event_bus
+                            .emit("settings-changed", serde_json::Value::Null);
+                    }
+                    let mtime = std::fs::metadata(&path)
+                        .ok()
+                        .and_then(|m| m.modified().ok())
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_millis() as i64)
+                        .unwrap_or(0);
+                    Ok(serde_json::json!({ "ok": true, "mtime": mtime }))
+                })
+                .await
+                .map_err(|e| format!("write_file task failed: {e}"));
             match result {
                 Ok(Ok(v)) => Response::ok(req.id, v),
                 Ok(Err(e)) => Response::err(req.id, e),
@@ -906,18 +982,19 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
         }
         m if m == crate::protocol::methods::GET_FILE_MTIME => {
             let path = s(req.params.get("path"));
-            let result = tokio::task::spawn_blocking(move || -> Result<serde_json::Value, String> {
-                let mtime = std::fs::metadata(&path)
-                    .map_err(|e| e.to_string())?
-                    .modified()
-                    .map_err(|e| e.to_string())?
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map_err(|e| e.to_string())?
-                    .as_millis() as i64;
-                Ok(serde_json::json!({ "mtime": mtime }))
-            })
-            .await
-            .map_err(|e| format!("get_file_mtime task failed: {e}"));
+            let result =
+                tokio::task::spawn_blocking(move || -> Result<serde_json::Value, String> {
+                    let mtime = std::fs::metadata(&path)
+                        .map_err(|e| e.to_string())?
+                        .modified()
+                        .map_err(|e| e.to_string())?
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_err(|e| e.to_string())?
+                        .as_millis() as i64;
+                    Ok(serde_json::json!({ "mtime": mtime }))
+                })
+                .await
+                .map_err(|e| format!("get_file_mtime task failed: {e}"));
             match result {
                 Ok(Ok(v)) => Response::ok(req.id, v),
                 Ok(Err(e)) => Response::err(req.id, e),
@@ -927,10 +1004,15 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
         m if m == crate::protocol::methods::PASTE_PATH => {
             let source = s(req.params.get("source"));
             let target_dir = s(req.params.get("targetDir"));
-            let cut = req.params.get("cut").and_then(|v| v.as_bool()).unwrap_or(false);
-            let res = tokio::task::spawn_blocking(move || paste_path_impl(&source, &target_dir, cut))
-                .await
-                .map_err(|e| format!("paste_path task failed: {e}"));
+            let cut = req
+                .params
+                .get("cut")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let res =
+                tokio::task::spawn_blocking(move || paste_path_impl(&source, &target_dir, cut))
+                    .await
+                    .map_err(|e| format!("paste_path task failed: {e}"));
             match res {
                 Ok(Ok(v)) => Response::ok(req.id, v),
                 Ok(Err(e)) => Response::err(req.id, e),
@@ -976,11 +1058,10 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
             let query = s(req.params.get("query"));
             // Recency now native to FFF's frecency tracker; no recency arg.
             let state = state.clone();
-            let result = tokio::task::spawn_blocking(move || {
-                search_files_impl(&state, &dir, &query)
-            })
-            .await
-            .map_err(|e| format!("search_files task failed: {e}"));
+            let result =
+                tokio::task::spawn_blocking(move || search_files_impl(&state, &dir, &query))
+                    .await
+                    .map_err(|e| format!("search_files task failed: {e}"));
             match result {
                 Ok(Ok(v)) => Response::ok(req.id, v),
                 Ok(Err(e)) => Response::err(req.id, e),
@@ -1027,11 +1108,10 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
         m if m == crate::protocol::methods::LIST_DIRECTORY_PATHS => {
             let partial = s(req.params.get("partial"));
             let state = state.clone();
-            let res = tokio::task::spawn_blocking(move || {
-                list_directory_paths_impl(&state, &partial)
-            })
-            .await
-            .map_err(|e| format!("list_directory_paths task failed: {e}"));
+            let res =
+                tokio::task::spawn_blocking(move || list_directory_paths_impl(&state, &partial))
+                    .await
+                    .map_err(|e| format!("list_directory_paths task failed: {e}"));
             match res {
                 Ok(Ok(v)) => Response::ok(req.id, v),
                 Ok(Err(e)) => Response::err(req.id, e),
@@ -1041,11 +1121,10 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
         m if m == crate::protocol::methods::PREWARM_FILE_INDEX => {
             let dir = s(req.params.get("dir"));
             let state = state.clone();
-            let result = tokio::task::spawn_blocking(move || {
-                ensure_dir_picker(&state, &dir).map(|_| ())
-            })
-            .await
-            .map_err(|e| format!("prewarm_file_index task failed: {e}"));
+            let result =
+                tokio::task::spawn_blocking(move || ensure_dir_picker(&state, &dir).map(|_| ()))
+                    .await
+                    .map_err(|e| format!("prewarm_file_index task failed: {e}"));
             match result {
                 Ok(Ok(())) => Response::ok(req.id, serde_json::Value::Null),
                 Ok(Err(e)) => Response::err(req.id, e),
@@ -1135,7 +1214,9 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
             let disk_content = s(req.params.get("diskContent"));
             let state = state.clone();
             let result = tokio::task::spawn_blocking(move || {
-                shadow_with_tree(&state, &dir, |tree| tree.diff_file(&rel_path, &disk_content))
+                shadow_with_tree(&state, &dir, |tree| {
+                    tree.diff_file(&rel_path, &disk_content)
+                })
             })
             .await
             .map_err(|e| format!("shadow_diff task failed: {e}"));
@@ -1214,19 +1295,28 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
             Response::ok(req.id, serde_json::to_value(agents).unwrap())
         }
         m if m == crate::protocol::methods::MCP_AGENT_STATUS => {
-            let agent = req.params.get("agent").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-            let result = tokio::task::spawn_blocking(move || -> Result<serde_json::Value, String> {
-                if agent.is_empty() {
-                    Ok(serde_json::to_value(crate::services::mcp_agents::status_all()).unwrap())
-                } else {
-                    match crate::services::mcp_agents::status_one(&agent) {
-                        Some(status) => Ok(serde_json::to_value(status).unwrap()),
-                        None => Err("unknown agent".to_string()),
+            let agent = req
+                .params
+                .get("agent")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let result =
+                tokio::task::spawn_blocking(move || -> Result<serde_json::Value, String> {
+                    if agent.is_empty() {
+                        Ok(
+                            serde_json::to_value(crate::services::mcp_agents::status_all())
+                                .unwrap(),
+                        )
+                    } else {
+                        match crate::services::mcp_agents::status_one(&agent) {
+                            Some(status) => Ok(serde_json::to_value(status).unwrap()),
+                            None => Err("unknown agent".to_string()),
+                        }
                     }
-                }
-            })
-            .await
-            .map_err(|e| format!("mcp_agent_status task failed: {e}"));
+                })
+                .await
+                .map_err(|e| format!("mcp_agent_status task failed: {e}"));
             match result {
                 Ok(Ok(v)) => Response::ok(req.id, v),
                 Ok(Err(e)) => Response::err(req.id, e),
@@ -1301,9 +1391,10 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
         m if m == crate::protocol::methods::GET_WS_PORT => {
             Response::ok(req.id, serde_json::json!(state.ws_port))
         }
-        m if m == crate::protocol::methods::GET_HOME_PATH => {
-            Response::ok(req.id, serde_json::Value::String(state.home_dir.to_string_lossy().to_string()))
-        }
+        m if m == crate::protocol::methods::GET_HOME_PATH => Response::ok(
+            req.id,
+            serde_json::Value::String(state.home_dir.to_string_lossy().to_string()),
+        ),
         m if m == crate::protocol::methods::RESOLVE_REPO_ROOT => {
             let working_dir = s(req.params.get("workingDir"));
             Response::ok(
@@ -1319,21 +1410,32 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
             let working_dir = s(req.params.get("workingDir"));
             let event = s(req.params.get("event"));
             let tool_name = s(req.params.get("toolName"));
-            let tool_input = req.params.get("toolInput").cloned().unwrap_or(serde_json::Value::Null);
-            let agent_type = req.params.get("agentType").and_then(|v| v.as_str()).unwrap_or("claude").to_string();
+            let tool_input = req
+                .params
+                .get("toolInput")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            let agent_type = req
+                .params
+                .get("agentType")
+                .and_then(|v| v.as_str())
+                .unwrap_or("claude")
+                .to_string();
             let snapshotted = tokio::task::spawn_blocking({
                 let state = state.clone();
                 let agent_id = agent_id.clone();
-                move || crate::services::hook_server::agent_shadow_on_hook(
-                    &working_dir,
-                    &state.agent_shadows,
-                    &state.internal_data_dir,
-                    &agent_id,
-                    &event,
-                    &tool_name,
-                    &tool_input,
-                    &agent_type,
-                )
+                move || {
+                    crate::services::hook_server::agent_shadow_on_hook(
+                        &working_dir,
+                        &state.agent_shadows,
+                        &state.internal_data_dir,
+                        &agent_id,
+                        &event,
+                        &tool_name,
+                        &tool_input,
+                        &agent_type,
+                    )
+                }
             })
             .await
             .unwrap_or(false);
@@ -1349,13 +1451,19 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
         m if m == crate::protocol::methods::AGENT_SHADOW_RESYNC => {
             // Called by Electron on startup to re-baseline tracked files. Electron
             // supplies (agentId, workingDir) pairs from its tab rows — no sidecar DB.
-            let agent_dirs: Vec<(String, String)> = req.params.get("agentDirs")
+            let agent_dirs: Vec<(String, String)> = req
+                .params
+                .get("agentDirs")
                 .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|x| {
-                    let id = x.get("agentId")?.as_str()?.to_string();
-                    let wd = x.get("workingDir")?.as_str()?.to_string();
-                    Some((id, wd))
-                }).collect())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|x| {
+                            let id = x.get("agentId")?.as_str()?.to_string();
+                            let wd = x.get("workingDir")?.as_str()?.to_string();
+                            Some((id, wd))
+                        })
+                        .collect()
+                })
                 .unwrap_or_default();
             let state = state.clone();
             let _ = tokio::task::spawn_blocking(move || {
@@ -1378,7 +1486,6 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
 // commands/{files,file_search,file_watch}.rs against daemon AppState. The
 // file-index caching + gitignore logic is reproduced faithfully (perf path).
 // ============================================================================
-
 
 /// Mirror of `commands/files.rs::list_tree` (gitignore-aware single-level listing).
 fn list_tree_impl(state: &crate::state::AppState, dir: &str) -> Result<serde_json::Value, String> {
@@ -1464,7 +1571,11 @@ fn list_tree_impl(state: &crate::state::AppState, dir: &str) -> Result<serde_jso
         .collect();
     entries.sort_by(|a, b| {
         if a.is_dir != b.is_dir {
-            return if a.is_dir { std::cmp::Ordering::Less } else { std::cmp::Ordering::Greater };
+            return if a.is_dir {
+                std::cmp::Ordering::Less
+            } else {
+                std::cmp::Ordering::Greater
+            };
         }
         a.name.cmp(&b.name)
     });
@@ -1495,7 +1606,11 @@ fn paste_path_impl(source: &str, target_dir: &str, cut: bool) -> Result<serde_js
     let file_name = src.file_name().ok_or("Invalid source path")?;
     let mut dest = PathBuf::from(target_dir).join(file_name);
     if dest.exists() {
-        let stem = dest.file_stem().unwrap_or_default().to_string_lossy().to_string();
+        let stem = dest
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
         let ext = dest
             .extension()
             .map(|e| format!(".{}", e.to_string_lossy()))
@@ -1503,7 +1618,11 @@ fn paste_path_impl(source: &str, target_dir: &str, cut: bool) -> Result<serde_js
         let parent = dest.parent().unwrap().to_path_buf();
         let mut i = 1u32;
         loop {
-            let suffix = if i > 1 { format!(" {}", i) } else { String::new() };
+            let suffix = if i > 1 {
+                format!(" {}", i)
+            } else {
+                String::new()
+            };
             let candidate = if src.is_dir() {
                 parent.join(format!("{} copy{}", stem, suffix))
             } else {
@@ -1531,17 +1650,35 @@ fn find_project_icon_impl(dir: &str) -> Option<String> {
     use std::path::Path;
     let base = Path::new(dir);
     let candidates = [
-        "public/favicon.svg", "favicon.svg", "static/favicon.svg",
-        "public/apple-touch-icon.png", "apple-touch-icon.png",
-        "public/favicon.png", "public/icon.png", "favicon.png",
-        "app/icon.png", "src/app/icon.png", "src-tauri/icons/icon.png",
-        "build/icon.png", "resources/icon.png", "web/favicon.png",
-        "web/icons/Icon-192.png", "src/favicon.ico", "static/favicon.png",
-        "src/images/icon.png", "assets/icon.png", "assets/favicon.png",
-        "resources/images/favicon.ico", "app/assets/images/favicon.ico",
-        "app/assets/images/favicon.png", "static/images/favicon.ico",
-        "public/favicon.ico", "favicon.ico", "app/favicon.ico",
-        "static/favicon.ico", "src/assets/icon.png",
+        "public/favicon.svg",
+        "favicon.svg",
+        "static/favicon.svg",
+        "public/apple-touch-icon.png",
+        "apple-touch-icon.png",
+        "public/favicon.png",
+        "public/icon.png",
+        "favicon.png",
+        "app/icon.png",
+        "src/app/icon.png",
+        "src-tauri/icons/icon.png",
+        "build/icon.png",
+        "resources/icon.png",
+        "web/favicon.png",
+        "web/icons/Icon-192.png",
+        "src/favicon.ico",
+        "static/favicon.png",
+        "src/images/icon.png",
+        "assets/icon.png",
+        "assets/favicon.png",
+        "resources/images/favicon.ico",
+        "app/assets/images/favicon.ico",
+        "app/assets/images/favicon.png",
+        "static/images/favicon.ico",
+        "public/favicon.ico",
+        "favicon.ico",
+        "app/favicon.ico",
+        "static/favicon.ico",
+        "src/assets/icon.png",
     ];
     for candidate in candidates {
         let path = base.join(candidate);
@@ -1586,7 +1723,9 @@ fn ensure_dir_picker(
     shared.wait_for_scan(Duration::from_secs(10));
     cache.insert(
         dir.to_string(),
-        crate::state::DirPickerCache { picker: shared.clone() },
+        crate::state::DirPickerCache {
+            picker: shared.clone(),
+        },
     );
     Ok(shared)
 }
@@ -1642,7 +1781,10 @@ fn search_files_impl(
                 max_threads: 0,
                 current_file: None,
                 project_path: Some(base),
-                pagination: PaginationArgs { offset: 0, limit: 50 },
+                pagination: PaginationArgs {
+                    offset: 0,
+                    limit: 50,
+                },
                 ..Default::default()
             },
         );
@@ -1663,7 +1805,6 @@ fn search_files_impl(
     }
     Ok(json!({ "results": results }))
 }
-
 
 const CONTENT_SEARCH_MAX: usize = 500;
 const CONTENT_SEARCH_CONTEXT: usize = 200;
@@ -1726,10 +1867,7 @@ fn truncate_suffix(s: &str, max_bytes: usize) -> String {
 }
 
 fn split_match_segments(line: &str, match_byte_offsets: &[(u32, u32)]) -> (String, String, String) {
-    let (start, end) = match_byte_offsets
-        .first()
-        .copied()
-        .unwrap_or((0, 0));
+    let (start, end) = match_byte_offsets.first().copied().unwrap_or((0, 0));
     let start = start as usize;
     let end = end as usize;
     let pre = line.get(..start.min(line.len())).unwrap_or("").to_string();
@@ -1905,7 +2043,12 @@ fn watch_git_head(state: &Arc<crate::state::AppState>, root: &str) {
     // Dedup: never replace a live watcher for this root (dropping the old one
     // briefly drops its kernel watch). Mirrors the git_watchers dedup upstream.
     let key = format!("git-head:{root}");
-    if state.file_watchers.lock().map(|w| w.contains_key(&key)).unwrap_or(false) {
+    if state
+        .file_watchers
+        .lock()
+        .map(|w| w.contains_key(&key))
+        .unwrap_or(false)
+    {
         return;
     }
 
@@ -1936,7 +2079,10 @@ fn watch_git_head(state: &Arc<crate::state::AppState>, root: &str) {
     };
 
     if let Err(e) = watcher.watch(&git_dir, RecursiveMode::NonRecursive) {
-        log::warn!("watch_git_head: watch failed for {}: {e}", git_dir.display());
+        log::warn!(
+            "watch_git_head: watch failed for {}: {e}",
+            git_dir.display()
+        );
         return;
     }
     if let Ok(mut watchers) = state.file_watchers.lock() {
@@ -2014,7 +2160,10 @@ fn watch_directory_impl(state: &crate::state::AppState, path: String) -> Result<
                         | EventKind::Remove(_)
                         | EventKind::Modify(notify::event::ModifyKind::Name(_))
                 ) {
-                    bus.emit("directory-changed", serde_json::Value::String(emit_path.clone()));
+                    bus.emit(
+                        "directory-changed",
+                        serde_json::Value::String(emit_path.clone()),
+                    );
                 }
             }
         },
@@ -2036,16 +2185,10 @@ fn notes_dir_for(workspace_root: &str) -> std::path::PathBuf {
     crate::paths::notes_dir(workspace_root)
 }
 
-
-
 /// Get-or-create the per-dir `ShadowTree` and run `f` against it, mirroring
 /// `commands/shadow.rs::with_tree` but typed against daemon `AppState`. The
 /// shadow tree map persists across requests in the daemon.
-fn shadow_with_tree<T, F>(
-    state: &crate::state::AppState,
-    dir: &str,
-    f: F,
-) -> Result<T, String>
+fn shadow_with_tree<T, F>(state: &crate::state::AppState, dir: &str, f: F) -> Result<T, String>
 where
     F: FnOnce(&crate::services::shadow_tree::ShadowTree) -> Result<T, String>,
 {
@@ -2152,17 +2295,23 @@ mod search_content_tests {
 
         std::fs::create_dir(dir.path().join("ignored")).unwrap();
         std::fs::write(dir.path().join(".gitignore"), "ignored/\n").unwrap();
-        std::fs::write(dir.path().join("ignored").join("secret.txt"), "needle hidden").unwrap();
+        std::fs::write(
+            dir.path().join("ignored").join("secret.txt"),
+            "needle hidden",
+        )
+        .unwrap();
 
         let state = test_state();
         let dir_str = dir.path().to_str().unwrap();
-        let out = search_content_impl(&state, dir_str, "needle", false, "", "")
-            .unwrap();
+        let out = search_content_impl(&state, dir_str, "needle", false, "", "").unwrap();
         let results = out["results"].as_array().unwrap();
         assert_eq!(results.len(), 2);
         assert_eq!(results[0]["line"], 1);
         assert_eq!(results[1]["line"], 3);
-        assert!(results[0]["match"].as_str().unwrap().eq_ignore_ascii_case("needle"));
+        assert!(results[0]["match"]
+            .as_str()
+            .unwrap()
+            .eq_ignore_ascii_case("needle"));
     }
 
     #[test]

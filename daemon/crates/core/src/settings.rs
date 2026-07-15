@@ -37,7 +37,9 @@ pub fn load_from_disk() -> AppSettings {
                 if obj.contains_key("reviewAgent") {
                     let v = obj.remove("reviewAgent");
                     if !obj.contains_key("defaultAgent") {
-                        if let Some(v) = v { obj.insert("defaultAgent".into(), v); }
+                        if let Some(v) = v {
+                            obj.insert("defaultAgent".into(), v);
+                        }
                     }
                 }
 
@@ -51,7 +53,10 @@ pub fn load_from_disk() -> AppSettings {
                         Some("sovngarde") | None => "default-dark".to_string(),
                         Some(other) => other.to_string(),
                     };
-                    obj.insert("appearance".into(), serde_json::Value::String("dark".into()));
+                    obj.insert(
+                        "appearance".into(),
+                        serde_json::Value::String("dark".into()),
+                    );
                     obj.insert("darkTheme".into(), serde_json::Value::String(dark));
                     obj.insert("lightTheme".into(), serde_json::Value::Null);
                 } else {

@@ -6,9 +6,7 @@ pub fn region<'a>(content: &'a str, spec: &str) -> &'a str {
     match spec {
         "whole_recent" => content,
         "above_prompt_box" => content_above_prompt_box(content),
-        "last_non_empty_above_prompt_box" => {
-            last_non_empty_line(content_above_prompt_box(content))
-        }
+        "last_non_empty_above_prompt_box" => last_non_empty_line(content_above_prompt_box(content)),
         "after_last_horizontal_rule" => after_last_horizontal_rule(content),
         "prompt_box_body" => prompt_box_body(content),
         "after_last_prompt_marker" => after_last_prompt_marker(content),
@@ -75,7 +73,11 @@ fn bottom_non_empty_lines(content: &str, count: usize) -> &str {
 }
 
 fn last_non_empty_line(content: &str) -> &str {
-    content.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("")
+    content
+        .lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("")
 }
 
 fn is_horizontal_rule(line: &str) -> bool {

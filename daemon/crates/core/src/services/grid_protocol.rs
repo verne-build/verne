@@ -228,7 +228,12 @@ pub fn encode_snapshot(snap: &GridSnapshot) -> Vec<u8> {
     payload.extend_from_slice(&(snap.rows_cells.len() as u16).to_le_bytes());
     for (line, cells) in snap.rows_cells.iter().enumerate() {
         let wrapped = snap.rows_wrapped.get(line).copied().unwrap_or(false);
-        let run = RowRun { line: line as u16, start_col: 0, cells: cells.clone(), wrapped };
+        let run = RowRun {
+            line: line as u16,
+            start_col: 0,
+            cells: cells.clone(),
+            wrapped,
+        };
         encode_row_run(&mut payload, &run);
     }
     build_frame(&header, &payload)
@@ -260,7 +265,12 @@ pub fn encode_delta(delta: &GridDelta) -> Vec<u8> {
 /// rows `[from, from+rows.len())`; each entry is `(cells, wrapped)`. `base` is
 /// the server's eviction count when read, so the client can key each row by its
 /// stable absolute id (`base + from + i`) even if eviction has since shifted.
-pub fn encode_history(req_id: u64, from: usize, base: usize, rows: &[(Vec<WireCell>, bool)]) -> Vec<u8> {
+pub fn encode_history(
+    req_id: u64,
+    from: usize,
+    base: usize,
+    rows: &[(Vec<WireCell>, bool)],
+) -> Vec<u8> {
     let header = serde_json::json!({
         "type": "history",
         "reqId": req_id,
@@ -273,7 +283,12 @@ pub fn encode_history(req_id: u64, from: usize, base: usize, rows: &[(Vec<WireCe
     let mut payload = Vec::new();
     payload.extend_from_slice(&(rows.len() as u16).to_le_bytes());
     for (i, (cells, wrapped)) in rows.iter().enumerate() {
-        let run = RowRun { line: (from + i) as u16, start_col: 0, cells: cells.clone(), wrapped: *wrapped };
+        let run = RowRun {
+            line: (from + i) as u16,
+            start_col: 0,
+            cells: cells.clone(),
+            wrapped: *wrapped,
+        };
         encode_row_run(&mut payload, &run);
     }
     build_frame(&header, &payload)
@@ -369,10 +384,13 @@ mod measure {
     }
 
     fn report(name: &str, bytes: &[u8], cells: usize) {
-        let hdr_len =
-            u32::from_be_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]) as usize;
+        let hdr_len = u32::from_be_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]) as usize;
         let payload = bytes.len() - 5 - hdr_len;
-        let per_cell = if cells > 0 { payload as f64 / cells as f64 } else { 0.0 };
+        let per_cell = if cells > 0 {
+            payload as f64 / cells as f64
+        } else {
+            0.0
+        };
         println!(
             "[proto] {name:18} total {:7}B  hdr {:4}B  payload {:7}B  cells {:5}  {:.2} B/cell",
             bytes.len(),
@@ -391,9 +409,7 @@ mod measure {
             sink = sink.wrapping_add(enc(val).len());
         }
         let us = t.elapsed().as_secs_f64() * 1e6 / n as f64;
-        println!(
-            "[proto] {name:18} encode {us:.2} µs/frame  (n={n}, sink={sink})"
-        );
+        println!("[proto] {name:18} encode {us:.2} µs/frame  (n={n}, sink={sink})");
     }
 
     // ASCII word rotation for delta_flood
@@ -419,7 +435,11 @@ mod measure {
             let idx = (r * COLS + c) as u8;
             WireCell {
                 ch: ascii_word_char(r, c),
-                fg: WireColor::Rgb(idx, (idx / 2).wrapping_add(r as u8), (c as u8).wrapping_mul(3)),
+                fg: WireColor::Rgb(
+                    idx,
+                    (idx / 2).wrapping_add(r as u8),
+                    (c as u8).wrapping_mul(3),
+                ),
                 bg: WireColor::Rgb(
                     (idx).wrapping_add(64),
                     (r as u8).wrapping_mul(5),
@@ -434,10 +454,7 @@ mod measure {
         });
 
         // --- fixture 4: delta_typing (1 run, 12 cells) ---
-        let typing_cells: Vec<WireCell> = "hello, world"
-            .chars()
-            .map(|ch| plain_cell(ch))
-            .collect();
+        let typing_cells: Vec<WireCell> = "hello, world".chars().map(|ch| plain_cell(ch)).collect();
         let delta_typing = GridDelta {
             rev: 1,
             cursor: (0, 12),
@@ -551,7 +568,7 @@ mod measure {
             let deduped_payload_est = actual_payload
                 .saturating_sub(cells_snap * per_cell_uri_cost)
                 + per_cell_uri_cost  // one URI entry
-                + cells_snap * 2;   // 2B id per cell
+                + cells_snap * 2; // 2B id per cell
             println!(
                 "[proto] sync_hyperlink      actual_payload {:7}B  deduped_est {:7}B  saving {:7}B  ({:.1}%)",
                 actual_payload,
@@ -563,10 +580,9 @@ mod measure {
         }
 
         // --- Write fixture files ---
-        let fixtures_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../tests/fixtures/grid");
-        std::fs::create_dir_all(&fixtures_dir)
-            .expect("create fixtures dir");
+        let fixtures_dir =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures/grid");
+        std::fs::create_dir_all(&fixtures_dir).expect("create fixtures dir");
 
         let fixtures: &[(&str, &[u8], usize)] = &[
             ("sync_default", &enc_sync_default, cells_snap),
@@ -584,8 +600,7 @@ mod measure {
             manifest_entries.push(format!(r#"  {{"name": "{name}", "cells": {cells}}}"#));
         }
         let manifest = format!("[\n{}\n]\n", manifest_entries.join(",\n"));
-        std::fs::write(fixtures_dir.join("manifest.json"), manifest)
-            .expect("write manifest");
+        std::fs::write(fixtures_dir.join("manifest.json"), manifest).expect("write manifest");
     }
 }
 
@@ -601,7 +616,16 @@ mod tests {
     }
 
     fn one_cell(ch: char) -> WireCell {
-        WireCell { ch, fg: WireColor::Default, bg: WireColor::Default, flags: 0, width: 1, zerowidth: vec![], underline_color: None, hyperlink: None }
+        WireCell {
+            ch,
+            fg: WireColor::Default,
+            bg: WireColor::Default,
+            flags: 0,
+            width: 1,
+            zerowidth: vec![],
+            underline_color: None,
+            hyperlink: None,
+        }
     }
 
     #[test]
@@ -670,7 +694,10 @@ mod tests {
         // after u32 cp (0..4), fg (4), bg (5), flags (6..8), width (8): tail at 9
         let tail = &out[9..];
         assert_eq!(tail[0], 1);
-        assert_eq!(u32::from_le_bytes([tail[1], tail[2], tail[3], tail[4]]), 0x0301);
+        assert_eq!(
+            u32::from_le_bytes([tail[1], tail[2], tail[3], tail[4]]),
+            0x0301
+        );
     }
 
     #[test]
@@ -689,7 +716,12 @@ mod tests {
 
     #[test]
     fn encodes_row_run_header_then_cells() {
-        let run = RowRun { line: 3, start_col: 2, cells: vec![one_cell('Z')], wrapped: false };
+        let run = RowRun {
+            line: 3,
+            start_col: 2,
+            cells: vec![one_cell('Z')],
+            wrapped: false,
+        };
         let mut out = Vec::new();
         encode_row_run(&mut out, &run);
         // [u16 LE line=3][u16 LE start_col=2][u16 LE cellCount=1][u8 wrapped=0]
@@ -701,13 +733,26 @@ mod tests {
     #[test]
     fn wrapped_byte_position_and_value() {
         // wrapped=true → byte 1 at offset 6 (after u16 line, u16 start_col, u16 cellCount)
-        let run_w = RowRun { line: 0, start_col: 0, cells: vec![one_cell('A')], wrapped: true };
+        let run_w = RowRun {
+            line: 0,
+            start_col: 0,
+            cells: vec![one_cell('A')],
+            wrapped: true,
+        };
         let mut out = Vec::new();
         encode_row_run(&mut out, &run_w);
-        assert_eq!(out[6], 1, "wrapped=true must encode as byte 1 after cellCount");
+        assert_eq!(
+            out[6], 1,
+            "wrapped=true must encode as byte 1 after cellCount"
+        );
 
         // wrapped=false → byte 0
-        let run_f = RowRun { line: 0, start_col: 0, cells: vec![one_cell('A')], wrapped: false };
+        let run_f = RowRun {
+            line: 0,
+            start_col: 0,
+            cells: vec![one_cell('A')],
+            wrapped: false,
+        };
         let mut out2 = Vec::new();
         encode_row_run(&mut out2, &run_f);
         assert_eq!(out2[6], 0, "wrapped=false must encode as byte 0");
@@ -728,7 +773,14 @@ mod tests {
             cols: 4,
             rows: 1,
             cursor: (0, 2),
-            modes: WireModes { mouse_reporting: false, mouse_drag: false, mouse_motion: false, alt_screen: false, app_cursor: true, bracketed_paste: false },
+            modes: WireModes {
+                mouse_reporting: false,
+                mouse_drag: false,
+                mouse_motion: false,
+                alt_screen: false,
+                app_cursor: true,
+                bracketed_paste: false,
+            },
             total_lines: 9,
             base: 4,
             cursor_shape: "block",
@@ -781,12 +833,24 @@ mod tests {
         let delta = GridDelta {
             rev: 12,
             cursor: (1, 1),
-            modes: WireModes { mouse_reporting: true, mouse_drag: false, mouse_motion: false, alt_screen: false, app_cursor: false, bracketed_paste: false },
+            modes: WireModes {
+                mouse_reporting: true,
+                mouse_drag: false,
+                mouse_motion: false,
+                alt_screen: false,
+                app_cursor: false,
+                bracketed_paste: false,
+            },
             total_lines: 20,
             base: 0,
             cursor_shape: "beam",
             cursor_blink: true,
-            runs: vec![RowRun { line: 0, start_col: 0, cells: vec![one_cell('x')], wrapped: false }],
+            runs: vec![RowRun {
+                line: 0,
+                start_col: 0,
+                cells: vec![one_cell('x')],
+                wrapped: false,
+            }],
         };
         let frame = encode_delta(&delta);
         let (header, payload) = split_frame(&frame);

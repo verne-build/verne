@@ -9,7 +9,9 @@ pub trait WorktreeHost {
 }
 
 impl WorktreeHost for crate::state::AppState {
-    fn settings(&self) -> &crate::settings::SettingsManager { &self.settings }
+    fn settings(&self) -> &crate::settings::SettingsManager {
+        &self.settings
+    }
     fn evict_directory_resources(&self, id: &str, all_dirs: &[crate::types::WorkingDirectory]) {
         crate::state::AppState::evict_directory_resources(self, id, all_dirs)
     }
@@ -19,19 +21,86 @@ impl WorktreeHost for crate::state::AppState {
 // via deref in the impls above.
 
 pub const WORKTREE_NAME_POOL: &[&str] = &[
-    "magellan", "columbus", "drake", "cook", "shackleton", "amundsen", "scott",
-    "hillary", "cousteau", "darwin", "livingstone", "polo", "hudson", "vespucci",
-    "peary", "balboa", "raleigh", "cabot", "ericson", "frobisher",
-    "beagle", "endurance", "endeavour", "discovery", "resolution", "terranova",
-    "fram", "victoria", "mayflower", "bounty", "challenger", "calypso", "santamaria",
-    "apollo", "voyager", "pioneer", "sputnik", "cassini", "hubble", "juno",
-    "perseverance", "curiosity", "atlantis", "enterprise", "mariner", "viking", "rosetta",
-    "newton", "tesla", "edison", "faraday", "curie", "pasteur", "galileo", "kepler",
-    "copernicus", "halley", "herschel", "einstein",
-    "compass", "sextant", "astrolabe", "atlas", "telescope", "horizon", "beacon",
-    "polaris", "orion", "andromeda", "sirius",
-    "nemo", "nautilus", "fogg", "aronnax", "robur",
-    "marty", "doc", "delorean", "flux", "capacitor",
+    "magellan",
+    "columbus",
+    "drake",
+    "cook",
+    "shackleton",
+    "amundsen",
+    "scott",
+    "hillary",
+    "cousteau",
+    "darwin",
+    "livingstone",
+    "polo",
+    "hudson",
+    "vespucci",
+    "peary",
+    "balboa",
+    "raleigh",
+    "cabot",
+    "ericson",
+    "frobisher",
+    "beagle",
+    "endurance",
+    "endeavour",
+    "discovery",
+    "resolution",
+    "terranova",
+    "fram",
+    "victoria",
+    "mayflower",
+    "bounty",
+    "challenger",
+    "calypso",
+    "santamaria",
+    "apollo",
+    "voyager",
+    "pioneer",
+    "sputnik",
+    "cassini",
+    "hubble",
+    "juno",
+    "perseverance",
+    "curiosity",
+    "atlantis",
+    "enterprise",
+    "mariner",
+    "viking",
+    "rosetta",
+    "newton",
+    "tesla",
+    "edison",
+    "faraday",
+    "curie",
+    "pasteur",
+    "galileo",
+    "kepler",
+    "copernicus",
+    "halley",
+    "herschel",
+    "einstein",
+    "compass",
+    "sextant",
+    "astrolabe",
+    "atlas",
+    "telescope",
+    "horizon",
+    "beacon",
+    "polaris",
+    "orion",
+    "andromeda",
+    "sirius",
+    "nemo",
+    "nautilus",
+    "fogg",
+    "aronnax",
+    "robur",
+    "marty",
+    "doc",
+    "delorean",
+    "flux",
+    "capacitor",
 ];
 
 #[derive(Debug, Clone)]
@@ -151,10 +220,14 @@ pub fn slugify(input: &str) -> String {
             prev_dash = true;
         }
     }
-    while out.ends_with('-') { out.pop(); }
+    while out.ends_with('-') {
+        out.pop();
+    }
     if out.len() > 40 {
         out.truncate(40);
-        while out.ends_with('-') { out.pop(); }
+        while out.ends_with('-') {
+            out.pop();
+        }
     }
     out
 }
@@ -205,10 +278,7 @@ use crate::types::DirectorySettings;
 
 /// Resolve the base ref to branch a new worktree from.
 /// Precedence: per-directory override → origin/main → origin/master → HEAD fallback.
-pub fn resolve_base_ref(
-    repo: &git2::Repository,
-    dir_settings: &DirectorySettings,
-) -> BaseRef {
+pub fn resolve_base_ref(repo: &git2::Repository, dir_settings: &DirectorySettings) -> BaseRef {
     let candidates: Vec<String> = std::iter::once(dir_settings.default_base_ref.clone())
         .flatten()
         .filter(|s| !s.trim().is_empty())
@@ -245,7 +315,10 @@ pub fn create(
     }
 
     if let Some(workdir) = repo.workdir() {
-        let canon_path = path.parent().map(|p| p.to_path_buf()).unwrap_or(path.clone());
+        let canon_path = path
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or(path.clone());
         if canon_path.starts_with(workdir) {
             return Err(
                 "Worktrees root cannot live inside the repository — pick another location"
@@ -259,9 +332,7 @@ pub fn create(
             let obj = repo
                 .revparse_single(r)
                 .map_err(|e| format!("revparse {r}: {e}"))?;
-            let c = obj
-                .peel_to_commit()
-                .map_err(|e| format!("peel {r}: {e}"))?;
+            let c = obj.peel_to_commit().map_err(|e| format!("peel {r}: {e}"))?;
             (c, false)
         }
         BaseRef::HeadFallback => {
@@ -311,8 +382,8 @@ pub fn create_workspace_worktree_git(
         default_base_ref: default_base_ref.map(str::to_string),
     };
 
-    let repo = git2::Repository::discover(parent_path)
-        .map_err(|e| format!("not a git repo: {e}"))?;
+    let repo =
+        git2::Repository::discover(parent_path).map_err(|e| format!("not a git repo: {e}"))?;
     let repo_root = repo
         .workdir()
         .map(|p| p.to_string_lossy().trim_end_matches('/').to_string())
@@ -400,12 +471,14 @@ pub fn rename_workspace_worktree_branch_git(
         .and_then(|n| n.to_str())
         .ok_or_else(|| "worktree path has no leaf".to_string())?
         .to_string();
-    let wt = repo.find_worktree(&leaf)
+    let wt = repo
+        .find_worktree(&leaf)
         .map_err(|e| format!("find worktree: {e}"))?;
-    let wt_repo = git2::Repository::open_from_worktree(&wt)
-        .map_err(|e| format!("open worktree: {e}"))?;
+    let wt_repo =
+        git2::Repository::open_from_worktree(&wt).map_err(|e| format!("open worktree: {e}"))?;
     let head = wt_repo.head().map_err(|e| format!("head: {e}"))?;
-    let current_branch = head.shorthand()
+    let current_branch = head
+        .shorthand()
         .ok_or_else(|| "worktree HEAD not on a branch".to_string())?
         .to_string();
 
@@ -416,11 +489,15 @@ pub fn rename_workspace_worktree_branch_git(
     if new_branch == current_branch {
         return Ok(current_branch);
     }
-    if repo.find_branch(&new_branch, git2::BranchType::Local).is_ok() {
+    if repo
+        .find_branch(&new_branch, git2::BranchType::Local)
+        .is_ok()
+    {
         return Err(format!("branch '{}' already exists", new_branch));
     }
 
-    let mut br = repo.find_branch(&current_branch, git2::BranchType::Local)
+    let mut br = repo
+        .find_branch(&current_branch, git2::BranchType::Local)
         .map_err(|e| format!("find branch '{current_branch}': {e}"))?;
     br.rename(&new_branch, false)
         .map_err(|e| format!("rename branch: {e}"))?;

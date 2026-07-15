@@ -21,10 +21,20 @@ pub struct Response {
 
 impl Response {
     pub fn ok(id: u64, result: serde_json::Value) -> Self {
-        Self { id, result: Some(result), error: None }
+        Self {
+            id,
+            result: Some(result),
+            error: None,
+        }
     }
     pub fn err(id: u64, message: impl Into<String>) -> Self {
-        Self { id, result: None, error: Some(RpcError { message: message.into() }) }
+        Self {
+            id,
+            result: None,
+            error: Some(RpcError {
+                message: message.into(),
+            }),
+        }
     }
 }
 

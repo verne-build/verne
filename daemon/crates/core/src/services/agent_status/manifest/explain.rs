@@ -33,7 +33,14 @@ pub struct DetectionExplain {
 }
 
 impl DetectionExplain {
-    pub fn evaluated(id: &str, priority: i32, region: &str, state: AgentState, matched: bool, region_text: &str) -> EvaluatedRule {
+    pub fn evaluated(
+        id: &str,
+        priority: i32,
+        region: &str,
+        state: AgentState,
+        matched: bool,
+        region_text: &str,
+    ) -> EvaluatedRule {
         EvaluatedRule {
             id: id.to_string(),
             priority,

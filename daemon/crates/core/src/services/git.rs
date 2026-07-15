@@ -1,4 +1,6 @@
-use crate::types::{CommitFileEntry, CommitInfo, CommitLogResult, GitDiffResult, GitFileEntry, GitStatus};
+use crate::types::{
+    CommitFileEntry, CommitInfo, CommitLogResult, GitDiffResult, GitFileEntry, GitStatus,
+};
 use git2::Repository;
 use std::collections::HashMap;
 use std::path::Path;
@@ -25,7 +27,10 @@ fn git_cmd() -> std::process::Command {
 /// (push/pull/fetch) can otherwise hang indefinitely when a credential helper
 /// blocks on a prompt the backend can't satisfy — `GIT_TERMINAL_PROMPT=0` stops
 /// git's own prompt, this is the backstop for a wedged helper.
-fn run_git_timed(mut cmd: std::process::Command, secs: u64) -> Result<std::process::Output, String> {
+fn run_git_timed(
+    mut cmd: std::process::Command,
+    secs: u64,
+) -> Result<std::process::Output, String> {
     use std::io::Read;
     use std::process::Stdio;
     use std::time::{Duration, Instant};
@@ -49,7 +54,11 @@ fn run_git_timed(mut cmd: std::process::Command, secs: u64) -> Result<std::proce
             Some(status) => {
                 let stdout = so_h.join().unwrap_or_default();
                 let stderr = se_h.join().unwrap_or_default();
-                return Ok(std::process::Output { status, stdout, stderr });
+                return Ok(std::process::Output {
+                    status,
+                    stdout,
+                    stderr,
+                });
             }
             None if Instant::now() >= deadline => {
                 let _ = child.kill();
@@ -160,8 +169,7 @@ fn status_git2(path: &str) -> Result<GitStatus, String> {
     let repo = Repository::discover(path).map_err(|e| format!("git open: {e}"))?;
     let (current_branch, upstream, has_remote, default_remote) = branch_remote_meta(&repo);
     let mut opts = git2::StatusOptions::new();
-    opts.include_untracked(true)
-        .recurse_untracked_dirs(true);
+    opts.include_untracked(true).recurse_untracked_dirs(true);
 
     let statuses = repo
         .statuses(Some(&mut opts))
@@ -201,9 +209,7 @@ fn status_git2(path: &str) -> Result<GitStatus, String> {
 
             let is_binary = entry
                 .head_to_index()
-                .map(|d| {
-                    d.old_file().is_binary() || d.new_file().is_binary()
-                })
+                .map(|d| d.old_file().is_binary() || d.new_file().is_binary())
                 .unwrap_or(false);
 
             staged.push(GitFileEntry {
@@ -238,9 +244,7 @@ fn status_git2(path: &str) -> Result<GitStatus, String> {
 
             let is_binary = entry
                 .index_to_workdir()
-                .map(|d| {
-                    d.old_file().is_binary() || d.new_file().is_binary()
-                })
+                .map(|d| d.old_file().is_binary() || d.new_file().is_binary())
                 .unwrap_or(false);
 
             unstaged.push(GitFileEntry {
@@ -255,14 +259,17 @@ fn status_git2(path: &str) -> Result<GitStatus, String> {
 
         // Untracked
         if st.contains(git2::Status::WT_NEW) {
-            let is_binary = repo.workdir().map(|wd| {
-                let fp = wd.join(&path_str);
-                let mut buf = [0u8; 8192];
-                std::fs::File::open(&fp)
-                    .and_then(|mut f| std::io::Read::read(&mut f, &mut buf))
-                    .map(|n| buf[..n].contains(&0u8))
-                    .unwrap_or(false)
-            }).unwrap_or(false);
+            let is_binary = repo
+                .workdir()
+                .map(|wd| {
+                    let fp = wd.join(&path_str);
+                    let mut buf = [0u8; 8192];
+                    std::fs::File::open(&fp)
+                        .and_then(|mut f| std::io::Read::read(&mut f, &mut buf))
+                        .map(|n| buf[..n].contains(&0u8))
+                        .unwrap_or(false)
+                })
+                .unwrap_or(false);
 
             untracked.push(GitFileEntry {
                 path: path_str,
@@ -378,7 +385,12 @@ where
     let deleted: std::collections::HashSet<_> = repo
         .workdir()
         .into_iter()
-        .flat_map(|wd| files.iter().filter(move |file| !wd.join(file).exists()).cloned())
+        .flat_map(|wd| {
+            files
+                .iter()
+                .filter(move |file| !wd.join(file).exists())
+                .cloned()
+        })
         .collect();
     let pathspecs: Vec<&str> = files.iter().map(|file| file.as_str()).collect();
     let mut completed = 0usize;
@@ -395,12 +407,11 @@ where
         0
     };
 
-    let add_result = index
-        .add_all(
-            pathspecs.iter(),
-            git2::IndexAddOption::DEFAULT,
-            Some(&mut cb),
-        );
+    let add_result = index.add_all(
+        pathspecs.iter(),
+        git2::IndexAddOption::DEFAULT,
+        Some(&mut cb),
+    );
     if let Err(error) = add_result {
         if !should_cancel() {
             return Err(format!("stage all: {error}"));
@@ -474,7 +485,11 @@ where
     }
 }
 
-pub fn unstage_all_with_progress<F, C>(path: &str, on_progress: F, should_cancel: C) -> Result<(), String>
+pub fn unstage_all_with_progress<F, C>(
+    path: &str,
+    on_progress: F,
+    should_cancel: C,
+) -> Result<(), String>
 where
     F: FnMut(usize, usize),
     C: Fn() -> bool,
@@ -489,8 +504,7 @@ where
 
 fn collect_stage_all_files(repo: &Repository) -> Result<Vec<String>, String> {
     let mut opts = git2::StatusOptions::new();
-    opts.include_untracked(true)
-        .recurse_untracked_dirs(true);
+    opts.include_untracked(true).recurse_untracked_dirs(true);
     let statuses = repo
         .statuses(Some(&mut opts))
         .map_err(|e| format!("status: {e}"))?;
@@ -694,10 +708,14 @@ pub fn list_branches(path: &str) -> Result<Vec<crate::types::GitBranch>, String>
 
     for branch_result in repo.branches(None).map_err(|e| format!("branches: {e}"))? {
         let (branch, branch_type) = branch_result.map_err(|e| format!("branch iter: {e}"))?;
-        let Some(name) = branch.name().ok().flatten() else { continue };
+        let Some(name) = branch.name().ok().flatten() else {
+            continue;
+        };
 
         let is_remote = branch_type == git2::BranchType::Remote;
-        if is_remote && name.contains("/HEAD") { continue; }
+        if is_remote && name.contains("/HEAD") {
+            continue;
+        }
 
         let display_name = name.to_string();
 
@@ -707,9 +725,7 @@ pub fn list_branches(path: &str) -> Result<Vec<crate::types::GitBranch>, String>
             format!("refs/heads/{name}")
         };
 
-        let is_head = !is_remote
-            && head_target.is_some()
-            && branch.get().target() == head_target;
+        let is_head = !is_remote && head_target.is_some() && branch.get().target() == head_target;
 
         branches.push(crate::types::GitBranch {
             name: display_name,
@@ -719,22 +735,25 @@ pub fn list_branches(path: &str) -> Result<Vec<crate::types::GitBranch>, String>
         });
     }
 
-    branches.sort_by(|a, b| {
-        a.is_remote.cmp(&b.is_remote).then(a.name.cmp(&b.name))
-    });
+    branches.sort_by(|a, b| a.is_remote.cmp(&b.is_remote).then(a.name.cmp(&b.name)));
 
     Ok(branches)
 }
 
 /// Checkout a branch (local or remote tracking)
-pub fn checkout_branch(path: &str, name: &str, is_remote: bool, remote_ref: Option<&str>) -> Result<(), String> {
+pub fn checkout_branch(
+    path: &str,
+    name: &str,
+    is_remote: bool,
+    remote_ref: Option<&str>,
+) -> Result<(), String> {
     let repo_path = repo_key(path);
 
     let repo = Repository::discover(&repo_path).map_err(|e| format!("git open: {e}"))?;
     let statuses = repo.statuses(None).map_err(|e| format!("statuses: {e}"))?;
-    let dirty = statuses.iter().any(|s| {
-        !s.status().intersects(git2::Status::IGNORED)
-    });
+    let dirty = statuses
+        .iter()
+        .any(|s| !s.status().intersects(git2::Status::IGNORED));
     if dirty {
         return Err("Commit or stash your changes first".to_string());
     }
@@ -742,8 +761,16 @@ pub fn checkout_branch(path: &str, name: &str, is_remote: bool, remote_ref: Opti
     let args = if is_remote {
         // name is e.g. "origin/feature" — strip remote prefix for local branch name
         let local_name = name.splitn(2, '/').nth(1).unwrap_or(name);
-        let track = remote_ref.map(|r| r.to_string()).unwrap_or_else(|| name.to_string());
-        vec!["checkout".to_string(), "-b".to_string(), local_name.to_string(), "--track".to_string(), track]
+        let track = remote_ref
+            .map(|r| r.to_string())
+            .unwrap_or_else(|| name.to_string());
+        vec![
+            "checkout".to_string(),
+            "-b".to_string(),
+            local_name.to_string(),
+            "--track".to_string(),
+            track,
+        ]
     } else {
         vec!["checkout".to_string(), name.to_string()]
     };
@@ -858,10 +885,12 @@ pub fn git_publish(path: &str) -> Result<String, String> {
     if !has_remote {
         return Err("No remote configured for this repository".to_string());
     }
-    let remote = default_remote.ok_or_else(|| "No remote configured for this repository".to_string())?;
+    let remote =
+        default_remote.ok_or_else(|| "No remote configured for this repository".to_string())?;
     log::info!("git_publish: pushing HEAD to {remote} ({repo_path})");
     let mut cmd = git_cmd();
-    cmd.args(["push", "-u", &remote, "HEAD"]).current_dir(&repo_path);
+    cmd.args(["push", "-u", &remote, "HEAD"])
+        .current_dir(&repo_path);
     let output = run_git_timed(cmd, 120)?;
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stderr).trim().to_string())
@@ -892,7 +921,8 @@ pub fn git_force_push(path: &str) -> Result<String, String> {
     check_upstream(&repo_path)?;
     log::info!("git_force_push: {repo_path}");
     let mut cmd = git_cmd();
-    cmd.args(["push", "--force-with-lease"]).current_dir(&repo_path);
+    cmd.args(["push", "--force-with-lease"])
+        .current_dir(&repo_path);
     let output = run_git_timed(cmd, 120)?;
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stderr).trim().to_string())
@@ -948,7 +978,11 @@ pub fn commit_log(path: &str, count: usize, skip: usize) -> Result<CommitLogResu
 
     // Build OID -> ref names map (only HEAD, current branch, upstream, and tags)
     let mut ref_map: HashMap<git2::Oid, Vec<String>> = HashMap::new();
-    for reference in repo.references().map_err(|e| format!("refs: {e}"))?.flatten() {
+    for reference in repo
+        .references()
+        .map_err(|e| format!("refs: {e}"))?
+        .flatten()
+    {
         if let Some(target) = reference.target() {
             if let Some(name) = reference.shorthand() {
                 let fullname = reference.name().unwrap_or("");
@@ -965,7 +999,10 @@ pub fn commit_log(path: &str, count: usize, skip: usize) -> Result<CommitLogResu
     if let Ok(head) = repo.head() {
         if let Some(target) = head.target() {
             ref_map.entry(target).or_default().retain(|n| n != "HEAD");
-            ref_map.entry(target).or_default().insert(0, "HEAD".to_string());
+            ref_map
+                .entry(target)
+                .or_default()
+                .insert(0, "HEAD".to_string());
         }
     }
 
@@ -979,7 +1016,8 @@ pub fn commit_log(path: &str, count: usize, skip: usize) -> Result<CommitLogResu
             }
         }
     }
-    revwalk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::TIME)
+    revwalk
+        .set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::TIME)
         .map_err(|e| format!("sort: {e}"))?;
 
     let mut commits = Vec::new();
@@ -993,7 +1031,9 @@ pub fn commit_log(path: &str, count: usize, skip: usize) -> Result<CommitLogResu
         if commits.len() >= count + 1 {
             break;
         }
-        let commit = repo.find_commit(oid).map_err(|e| format!("find commit: {e}"))?;
+        let commit = repo
+            .find_commit(oid)
+            .map_err(|e| format!("find commit: {e}"))?;
         let id_str = oid.to_string();
         let short_id = id_str[..7.min(id_str.len())].to_string();
         let message = commit.summary().unwrap_or("").to_string();
@@ -1022,21 +1062,31 @@ pub fn commit_log(path: &str, count: usize, skip: usize) -> Result<CommitLogResu
 pub fn commit_files(path: &str, commit_id: &str) -> Result<Vec<CommitFileEntry>, String> {
     let repo = Repository::discover(path).map_err(|e| format!("git open: {e}"))?;
     let oid = git2::Oid::from_str(commit_id).map_err(|e| format!("parse oid: {e}"))?;
-    let commit = repo.find_commit(oid).map_err(|e| format!("find commit: {e}"))?;
+    let commit = repo
+        .find_commit(oid)
+        .map_err(|e| format!("find commit: {e}"))?;
     let commit_tree = commit.tree().map_err(|e| format!("commit tree: {e}"))?;
 
     let parent_tree = if commit.parent_count() > 0 {
-        Some(commit.parent(0).map_err(|e| format!("parent: {e}"))?.tree().map_err(|e| format!("parent tree: {e}"))?)
+        Some(
+            commit
+                .parent(0)
+                .map_err(|e| format!("parent: {e}"))?
+                .tree()
+                .map_err(|e| format!("parent tree: {e}"))?,
+        )
     } else {
         None
     };
 
     let mut diff_opts = git2::DiffOptions::new();
-    let diff = repo.diff_tree_to_tree(
-        parent_tree.as_ref(),
-        Some(&commit_tree),
-        Some(&mut diff_opts),
-    ).map_err(|e| format!("diff: {e}"))?;
+    let diff = repo
+        .diff_tree_to_tree(
+            parent_tree.as_ref(),
+            Some(&commit_tree),
+            Some(&mut diff_opts),
+        )
+        .map_err(|e| format!("diff: {e}"))?;
 
     let mut files: Vec<CommitFileEntry> = Vec::new();
     let current_added = std::cell::Cell::new(0u32);
@@ -1063,7 +1113,8 @@ pub fn commit_files(path: &str, commit_id: &str) -> Result<Vec<CommitFileEntry>,
             };
             let new_file = delta.new_file();
             let old_file = delta.old_file();
-            let file_path = new_file.path()
+            let file_path = new_file
+                .path()
                 .or_else(|| old_file.path())
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_default();
@@ -1094,7 +1145,8 @@ pub fn commit_files(path: &str, commit_id: &str) -> Result<Vec<CommitFileEntry>,
             }
             true
         }),
-    ).map_err(|e| format!("foreach: {e}"))?;
+    )
+    .map_err(|e| format!("foreach: {e}"))?;
 
     let idx = file_idx.get();
     if idx > 0 && idx <= files.len() {
@@ -1106,17 +1158,28 @@ pub fn commit_files(path: &str, commit_id: &str) -> Result<Vec<CommitFileEntry>,
 }
 
 /// Get original/modified content for a single file in a commit (parent vs commit)
-pub fn commit_file_diff(path: &str, commit_id: &str, file_path: &str) -> Result<GitDiffResult, String> {
+pub fn commit_file_diff(
+    path: &str,
+    commit_id: &str,
+    file_path: &str,
+) -> Result<GitDiffResult, String> {
     let repo = Repository::discover(path).map_err(|e| format!("git open: {e}"))?;
     let oid = git2::Oid::from_str(commit_id).map_err(|e| format!("parse oid: {e}"))?;
-    let commit = repo.find_commit(oid).map_err(|e| format!("find commit: {e}"))?;
+    let commit = repo
+        .find_commit(oid)
+        .map_err(|e| format!("find commit: {e}"))?;
     let commit_tree = commit.tree().map_err(|e| format!("commit tree: {e}"))?;
 
     let modified = match commit_tree.get_path(Path::new(file_path)) {
         Ok(entry) => {
-            let blob = repo.find_blob(entry.id()).map_err(|e| format!("blob: {e}"))?;
+            let blob = repo
+                .find_blob(entry.id())
+                .map_err(|e| format!("blob: {e}"))?;
             if blob.is_binary() {
-                return Ok(GitDiffResult { original: String::new(), modified: "(binary file)".to_string() });
+                return Ok(GitDiffResult {
+                    original: String::new(),
+                    modified: "(binary file)".to_string(),
+                });
             }
             String::from_utf8_lossy(blob.content()).to_string()
         }
@@ -1124,11 +1187,16 @@ pub fn commit_file_diff(path: &str, commit_id: &str, file_path: &str) -> Result<
     };
 
     let original = if commit.parent_count() > 0 {
-        let parent_tree = commit.parent(0).map_err(|e| format!("parent: {e}"))?
-            .tree().map_err(|e| format!("parent tree: {e}"))?;
+        let parent_tree = commit
+            .parent(0)
+            .map_err(|e| format!("parent: {e}"))?
+            .tree()
+            .map_err(|e| format!("parent tree: {e}"))?;
         match parent_tree.get_path(Path::new(file_path)) {
             Ok(entry) => {
-                let blob = repo.find_blob(entry.id()).map_err(|e| format!("blob: {e}"))?;
+                let blob = repo
+                    .find_blob(entry.id())
+                    .map_err(|e| format!("blob: {e}"))?;
                 String::from_utf8_lossy(blob.content()).to_string()
             }
             Err(_) => String::new(),

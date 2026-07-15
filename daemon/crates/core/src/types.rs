@@ -52,8 +52,8 @@ pub struct SidebarTabRow {
 #[serde(rename_all = "camelCase")]
 pub struct SidebarState {
     pub directory_id: String,
-    pub active_tab_id: String,            // legacy, still read for migration
-    pub list_column_width: f64,           // legacy, ignored after migration
+    pub active_tab_id: String,  // legacy, still read for migration
+    pub list_column_width: f64, // legacy, ignored after migration
     pub right_sidebar_view: Option<String>,
     pub file_panel_active_id: Option<String>,
 }

@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex};
 use crate::services::agent_shadow::AgentShadow;
 use crate::services::git_worker::GitRepoHandle;
 use crate::services::session_manager::SessionManager;
-use crate::settings::SettingsManager;
 use crate::services::shadow_tree::ShadowTree;
+use crate::settings::SettingsManager;
 
 /// One live FFF picker per directory, shared by file + content search. Holds a
 /// `SharedFilePicker` whose background scan + fs watcher keep the index fresh;
@@ -29,12 +29,17 @@ impl EventBus {
         self.0.subscribe()
     }
     pub fn emit(&self, name: &str, payload: serde_json::Value) {
-        let _ = self.0.send(crate::protocol::Event { name: name.into(), payload });
+        let _ = self.0.send(crate::protocol::Event {
+            name: name.into(),
+            payload,
+        });
     }
 }
 
 impl Default for EventBus {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 pub struct AppState {
@@ -158,11 +163,7 @@ impl AppState {
     /// Tear down watchers/workers/shadow trees for a removed directory subtree.
     /// Electron owns the directory rows now and forwards this (with the pre-delete
     /// snapshot) so the sidecar releases the subtree's in-memory resources.
-    pub fn evict_directory_resources(
-        &self,
-        id: &str,
-        all_dirs: &[crate::types::WorkingDirectory],
-    ) {
+    pub fn evict_directory_resources(&self, id: &str, all_dirs: &[crate::types::WorkingDirectory]) {
         use std::collections::HashSet;
         let mut victim_ids: HashSet<&str> = HashSet::new();
         victim_ids.insert(id);
@@ -213,8 +214,7 @@ impl AppState {
                 watchers.remove(&format!("dir:{}", p));
                 let prefix = format!("{}/", p);
                 let dir_prefix = format!("dir:{}/", p);
-                watchers
-                    .retain(|k, _| !(k.starts_with(&prefix) || k.starts_with(&dir_prefix)));
+                watchers.retain(|k, _| !(k.starts_with(&prefix) || k.starts_with(&dir_prefix)));
             }
         }
         if let Ok(mut workers) = self.git_workers.lock() {

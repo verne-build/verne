@@ -130,7 +130,10 @@ async fn handle_client<S: Send + Sync + 'static>(
             Ok(r) => r,
             Err(e) => {
                 let resp = Response::err(0, format!("decode: {e}"));
-                if write_msg(&writer, &ServerMessage::Response(resp)).await.is_err() {
+                if write_msg(&writer, &ServerMessage::Response(resp))
+                    .await
+                    .is_err()
+                {
                     return;
                 }
                 continue;
@@ -138,7 +141,9 @@ async fn handle_client<S: Send + Sync + 'static>(
         };
         // Wait for a free slot before dispatching — bounds concurrency and stops
         // us reading faster than we can serve.
-        let Ok(permit) = sem.clone().acquire_owned().await else { return };
+        let Ok(permit) = sem.clone().acquire_owned().await else {
+            return;
+        };
         spawn_dispatch(req, permit);
     }
 }

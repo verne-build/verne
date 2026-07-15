@@ -52,12 +52,20 @@ async fn dispatch_impl(req: Request, state: Arc<DaemonState>) -> Response {
             use crate::services::terminal_emulator::{set_global_terminal_colors, TermColors};
             let p = &req.params;
             let mut colors = TermColors::DARK;
-            if let Some(fg) = parse_hex(p.get("fg")) { colors.fg = fg; }
-            if let Some(bg) = parse_hex(p.get("bg")) { colors.bg = bg; }
-            if let Some(cur) = parse_hex(p.get("cursor")) { colors.cursor = cur; }
+            if let Some(fg) = parse_hex(p.get("fg")) {
+                colors.fg = fg;
+            }
+            if let Some(bg) = parse_hex(p.get("bg")) {
+                colors.bg = bg;
+            }
+            if let Some(cur) = parse_hex(p.get("cursor")) {
+                colors.cursor = cur;
+            }
             if let Some(arr) = p.get("ansi").and_then(|v| v.as_array()) {
                 for (i, v) in arr.iter().take(16).enumerate() {
-                    if let Some(rgb) = parse_hex(Some(v)) { colors.ansi[i] = rgb; }
+                    if let Some(rgb) = parse_hex(Some(v)) {
+                        colors.ansi[i] = rgb;
+                    }
                 }
             }
             set_global_terminal_colors(colors);
@@ -90,7 +98,11 @@ async fn dispatch_impl(req: Request, state: Arc<DaemonState>) -> Response {
                 let tab_child_pids = sessions
                     .tab_child_pids()
                     .into_iter()
-                    .map(|(id, pid)| crate::types::TabChildPid { label: id.clone(), tab_id: id, pid })
+                    .map(|(id, pid)| crate::types::TabChildPid {
+                        label: id.clone(),
+                        tab_id: id,
+                        pid,
+                    })
                     .collect();
                 Ok(crate::types::DaemonDiagnostics {
                     daemon_pid: std::process::id(),
@@ -113,8 +125,16 @@ async fn dispatch_impl(req: Request, state: Arc<DaemonState>) -> Response {
 
         m if m == methods::CREATE_TERMINAL => {
             let working_dir = s(req.params.get("workingDir"));
-            let cols = req.params.get("cols").and_then(|v| v.as_u64()).map(|n| n as u16);
-            let rows = req.params.get("rows").and_then(|v| v.as_u64()).map(|n| n as u16);
+            let cols = req
+                .params
+                .get("cols")
+                .and_then(|v| v.as_u64())
+                .map(|n| n as u16);
+            let rows = req
+                .params
+                .get("rows")
+                .and_then(|v| v.as_u64())
+                .map(|n| n as u16);
             let result: Result<String, String> = (|| {
                 let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
                 let (session_id, session) = crate::services::session_manager::create_raw_session(
@@ -147,7 +167,9 @@ async fn dispatch_impl(req: Request, state: Arc<DaemonState>) -> Response {
         }
 
         m if m == methods::TAB_SPAWN => {
-            let plan: TabSpawnPlan = match req.params.get("plan")
+            let plan: TabSpawnPlan = match req
+                .params
+                .get("plan")
                 .cloned()
                 .ok_or_else(|| "missing plan".to_string())
                 .and_then(|v| serde_json::from_value(v).map_err(|e| format!("bad plan: {e}")))
@@ -172,8 +194,16 @@ async fn dispatch_impl(req: Request, state: Arc<DaemonState>) -> Response {
             // tracks the viewport while its grid WS is disconnected; on
             // reactivation the size already matches and the TUI needn't redraw.
             let tab_id = s(req.params.get("tabId"));
-            let cols = req.params.get("cols").and_then(|v| v.as_u64()).unwrap_or(80) as u16;
-            let rows = req.params.get("rows").and_then(|v| v.as_u64()).unwrap_or(24) as u16;
+            let cols = req
+                .params
+                .get("cols")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(80) as u16;
+            let rows = req
+                .params
+                .get("rows")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(24) as u16;
             let found = (|| -> Option<bool> {
                 let sessions = state.sessions.lock().ok()?;
                 let session = sessions.get_session_by_agent(&tab_id)?;
@@ -202,14 +232,19 @@ async fn dispatch_impl(req: Request, state: Arc<DaemonState>) -> Response {
                 let pg = crate::services::pgrp::foreground_pgrp(fd)?;
                 let child = session.child_pid? as i32;
                 Some(pg != child)
-            })().unwrap_or(false);
+            })()
+            .unwrap_or(false);
             Response::ok(req.id, serde_json::Value::Bool(has_child))
         }
 
         m if m == methods::GET_HOOK_CONFIG => {
             use crate::services::agent_registry::{HookIntegration, AGENTS};
             let port = state.hook_port.load(std::sync::atomic::Ordering::Relaxed);
-            let secret = state.hook_secret.lock().map(|g| g.clone()).unwrap_or_default();
+            let secret = state
+                .hook_secret
+                .lock()
+                .map(|g| g.clone())
+                .unwrap_or_default();
             let integrations: Vec<serde_json::Value> = AGENTS
                 .iter()
                 .filter(|agent| agent.hooks != HookIntegration::None)
@@ -231,19 +266,23 @@ async fn dispatch_impl(req: Request, state: Arc<DaemonState>) -> Response {
         m if m == methods::GET_AGENT_STATES => {
             let result: Result<serde_json::Value, String> = (|| {
                 let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
-                let states: Vec<_> = sessions.effective_agent_states().into_iter().map(|(tab_id, status, title)| {
-                    serde_json::json!({
-                        "tabId": tab_id,
-                        "agentState": status.agent_state,
-                        "agentType": status.agent_type,
-                        "revision": status.revision,
-                        "source": status.source,
-                        "changedAt": status.changed_at,
-                        "lastAgentSessionId": status.session_id,
-                        "displayTitle": status.display_title,
-                        "title": title,
+                let states: Vec<_> = sessions
+                    .effective_agent_states()
+                    .into_iter()
+                    .map(|(tab_id, status, title)| {
+                        serde_json::json!({
+                            "tabId": tab_id,
+                            "agentState": status.agent_state,
+                            "agentType": status.agent_type,
+                            "revision": status.revision,
+                            "source": status.source,
+                            "changedAt": status.changed_at,
+                            "lastAgentSessionId": status.session_id,
+                            "displayTitle": status.display_title,
+                            "title": title,
+                        })
                     })
-                }).collect();
+                    .collect();
                 Ok(serde_json::json!(states))
             })();
             match result {

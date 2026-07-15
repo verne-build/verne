@@ -1,14 +1,14 @@
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use tokio::sync::oneshot;
 
-use crate::services::git;
 use crate::emitter::Emitter;
+use crate::services::git;
 use crate::types::{GitDiffResult, GitOperationProgress, GitStatus};
 
 const VISIBLE_STATUS_MAX_AGE: Duration = Duration::from_millis(150);
@@ -100,7 +100,8 @@ impl GitRepoHandle {
                 respond_to: tx,
             })
             .map_err(|_| "git worker offline".to_string())?;
-        rx.await.map_err(|_| "git worker dropped response".to_string())?
+        rx.await
+            .map_err(|_| "git worker dropped response".to_string())?
     }
 
     pub fn schedule_refresh(&self, delay: Duration) -> Result<(), String> {
@@ -136,7 +137,8 @@ impl GitRepoHandle {
                 respond_to: tx,
             })
             .map_err(|_| "git worker offline".to_string())?;
-        rx.await.map_err(|_| "git worker dropped response".to_string())?
+        rx.await
+            .map_err(|_| "git worker dropped response".to_string())?
     }
 
     pub async fn unstage(&self, notify_path: String, files: Vec<String>) -> Result<(), String> {
@@ -148,7 +150,8 @@ impl GitRepoHandle {
                 respond_to: tx,
             })
             .map_err(|_| "git worker offline".to_string())?;
-        rx.await.map_err(|_| "git worker dropped response".to_string())?
+        rx.await
+            .map_err(|_| "git worker dropped response".to_string())?
     }
 
     pub async fn stage_all(&self, notify_path: String) -> Result<(), String> {
@@ -159,7 +162,8 @@ impl GitRepoHandle {
                 respond_to: tx,
             })
             .map_err(|_| "git worker offline".to_string())?;
-        rx.await.map_err(|_| "git worker dropped response".to_string())?
+        rx.await
+            .map_err(|_| "git worker dropped response".to_string())?
     }
 
     pub async fn unstage_all(&self, notify_path: String) -> Result<(), String> {
@@ -170,7 +174,8 @@ impl GitRepoHandle {
                 respond_to: tx,
             })
             .map_err(|_| "git worker offline".to_string())?;
-        rx.await.map_err(|_| "git worker dropped response".to_string())?
+        rx.await
+            .map_err(|_| "git worker dropped response".to_string())?
     }
 
     pub async fn discard(&self, files: Vec<String>) -> Result<(), String> {
@@ -181,7 +186,8 @@ impl GitRepoHandle {
                 respond_to: tx,
             })
             .map_err(|_| "git worker offline".to_string())?;
-        rx.await.map_err(|_| "git worker dropped response".to_string())?
+        rx.await
+            .map_err(|_| "git worker dropped response".to_string())?
     }
 
     pub async fn commit(&self, message: String) -> Result<String, String> {
@@ -192,7 +198,8 @@ impl GitRepoHandle {
                 respond_to: tx,
             })
             .map_err(|_| "git worker offline".to_string())?;
-        rx.await.map_err(|_| "git worker dropped response".to_string())?
+        rx.await
+            .map_err(|_| "git worker dropped response".to_string())?
     }
 
     pub async fn diff(&self, file: String, staged: bool) -> Result<GitDiffResult, String> {
@@ -204,14 +211,12 @@ impl GitRepoHandle {
                 respond_to: tx,
             })
             .map_err(|_| "git worker offline".to_string())?;
-        rx.await.map_err(|_| "git worker dropped response".to_string())?
+        rx.await
+            .map_err(|_| "git worker dropped response".to_string())?
     }
 
-pub fn cancel_operation(&self) -> Result<bool, String> {
-        let guard = self
-            .operation_cancel
-            .lock()
-            .map_err(|e| e.to_string())?;
+    pub fn cancel_operation(&self) -> Result<bool, String> {
+        let guard = self.operation_cancel.lock().map_err(|e| e.to_string())?;
         if let Some(flag) = guard.as_ref() {
             flag.store(true, Ordering::Relaxed);
             Ok(true)
@@ -303,7 +308,10 @@ fn run_worker(
     }
 }
 
-fn next_timeout(pending_refresh_at: Option<Instant>, next_poll_at: Option<Instant>) -> Option<Duration> {
+fn next_timeout(
+    pending_refresh_at: Option<Instant>,
+    next_poll_at: Option<Instant>,
+) -> Option<Duration> {
     let now = Instant::now();
     [pending_refresh_at, next_poll_at]
         .into_iter()
@@ -323,14 +331,18 @@ fn handle_command(
     operation_cancel: &Arc<Mutex<Option<Arc<AtomicBool>>>>,
 ) {
     match command {
-        GitCommand::GetStatus { max_age, respond_to } => {
+        GitCommand::GetStatus {
+            max_age,
+            respond_to,
+        } => {
             let result = if cache
                 .as_ref()
                 .is_some_and(|cache| cache.at.elapsed() <= max_age)
             {
                 Ok(cache.as_ref().unwrap().status.clone())
             } else {
-                refresh_status(repo_key, wire, watched_paths, cache).map(|status| status.status.clone())
+                refresh_status(repo_key, wire, watched_paths, cache)
+                    .map(|status| status.status.clone())
             };
             let _ = respond_to.send(result);
         }
@@ -346,7 +358,9 @@ fn handle_command(
         GitCommand::UnregisterWatch { path } => {
             watched_paths.remove(&path);
         }
-        GitCommand::SetVisible { visible: is_visible } => {
+        GitCommand::SetVisible {
+            visible: is_visible,
+        } => {
             *visible = is_visible;
             if *visible && !watched_paths.is_empty() {
                 schedule_refresh(pending_refresh_at, cache.as_ref(), *visible, Duration::ZERO);
@@ -444,7 +458,10 @@ fn handle_command(
             }
             let _ = respond_to.send(result);
         }
-        GitCommand::Commit { message, respond_to } => {
+        GitCommand::Commit {
+            message,
+            respond_to,
+        } => {
             let result = git::commit(repo_key, &message);
             if result.is_ok() {
                 *cache = None;
@@ -519,7 +536,10 @@ fn refresh_status(
     // the branch name.
     let branch = git::branch_name(repo_key).unwrap_or_default();
     let hash = status_hash(&status, &branch);
-    let changed = cache.as_ref().map(|cache| cache.hash != hash).unwrap_or(true);
+    let changed = cache
+        .as_ref()
+        .map(|cache| cache.hash != hash)
+        .unwrap_or(true);
     let next = CachedStatus {
         status,
         hash,
@@ -540,8 +560,11 @@ fn refresh_status(
 
 fn status_hash(status: &GitStatus, branch: &str) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    format!("{:?}{:?}{:?}{branch}", status.staged, status.unstaged, status.untracked)
-        .hash(&mut hasher);
+    format!(
+        "{:?}{:?}{:?}{branch}",
+        status.staged, status.unstaged, status.untracked
+    )
+    .hash(&mut hasher);
     hasher.finish()
 }
 
@@ -593,7 +616,10 @@ mod tests {
         // Same (clean) file state, different branch → hash must differ so a
         // checkout emits git-status-changed.
         let status = empty_status();
-        assert_ne!(status_hash(&status, "main"), status_hash(&status, "feature"));
+        assert_ne!(
+            status_hash(&status, "main"),
+            status_hash(&status, "feature")
+        );
     }
 
     #[test]

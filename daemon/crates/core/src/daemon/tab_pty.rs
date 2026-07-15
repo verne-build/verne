@@ -5,9 +5,9 @@
 
 use std::sync::{Arc, Mutex};
 
+use crate::services::session_manager::{self, SessionManager, StartSessionOpts};
 use crate::state::EventBus;
 use crate::types::TabSpawnPlan;
-use crate::services::session_manager::{self, SessionManager, StartSessionOpts};
 
 /// Spawn (or reuse) the live PTY session for a tab, keyed by `tab_id`. Returns
 /// the session id. Idempotent: if a live session already exists for the tab

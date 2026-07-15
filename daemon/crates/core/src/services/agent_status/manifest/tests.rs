@@ -40,10 +40,8 @@ fn not_negates() {
 
 #[test]
 fn line_regex_matches_per_line() {
-    let g = CompiledGate::compile(&gate_from(
-        "line_regex = ['(?i)^\\s*❯?\\s*1\\.\\s*yes\\b']",
-    ))
-    .unwrap();
+    let g = CompiledGate::compile(&gate_from("line_regex = ['(?i)^\\s*❯?\\s*1\\.\\s*yes\\b']"))
+        .unwrap();
     assert!(g.matches("intro\n  ❯ 1. Yes, proceed\nmore"));
     assert!(!g.matches("1 yes"));
 }
@@ -51,13 +49,19 @@ fn line_regex_matches_per_line() {
 #[test]
 fn invalid_regex_is_a_compile_error() {
     let err = CompiledGate::compile(&gate_from("regex = [\"[unclosed\"]")).unwrap_err();
-    assert!(err.contains("invalid regex"), "error should mention 'invalid regex': {err}");
+    assert!(
+        err.contains("invalid regex"),
+        "error should mention 'invalid regex': {err}"
+    );
 }
 
 #[test]
 fn invalid_line_regex_is_a_compile_error() {
     let err = CompiledGate::compile(&gate_from("line_regex = [\"(?P<bad\"]")).unwrap_err();
-    assert!(err.contains("invalid regex"), "error should mention 'invalid regex': {err}");
+    assert!(
+        err.contains("invalid regex"),
+        "error should mention 'invalid regex': {err}"
+    );
 }
 
 #[test]
@@ -104,7 +108,10 @@ fn bottom_lines_n_returns_last_n_lines() {
 
 #[test]
 fn bottom_non_empty_lines_skips_trailing_blanks() {
-    assert_eq!(region("a\nb\n\n\n", "bottom_non_empty_lines(2)"), "a\nb\n\n\n");
+    assert_eq!(
+        region("a\nb\n\n\n", "bottom_non_empty_lines(2)"),
+        "a\nb\n\n\n"
+    );
 }
 
 #[test]
@@ -139,7 +146,10 @@ fn codex_no_review_marker_leaves_flag_false() {
 
 #[test]
 fn explain_reports_matched_rule_for_blocked_claude() {
-    let e = explain("claude", "─────\nDo you want to proceed?\n❯ 1. Yes\n  2. No\nesc to cancel");
+    let e = explain(
+        "claude",
+        "─────\nDo you want to proceed?\n❯ 1. Yes\n  2. No\nesc to cancel",
+    );
     assert_eq!(e.state, "blocked");
     assert_eq!(e.matched_rule.as_deref(), Some("permission_prompt"));
     assert!(!e.fallback);

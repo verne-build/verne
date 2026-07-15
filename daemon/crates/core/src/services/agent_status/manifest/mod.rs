@@ -5,9 +5,9 @@ mod schema;
 mod source;
 
 #[cfg(test)]
-mod tests;
-#[cfg(test)]
 mod parity;
+#[cfg(test)]
+mod tests;
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -17,8 +17,8 @@ use crate::services::detect::AgentState;
 
 use compile::CompiledGate;
 use explain::{state_label_pub, DetectionExplain};
-pub use schema::{TitleConfig, TitleStrategy};
 use schema::{parse, AgentManifest, Rule};
+pub use schema::{TitleConfig, TitleStrategy};
 
 pub(super) const DEFAULT_MANIFEST: &str = include_str!("manifests/default.toml");
 
@@ -66,7 +66,10 @@ fn load(key: &str, toml: &str) -> Loaded {
     let compiled = manifest
         .rules
         .iter()
-        .map(|r| CompiledGate::compile(&r.gate()).unwrap_or_else(|e| panic!("manifest {key} rule {} invalid: {e}", r.id)))
+        .map(|r| {
+            CompiledGate::compile(&r.gate())
+                .unwrap_or_else(|e| panic!("manifest {key} rule {} invalid: {e}", r.id))
+        })
         .collect();
     Loaded { manifest, compiled }
 }
@@ -94,14 +97,15 @@ pub fn title_config(key: &str) -> TitleConfig {
 /// `review_marker` rule matches, regardless of which state rule wins.
 pub fn detect(key: &str, screen: &str) -> AgentDetection {
     let loaded = loaded_for(key);
-    let review_in_progress = loaded
-        .manifest
-        .rules
-        .iter()
-        .zip(&loaded.compiled)
-        .any(|(rule, compiled)| {
-            rule.review_marker && compiled.matches(regions::region(screen, &rule.region))
-        });
+    let review_in_progress =
+        loaded
+            .manifest
+            .rules
+            .iter()
+            .zip(&loaded.compiled)
+            .any(|(rule, compiled)| {
+                rule.review_marker && compiled.matches(regions::region(screen, &rule.region))
+            });
     let mut detection = match best_match(loaded, screen) {
         Some(rule) => detection_from_rule(rule),
         None => AgentDetection::from_state(AgentState::Idle),
