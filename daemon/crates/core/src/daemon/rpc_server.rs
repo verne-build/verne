@@ -121,7 +121,11 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
         // git2 repo + on-disk shadow tree (it still owns those resources).
         m if m == crate::protocol::methods::AGENT_SHADOW_CLEANUP => {
             let id = s(req.params.get("tabId"));
-            crate::daemon::tabs::cleanup_agent_shadow(&state, &id);
+            let state = state.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                crate::daemon::tabs::cleanup_agent_shadow(&state, &id)
+            })
+            .await;
             Response::ok(req.id, serde_json::json!(true))
         }
         // git_cmds.rs — daemon owns git workers; uses a Daemon emitter so
@@ -242,9 +246,11 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
             let path = s(req.params.get("path"));
             let count = req.params.get("count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
             let skip = req.params.get("skip").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-            let res = tokio::task::spawn_blocking(move || crate::services::git::commit_log(&path, count, skip))
-                .await
-                .map_err(|e| format!("git commit_log task failed: {e}"));
+            let res = tokio::task::spawn_blocking(move || {
+                crate::services::git::commit_log(&path, count, skip)
+            })
+            .await
+            .map_err(|e| format!("git commit_log task failed: {e}"));
             match res {
                 Ok(Ok(log)) => Response::ok(req.id, serde_json::to_value(log).unwrap()),
                 Ok(Err(e)) => Response::err(req.id, e),
@@ -254,9 +260,11 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
         m if m == crate::protocol::methods::GIT_COMMIT_FILES => {
             let path = s(req.params.get("path"));
             let commit_id = s(req.params.get("commitId"));
-            let res = tokio::task::spawn_blocking(move || crate::services::git::commit_files(&path, &commit_id))
-                .await
-                .map_err(|e| format!("git commit_files task failed: {e}"));
+            let res = tokio::task::spawn_blocking(move || {
+                crate::services::git::commit_files(&path, &commit_id)
+            })
+            .await
+            .map_err(|e| format!("git commit_files task failed: {e}"));
             match res {
                 Ok(Ok(files)) => Response::ok(req.id, serde_json::json!({ "files": files })),
                 Ok(Err(e)) => Response::err(req.id, e),
@@ -267,9 +275,11 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
             let path = s(req.params.get("path"));
             let commit_id = s(req.params.get("commitId"));
             let file = s(req.params.get("file"));
-            let res = tokio::task::spawn_blocking(move || crate::services::git::commit_file_diff(&path, &commit_id, &file))
-                .await
-                .map_err(|e| format!("git commit_file_diff task failed: {e}"));
+            let res = tokio::task::spawn_blocking(move || {
+                crate::services::git::commit_file_diff(&path, &commit_id, &file)
+            })
+            .await
+            .map_err(|e| format!("git commit_file_diff task failed: {e}"));
             match res {
                 Ok(Ok(diff)) => Response::ok(req.id, serde_json::to_value(diff).unwrap()),
                 Ok(Err(e)) => Response::err(req.id, e),
@@ -279,9 +289,11 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
         m if m == crate::protocol::methods::GIT_CHERRY_PICK => {
             let path = s(req.params.get("path"));
             let commit_id = s(req.params.get("commitId"));
-            let res = tokio::task::spawn_blocking(move || crate::services::git::cherry_pick(&path, &commit_id))
-                .await
-                .map_err(|e| format!("git cherry_pick task failed: {e}"));
+            let res = tokio::task::spawn_blocking(move || {
+                crate::services::git::cherry_pick(&path, &commit_id)
+            })
+            .await
+            .map_err(|e| format!("git cherry_pick task failed: {e}"));
             match res {
                 Ok(Ok(_)) => Response::ok(req.id, serde_json::Value::Null),
                 Ok(Err(e)) => Response::err(req.id, e),
@@ -291,9 +303,11 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
         m if m == crate::protocol::methods::GIT_REVERT => {
             let path = s(req.params.get("path"));
             let commit_id = s(req.params.get("commitId"));
-            let res = tokio::task::spawn_blocking(move || crate::services::git::revert_commit(&path, &commit_id))
-                .await
-                .map_err(|e| format!("git revert task failed: {e}"));
+            let res = tokio::task::spawn_blocking(move || {
+                crate::services::git::revert_commit(&path, &commit_id)
+            })
+            .await
+            .map_err(|e| format!("git revert task failed: {e}"));
             match res {
                 Ok(Ok(_)) => Response::ok(req.id, serde_json::Value::Null),
                 Ok(Err(e)) => Response::err(req.id, e),
@@ -313,9 +327,11 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
         }
         m if m == crate::protocol::methods::GIT_LIST_BRANCHES => {
             let path = s(req.params.get("path"));
-            let res = tokio::task::spawn_blocking(move || crate::services::git::list_branches(&path))
-                .await
-                .map_err(|e| format!("git list_branches task failed: {e}"));
+            let res = tokio::task::spawn_blocking(move || {
+                crate::services::git::list_branches(&path)
+            })
+            .await
+            .map_err(|e| format!("git list_branches task failed: {e}"));
             match res {
                 Ok(Ok(branches)) => Response::ok(req.id, serde_json::to_value(branches).unwrap()),
                 Ok(Err(e)) => Response::err(req.id, e),
@@ -747,22 +763,30 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
         }
         m if m == crate::protocol::methods::NOTES_LIST => {
             let workspace_root = s(req.params.get("workspaceRoot"));
-            let result = crate::notes::list(&notes_dir_for(&workspace_root));
+            let result = tokio::task::spawn_blocking(move || {
+                crate::notes::list(&notes_dir_for(&workspace_root))
+            })
+            .await
+            .map_err(|e| format!("notes_list task failed: {e}"));
             match result {
-                Ok(v) => Response::ok(req.id, serde_json::to_value(v).unwrap()),
+                Ok(Ok(v)) => Response::ok(req.id, serde_json::to_value(v).unwrap()),
+                Ok(Err(e)) => Response::err(req.id, e),
                 Err(e) => Response::err(req.id, e),
             }
         }
         m if m == crate::protocol::methods::NOTES_CREATE => {
             let workspace_root = s(req.params.get("workspaceRoot"));
             let title = s(req.params.get("title"));
-            let result: Result<crate::notes::NoteMeta, String> = (|| {
+            let result = tokio::task::spawn_blocking(move || -> Result<crate::notes::NoteMeta, String> {
                 let dir = notes_dir_for(&workspace_root);
                 let slug = crate::notes::create(&dir, &title, "")?;
                 Ok(crate::notes::NoteMeta { slug, title })
-            })();
+            })
+            .await
+            .map_err(|e| format!("notes_create task failed: {e}"));
             match result {
-                Ok(v) => Response::ok(req.id, serde_json::to_value(v).unwrap()),
+                Ok(Ok(v)) => Response::ok(req.id, serde_json::to_value(v).unwrap()),
+                Ok(Err(e)) => Response::err(req.id, e),
                 Err(e) => Response::err(req.id, e),
             }
         }
@@ -770,19 +794,28 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
             let workspace_root = s(req.params.get("workspaceRoot"));
             let slug = s(req.params.get("slug"));
             let title = s(req.params.get("title"));
-            let result =
-                crate::notes::rename(&notes_dir_for(&workspace_root), &slug, &title);
+            let result = tokio::task::spawn_blocking(move || {
+                crate::notes::rename(&notes_dir_for(&workspace_root), &slug, &title)
+            })
+            .await
+            .map_err(|e| format!("notes_rename task failed: {e}"));
             match result {
-                Ok(v) => Response::ok(req.id, serde_json::to_value(v).unwrap()),
+                Ok(Ok(v)) => Response::ok(req.id, serde_json::to_value(v).unwrap()),
+                Ok(Err(e)) => Response::err(req.id, e),
                 Err(e) => Response::err(req.id, e),
             }
         }
         m if m == crate::protocol::methods::NOTES_DELETE => {
             let workspace_root = s(req.params.get("workspaceRoot"));
             let slug = s(req.params.get("slug"));
-            let result = crate::notes::delete(&notes_dir_for(&workspace_root), &slug);
+            let result = tokio::task::spawn_blocking(move || {
+                crate::notes::delete(&notes_dir_for(&workspace_root), &slug)
+            })
+            .await
+            .map_err(|e| format!("notes_delete task failed: {e}"));
             match result {
-                Ok(()) => Response::ok(req.id, serde_json::Value::Null),
+                Ok(Ok(())) => Response::ok(req.id, serde_json::Value::Null),
+                Ok(Err(e)) => Response::err(req.id, e),
                 Err(e) => Response::err(req.id, e),
             }
         }
@@ -1006,9 +1039,11 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
         m if m == crate::protocol::methods::LIST_DIRECTORY_PATHS => {
             let partial = s(req.params.get("partial"));
             let state = state.clone();
-            let res = tokio::task::spawn_blocking(move || list_directory_paths_impl(&state, &partial))
-                .await
-                .map_err(|e| format!("list_directory_paths task failed: {e}"));
+            let res = tokio::task::spawn_blocking(move || {
+                list_directory_paths_impl(&state, &partial)
+            })
+            .await
+            .map_err(|e| format!("list_directory_paths task failed: {e}"));
             match res {
                 Ok(Ok(v)) => Response::ok(req.id, v),
                 Ok(Err(e)) => Response::err(req.id, e),
@@ -1191,54 +1226,85 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
             Response::ok(req.id, serde_json::to_value(agents).unwrap())
         }
         m if m == crate::protocol::methods::MCP_AGENT_STATUS => {
-            let agent = req.params.get("agent").and_then(|v| v.as_str()).unwrap_or_default();
-            if agent.is_empty() {
-                let status = crate::services::mcp_agents::status_all();
-                Response::ok(req.id, serde_json::to_value(status).unwrap())
-            } else {
-                match crate::services::mcp_agents::status_one(agent) {
-                    Some(status) => Response::ok(req.id, serde_json::to_value(status).unwrap()),
-                    None => Response::err(req.id, "unknown agent"),
+            let agent = req.params.get("agent").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+            let result = tokio::task::spawn_blocking(move || -> Result<serde_json::Value, String> {
+                if agent.is_empty() {
+                    Ok(serde_json::to_value(crate::services::mcp_agents::status_all()).unwrap())
+                } else {
+                    match crate::services::mcp_agents::status_one(&agent) {
+                        Some(status) => Ok(serde_json::to_value(status).unwrap()),
+                        None => Err("unknown agent".to_string()),
+                    }
                 }
+            })
+            .await
+            .map_err(|e| format!("mcp_agent_status task failed: {e}"));
+            match result {
+                Ok(Ok(v)) => Response::ok(req.id, v),
+                Ok(Err(e)) => Response::err(req.id, e),
+                Err(e) => Response::err(req.id, e),
             }
         }
         m if m == crate::protocol::methods::MCP_INSTALL => {
             let agent = s(req.params.get("agent"));
-            let result = crate::services::mcp_agents::get_agent(&agent)
-                .ok_or_else(|| "unknown agent".to_string())
-                .and_then(|a| a.ensure_mcp(&crate::services::mcp_agents::verne_binary()));
+            let result = tokio::task::spawn_blocking(move || {
+                crate::services::mcp_agents::get_agent(&agent)
+                    .ok_or_else(|| "unknown agent".to_string())
+                    .and_then(|a| a.ensure_mcp(&crate::services::mcp_agents::verne_binary()))
+            })
+            .await
+            .map_err(|e| format!("mcp_install task failed: {e}"));
             match result {
-                Ok(()) => Response::ok(req.id, serde_json::Value::Null),
+                Ok(Ok(())) => Response::ok(req.id, serde_json::Value::Null),
+                Ok(Err(e)) => Response::err(req.id, e),
                 Err(e) => Response::err(req.id, e),
             }
         }
         m if m == crate::protocol::methods::MCP_INSTALL_ALL => {
-            let verne = crate::services::mcp_agents::verne_binary();
-            let mut ok = Vec::new();
-            for a in crate::services::mcp_agents::all_agents() {
-                if a.detected() && a.ensure_mcp(&verne).is_ok() {
-                    ok.push(a.key().to_string());
+            let result = tokio::task::spawn_blocking(|| {
+                let verne = crate::services::mcp_agents::verne_binary();
+                let mut ok = Vec::new();
+                for a in crate::services::mcp_agents::all_agents() {
+                    if a.detected() && a.ensure_mcp(&verne).is_ok() {
+                        ok.push(a.key().to_string());
+                    }
                 }
+                ok
+            })
+            .await
+            .map_err(|e| format!("mcp_install_all task failed: {e}"));
+            match result {
+                Ok(ok) => Response::ok(req.id, serde_json::to_value(ok).unwrap()),
+                Err(e) => Response::err(req.id, e),
             }
-            Response::ok(req.id, serde_json::to_value(ok).unwrap())
         }
         m if m == crate::protocol::methods::MCP_UNINSTALL => {
             let agent = s(req.params.get("agent"));
-            let result = crate::services::mcp_agents::get_agent(&agent)
-                .ok_or_else(|| "unknown agent".to_string())
-                .and_then(|a| a.remove_mcp());
+            let result = tokio::task::spawn_blocking(move || {
+                crate::services::mcp_agents::get_agent(&agent)
+                    .ok_or_else(|| "unknown agent".to_string())
+                    .and_then(|a| a.remove_mcp())
+            })
+            .await
+            .map_err(|e| format!("mcp_uninstall task failed: {e}"));
             match result {
-                Ok(()) => Response::ok(req.id, serde_json::Value::Null),
+                Ok(Ok(())) => Response::ok(req.id, serde_json::Value::Null),
+                Ok(Err(e)) => Response::err(req.id, e),
                 Err(e) => Response::err(req.id, e),
             }
         }
         m if m == crate::protocol::methods::MCP_MANUAL_COMMANDS => {
             let agent = s(req.params.get("agent"));
-            let result = crate::services::mcp_agents::get_agent(&agent)
-                .ok_or_else(|| "unknown agent".to_string())
-                .map(|a| a.manual_commands(&crate::services::mcp_agents::verne_binary()));
+            let result = tokio::task::spawn_blocking(move || {
+                crate::services::mcp_agents::get_agent(&agent)
+                    .ok_or_else(|| "unknown agent".to_string())
+                    .map(|a| a.manual_commands(&crate::services::mcp_agents::verne_binary()))
+            })
+            .await
+            .map_err(|e| format!("mcp_manual_commands task failed: {e}"));
             match result {
-                Ok(v) => Response::ok(req.id, serde_json::Value::String(v)),
+                Ok(Ok(v)) => Response::ok(req.id, serde_json::Value::String(v)),
+                Ok(Err(e)) => Response::err(req.id, e),
                 Err(e) => Response::err(req.id, e),
             }
         }
@@ -1267,16 +1333,22 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
             let tool_name = s(req.params.get("toolName"));
             let tool_input = req.params.get("toolInput").cloned().unwrap_or(serde_json::Value::Null);
             let agent_type = req.params.get("agentType").and_then(|v| v.as_str()).unwrap_or("claude").to_string();
-            let snapshotted = crate::services::hook_server::agent_shadow_on_hook(
-                &working_dir,
-                &state.agent_shadows,
-                &state.internal_data_dir,
-                &agent_id,
-                &event,
-                &tool_name,
-                &tool_input,
-                &agent_type,
-            );
+            let snapshotted = tokio::task::spawn_blocking({
+                let state = state.clone();
+                let agent_id = agent_id.clone();
+                move || crate::services::hook_server::agent_shadow_on_hook(
+                    &working_dir,
+                    &state.agent_shadows,
+                    &state.internal_data_dir,
+                    &agent_id,
+                    &event,
+                    &tool_name,
+                    &tool_input,
+                    &agent_type,
+                )
+            })
+            .await
+            .unwrap_or(false);
             if snapshotted {
                 state.event_bus.emit(
                     "agent-files-changed",
@@ -1297,11 +1369,15 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
                     Some((id, wd))
                 }).collect())
                 .unwrap_or_default();
-            crate::services::hook_server::agent_shadow_resync(
-                &state.agent_shadows,
-                &state.internal_data_dir,
-                &agent_dirs,
-            );
+            let state = state.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                crate::services::hook_server::agent_shadow_resync(
+                    &state.agent_shadows,
+                    &state.internal_data_dir,
+                    &agent_dirs,
+                )
+            })
+            .await;
             Response::ok(req.id, serde_json::json!(true))
         }
 
