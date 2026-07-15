@@ -543,21 +543,9 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
                 if let Ok(mut w) = state.git_watchers.lock() { w.remove(&path); }
                 return Response::err(req.id, e);
             }
-            let stop_clone = std::sync::Arc::clone(&stop);
-            let visible = std::sync::Arc::clone(&state.source_control_visible);
-            std::thread::spawn(move || loop {
-                if stop_clone.load(std::sync::atomic::Ordering::Relaxed) {
-                    break;
-                }
-                let interval = if visible.load(std::sync::atomic::Ordering::Relaxed) { 1 } else { 5 };
-                std::thread::sleep(std::time::Duration::from_secs(interval));
-                if stop_clone.load(std::sync::atomic::Ordering::Relaxed) {
-                    break;
-                }
-                let _ = worker.schedule_refresh(std::time::Duration::ZERO);
-            });
-            // Instant branch-change detection: nudge the same worker on HEAD
-            // fs events. Poll above stays as the fallback.
+            // Status refresh is driven solely by the worker's own poll timer
+            // (armed by register_watch above) plus the HEAD fs-watch below for
+            // instant branch-change detection. No redundant external poller.
             watch_git_head(&state, &path);
             Response::ok(req.id, serde_json::Value::Null)
         }
