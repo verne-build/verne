@@ -23,15 +23,27 @@ pub fn decode_server_message(buf: &[u8]) -> Result<super::ServerMessage, String>
 
 pub async fn read_frame<R: AsyncReadExt + Unpin>(reader: &mut R) -> Result<Vec<u8>, String> {
     let mut len_bytes = [0u8; 4];
-    reader.read_exact(&mut len_bytes).await.map_err(|e| e.to_string())?;
+    reader
+        .read_exact(&mut len_bytes)
+        .await
+        .map_err(|e| e.to_string())?;
     let len = u32::from_be_bytes(len_bytes) as usize;
     let mut body = vec![0u8; len];
-    reader.read_exact(&mut body).await.map_err(|e| e.to_string())?;
+    reader
+        .read_exact(&mut body)
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(body)
 }
 
-pub async fn write_frame<W: AsyncWriteExt + Unpin>(writer: &mut W, body: &[u8]) -> Result<(), String> {
-    writer.write_all(&(body.len() as u32).to_be_bytes()).await.map_err(|e| e.to_string())?;
+pub async fn write_frame<W: AsyncWriteExt + Unpin>(
+    writer: &mut W,
+    body: &[u8],
+) -> Result<(), String> {
+    writer
+        .write_all(&(body.len() as u32).to_be_bytes())
+        .await
+        .map_err(|e| e.to_string())?;
     writer.write_all(body).await.map_err(|e| e.to_string())?;
     writer.flush().await.map_err(|e| e.to_string())?;
     Ok(())

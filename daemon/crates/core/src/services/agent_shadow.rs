@@ -237,8 +237,14 @@ impl AgentShadow {
         let _ = revwalk.push(start.id());
         let mut paths = HashSet::new();
         for oid in revwalk {
-            let oid = match oid { Ok(o) => o, Err(_) => continue };
-            let commit = match self.repo.find_commit(oid) { Ok(c) => c, Err(_) => continue };
+            let oid = match oid {
+                Ok(o) => o,
+                Err(_) => continue,
+            };
+            let commit = match self.repo.find_commit(oid) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
             let msg = commit.message().unwrap_or("");
             if let Some(p) = msg.strip_prefix("update: ") {
                 paths.insert(p.to_string());

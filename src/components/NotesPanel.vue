@@ -21,6 +21,7 @@ import CodeEditor from "./CodeEditor.vue";
 import PanelLeftFilled from "./icons/PanelLeftFilled.vue";
 import { Plus, NotebookText, PanelLeft, MoreHorizontal, PenLine, Eye } from "@lucide/vue";
 import { ask } from "@/platform";
+import { toast } from "vue-sonner";
 import {
   Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle,
 } from "./ui/empty";
@@ -166,6 +167,7 @@ const selectedViewState = computed(() =>
 );
 
 const items = ref<NoteMeta[]>([]);
+const loadError = ref<string | null>(null);
 const selectedSlug = ref<string | null>(null);
 const selected = computed(() => items.value.find(i => i.slug === selectedSlug.value) ?? null);
 const loadedDirectoryId = ref<string | null>(null);
@@ -246,9 +248,11 @@ async function refresh(preferSlug?: string) {
     const next = await request.notesList({ directoryId });
     if (generation !== refreshGeneration || directoryId !== props.directoryId) return;
     items.value = next;
-  } catch {
+    loadError.value = null;
+  } catch (e) {
     if (generation !== refreshGeneration || directoryId !== props.directoryId) return;
     items.value = [];
+    loadError.value = String(e);
   }
   const want = preferSlug ?? selectionByDir.get(directoryId) ?? selectedSlug.value;
   if (want && items.value.some(i => i.slug === want)) select(want);
@@ -271,13 +275,20 @@ async function newPad() {
     const meta = await request.notesCreate({ directoryId: props.directoryId, title: "Untitled" });
     preview.value = false; // drop into edit mode so the user can title it
     await refresh(meta.slug);
-  } catch { /* ignore */ }
+  } catch (e) {
+    toast.error(`Couldn't create note: ${e}`);
+  }
 }
 
 async function deletePad(slug: string, title: string) {
   const ok = await ask(`Delete "${title}"? This can't be undone.`, { title: "Delete note", kind: "warning" });
   if (!ok) return;
-  try { await request.notesDelete({ directoryId: props.directoryId, slug }); } catch { /* ignore */ }
+  try {
+    await request.notesDelete({ directoryId: props.directoryId, slug });
+  } catch (e) {
+    toast.error(`Couldn't delete note: ${e}`);
+    return;
+  }
   if (selectedSlug.value === slug) {
     selectedSlug.value = null;
     rememberSelection(props.directoryId, null);
@@ -588,6 +599,16 @@ onBeforeUnmount(() => {
             @dirty="onEditorDirty"
             @view-state="onEditorViewState"
           />
+          <Empty v-else-if="loadError" class="h-full bg-sidebar">
+            <EmptyHeader>
+              <EmptyMedia variant="icon"><NotebookText /></EmptyMedia>
+              <EmptyTitle>Couldn't load notes</EmptyTitle>
+              <EmptyDescription>{{ loadError }}</EmptyDescription>
+            </EmptyHeader>
+            <EmptyContent>
+              <Button variant="outline" size="sm" @click="refresh()">Retry</Button>
+            </EmptyContent>
+          </Empty>
           <Empty v-else-if="hasLoadedCurrentDirectory" class="h-full bg-sidebar">
             <EmptyHeader>
               <EmptyMedia variant="icon"><NotebookText /></EmptyMedia>

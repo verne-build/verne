@@ -46,7 +46,13 @@ pub enum InputEvent {
     /// Bracketed-paste-eligible payload.
     Paste(String),
     /// Mouse event at zero-based cell (col, row).
-    Mouse { action: MouseAction, button: u8, col: u16, row: u16, mods: Mods },
+    Mouse {
+        action: MouseAction,
+        button: u8,
+        col: u16,
+        row: u16,
+        mods: Mods,
+    },
 }
 
 /// Encode an event to PTY bytes for the given terminal mode.
@@ -55,9 +61,13 @@ pub fn encode(event: &InputEvent, mode: TermMode) -> Vec<u8> {
         InputEvent::Key { key, mods } => encode_key(key, *mods, mode),
         InputEvent::Text(s) => s.as_bytes().to_vec(),
         InputEvent::Paste(s) => encode_paste(s, mode),
-        InputEvent::Mouse { action, button, col, row, mods } => {
-            encode_mouse(*action, *button, *col, *row, *mods, mode)
-        }
+        InputEvent::Mouse {
+            action,
+            button,
+            col,
+            row,
+            mods,
+        } => encode_mouse(*action, *button, *col, *row, *mods, mode),
     }
 }
 
@@ -105,7 +115,11 @@ fn encode_key(key: &str, mods: Mods, mode: TermMode) -> Vec<u8> {
             }
         }
         "Tab" => {
-            if mods.shift { b"\x1b[Z".to_vec() } else { vec![b'\t'] }
+            if mods.shift {
+                b"\x1b[Z".to_vec()
+            } else {
+                vec![b'\t']
+            }
         }
         // Alt/Option+Backspace → ESC+DEL (readline backward-kill-word); plain → DEL.
         "Backspace" => {
@@ -199,9 +213,15 @@ fn mouse_button_code(action: MouseAction, button: u8, mods: Mods, motion: bool) 
     if motion {
         code += 32;
     }
-    if mods.shift { code += 4; }
-    if mods.alt { code += 8; }
-    if mods.ctrl { code += 16; }
+    if mods.shift {
+        code += 4;
+    }
+    if mods.alt {
+        code += 8;
+    }
+    if mods.ctrl {
+        code += 16;
+    }
     code
 }
 
@@ -233,7 +253,11 @@ fn encode_mouse(
         format!("\x1b[<{};{};{}{}", code, cx, cy, final_byte).into_bytes()
     } else {
         // X10: byte values offset by 32; release reported as button 3.
-        let btn = if action == MouseAction::Up { 3 + (code & !0b11) } else { code };
+        let btn = if action == MouseAction::Up {
+            3 + (code & !0b11)
+        } else {
+            code
+        };
         vec![
             0x1b,
             b'[',
@@ -260,7 +284,10 @@ pub fn parse_input_event(v: &serde_json::Value) -> Option<InputEvent> {
         }
     };
     match v["type"].as_str()? {
-        "key" => Some(InputEvent::Key { key: v["key"].as_str()?.to_string(), mods: mods(v) }),
+        "key" => Some(InputEvent::Key {
+            key: v["key"].as_str()?.to_string(),
+            mods: mods(v),
+        }),
         "text" => Some(InputEvent::Text(v["text"].as_str()?.to_string())),
         "paste" => Some(InputEvent::Paste(v["text"].as_str()?.to_string())),
         "mouse" => {
@@ -294,14 +321,35 @@ mod tests {
 
     #[test]
     fn parse_key_text_mouse_events() {
-        let k = parse_input_event(&serde_json::json!({"type":"key","key":"ArrowUp","mods":{"ctrl":true}})).unwrap();
-        assert_eq!(k, InputEvent::Key { key: "ArrowUp".into(), mods: Mods { ctrl: true, ..Default::default() } });
+        let k = parse_input_event(
+            &serde_json::json!({"type":"key","key":"ArrowUp","mods":{"ctrl":true}}),
+        )
+        .unwrap();
+        assert_eq!(
+            k,
+            InputEvent::Key {
+                key: "ArrowUp".into(),
+                mods: Mods {
+                    ctrl: true,
+                    ..Default::default()
+                }
+            }
+        );
         let t = parse_input_event(&serde_json::json!({"type":"text","text":"hi"})).unwrap();
         assert_eq!(t, InputEvent::Text("hi".into()));
         let p = parse_input_event(&serde_json::json!({"type":"paste","text":"x"})).unwrap();
         assert_eq!(p, InputEvent::Paste("x".into()));
         let mo = parse_input_event(&serde_json::json!({"type":"mouse","action":"down","button":0,"col":3,"row":4,"mods":{}})).unwrap();
-        assert_eq!(mo, InputEvent::Mouse { action: MouseAction::Down, button: 0, col: 3, row: 4, mods: m() });
+        assert_eq!(
+            mo,
+            InputEvent::Mouse {
+                action: MouseAction::Down,
+                button: 0,
+                col: 3,
+                row: 4,
+                mods: m()
+            }
+        );
     }
 
     #[test]
@@ -311,62 +359,188 @@ mod tests {
 
     #[test]
     fn enter_tab_backspace() {
-        assert_eq!(encode(&InputEvent::Key { key: "Enter".into(), mods: m() }, TermMode::empty()), b"\r");
-        assert_eq!(encode(&InputEvent::Key { key: "Tab".into(), mods: m() }, TermMode::empty()), b"\t");
-        assert_eq!(encode(&InputEvent::Key { key: "Backspace".into(), mods: m() }, TermMode::empty()), &[0x7f]);
+        assert_eq!(
+            encode(
+                &InputEvent::Key {
+                    key: "Enter".into(),
+                    mods: m()
+                },
+                TermMode::empty()
+            ),
+            b"\r"
+        );
+        assert_eq!(
+            encode(
+                &InputEvent::Key {
+                    key: "Tab".into(),
+                    mods: m()
+                },
+                TermMode::empty()
+            ),
+            b"\t"
+        );
+        assert_eq!(
+            encode(
+                &InputEvent::Key {
+                    key: "Backspace".into(),
+                    mods: m()
+                },
+                TermMode::empty()
+            ),
+            &[0x7f]
+        );
         // Alt/Option+Backspace → ESC+DEL (delete word backward).
-        let alt = Mods { alt: true, ..Default::default() };
-        assert_eq!(encode(&InputEvent::Key { key: "Backspace".into(), mods: alt }, TermMode::empty()), &[0x1b, 0x7f]);
+        let alt = Mods {
+            alt: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            encode(
+                &InputEvent::Key {
+                    key: "Backspace".into(),
+                    mods: alt
+                },
+                TermMode::empty()
+            ),
+            &[0x1b, 0x7f]
+        );
     }
 
     #[test]
     fn alt_enter_prefixes_escape() {
         // Option/Alt+Enter → ESC+CR; agents (Claude, Codex) read this as insert-newline.
-        let alt = Mods { alt: true, ..Default::default() };
-        assert_eq!(encode(&InputEvent::Key { key: "Enter".into(), mods: alt }, TermMode::empty()), &[0x1b, b'\r']);
+        let alt = Mods {
+            alt: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            encode(
+                &InputEvent::Key {
+                    key: "Enter".into(),
+                    mods: alt
+                },
+                TermMode::empty()
+            ),
+            &[0x1b, b'\r']
+        );
     }
 
     #[test]
     fn arrows_respect_app_cursor_mode() {
-        let normal = encode(&InputEvent::Key { key: "ArrowUp".into(), mods: m() }, TermMode::empty());
+        let normal = encode(
+            &InputEvent::Key {
+                key: "ArrowUp".into(),
+                mods: m(),
+            },
+            TermMode::empty(),
+        );
         assert_eq!(normal, b"\x1b[A");
-        let app = encode(&InputEvent::Key { key: "ArrowUp".into(), mods: m() }, TermMode::APP_CURSOR);
+        let app = encode(
+            &InputEvent::Key {
+                key: "ArrowUp".into(),
+                mods: m(),
+            },
+            TermMode::APP_CURSOR,
+        );
         assert_eq!(app, b"\x1bOA");
     }
 
     #[test]
     fn modified_arrow_uses_csi_with_code() {
-        let mods = Mods { ctrl: true, ..Default::default() };
-        let out = encode(&InputEvent::Key { key: "ArrowRight".into(), mods }, TermMode::APP_CURSOR);
+        let mods = Mods {
+            ctrl: true,
+            ..Default::default()
+        };
+        let out = encode(
+            &InputEvent::Key {
+                key: "ArrowRight".into(),
+                mods,
+            },
+            TermMode::APP_CURSOR,
+        );
         assert_eq!(out, b"\x1b[1;5C");
     }
 
     #[test]
     fn ctrl_letter_is_control_char() {
-        let mods = Mods { ctrl: true, ..Default::default() };
-        let out = encode(&InputEvent::Key { key: "c".into(), mods }, TermMode::empty());
+        let mods = Mods {
+            ctrl: true,
+            ..Default::default()
+        };
+        let out = encode(
+            &InputEvent::Key {
+                key: "c".into(),
+                mods,
+            },
+            TermMode::empty(),
+        );
         assert_eq!(out, &[0x03]);
     }
 
     #[test]
     fn alt_letter_prefixes_escape() {
-        let mods = Mods { alt: true, ..Default::default() };
-        let out = encode(&InputEvent::Key { key: "b".into(), mods }, TermMode::empty());
+        let mods = Mods {
+            alt: true,
+            ..Default::default()
+        };
+        let out = encode(
+            &InputEvent::Key {
+                key: "b".into(),
+                mods,
+            },
+            TermMode::empty(),
+        );
         assert_eq!(out, b"\x1bb");
     }
 
     #[test]
     fn shift_tab_is_back_tab() {
-        let mods = Mods { shift: true, ..Default::default() };
-        let out = encode(&InputEvent::Key { key: "Tab".into(), mods }, TermMode::empty());
+        let mods = Mods {
+            shift: true,
+            ..Default::default()
+        };
+        let out = encode(
+            &InputEvent::Key {
+                key: "Tab".into(),
+                mods,
+            },
+            TermMode::empty(),
+        );
         assert_eq!(out, b"\x1b[Z");
     }
 
     #[test]
     fn function_and_tilde_keys() {
-        assert_eq!(encode(&InputEvent::Key { key: "F1".into(), mods: m() }, TermMode::empty()), b"\x1bOP");
-        assert_eq!(encode(&InputEvent::Key { key: "F5".into(), mods: m() }, TermMode::empty()), b"\x1b[15~");
-        assert_eq!(encode(&InputEvent::Key { key: "PageUp".into(), mods: m() }, TermMode::empty()), b"\x1b[5~");
+        assert_eq!(
+            encode(
+                &InputEvent::Key {
+                    key: "F1".into(),
+                    mods: m()
+                },
+                TermMode::empty()
+            ),
+            b"\x1bOP"
+        );
+        assert_eq!(
+            encode(
+                &InputEvent::Key {
+                    key: "F5".into(),
+                    mods: m()
+                },
+                TermMode::empty()
+            ),
+            b"\x1b[15~"
+        );
+        assert_eq!(
+            encode(
+                &InputEvent::Key {
+                    key: "PageUp".into(),
+                    mods: m()
+                },
+                TermMode::empty()
+            ),
+            b"\x1b[5~"
+        );
     }
 
     #[test]
@@ -390,12 +564,24 @@ mod tests {
     #[test]
     fn sgr_mouse_press_and_release() {
         let press = encode(
-            &InputEvent::Mouse { action: MouseAction::Down, button: 0, col: 12, row: 4, mods: m() },
+            &InputEvent::Mouse {
+                action: MouseAction::Down,
+                button: 0,
+                col: 12,
+                row: 4,
+                mods: m(),
+            },
             TermMode::SGR_MOUSE | TermMode::MOUSE_REPORT_CLICK,
         );
         assert_eq!(press, b"\x1b[<0;13;5M");
         let release = encode(
-            &InputEvent::Mouse { action: MouseAction::Up, button: 0, col: 12, row: 4, mods: m() },
+            &InputEvent::Mouse {
+                action: MouseAction::Up,
+                button: 0,
+                col: 12,
+                row: 4,
+                mods: m(),
+            },
             TermMode::SGR_MOUSE | TermMode::MOUSE_REPORT_CLICK,
         );
         assert_eq!(release, b"\x1b[<0;13;5m");
@@ -404,7 +590,13 @@ mod tests {
     #[test]
     fn sgr_wheel_up_uses_button_64() {
         let out = encode(
-            &InputEvent::Mouse { action: MouseAction::WheelUp, button: 0, col: 0, row: 0, mods: m() },
+            &InputEvent::Mouse {
+                action: MouseAction::WheelUp,
+                button: 0,
+                col: 0,
+                row: 0,
+                mods: m(),
+            },
             TermMode::SGR_MOUSE,
         );
         assert_eq!(out, b"\x1b[<64;1;1M");
@@ -413,7 +605,13 @@ mod tests {
     #[test]
     fn no_mouse_bytes_when_reporting_off() {
         let out = encode(
-            &InputEvent::Mouse { action: MouseAction::Down, button: 0, col: 1, row: 1, mods: m() },
+            &InputEvent::Mouse {
+                action: MouseAction::Down,
+                button: 0,
+                col: 1,
+                row: 1,
+                mods: m(),
+            },
             TermMode::empty(),
         );
         assert!(out.is_empty());
@@ -422,7 +620,13 @@ mod tests {
     #[test]
     fn x10_mouse_when_sgr_off() {
         let out = encode(
-            &InputEvent::Mouse { action: MouseAction::Down, button: 0, col: 0, row: 0, mods: m() },
+            &InputEvent::Mouse {
+                action: MouseAction::Down,
+                button: 0,
+                col: 0,
+                row: 0,
+                mods: m(),
+            },
             TermMode::MOUSE_REPORT_CLICK,
         );
         assert_eq!(out, &[0x1b, b'[', b'M', 32, 33, 33]);

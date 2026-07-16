@@ -1,13 +1,13 @@
-pub mod paths;
-pub mod protocol;
 pub mod daemon;
-pub mod sidecar;
 pub mod db;
 pub mod emitter;
-pub mod rpc_serve;
 pub mod notes;
+pub mod paths;
+pub mod protocol;
+pub mod rpc_serve;
 pub mod services;
 pub mod settings;
+pub mod sidecar;
 pub mod state;
 pub mod types;
 
@@ -56,7 +56,10 @@ pub fn raise_fd_limit() {
         // Back off until one sticks — kernels can reject specific values.
         let mut cur = want;
         loop {
-            let new = libc::rlimit { rlim_cur: cur, rlim_max: rl.rlim_max };
+            let new = libc::rlimit {
+                rlim_cur: cur,
+                rlim_max: rl.rlim_max,
+            };
             if libc::setrlimit(libc::RLIMIT_NOFILE, &new) == 0 {
                 eprintln!("raise_fd_limit: RLIMIT_NOFILE soft limit → {cur}");
                 return;

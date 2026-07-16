@@ -16,7 +16,11 @@ pub fn internal_data_dir() -> PathBuf {
 /// that an explicit `debug` flag here always maps to the `-dev` suffix.
 pub fn internal_data_dir_for_bundle(bundle_id: &str, debug: bool) -> PathBuf {
     let home = dirs::home_dir().expect("no home dir");
-    let id = if debug { format!("{bundle_id}-dev") } else { bundle_id.to_string() };
+    let id = if debug {
+        format!("{bundle_id}-dev")
+    } else {
+        bundle_id.to_string()
+    };
     home.join("Library").join("Application Support").join(id)
 }
 
@@ -31,7 +35,11 @@ pub fn user_data_dir_for(debug: bool) -> PathBuf {
         return PathBuf::from(dir);
     }
     let home = dirs::home_dir().expect("no home dir");
-    if debug { home.join(".verne-dev") } else { home.join(".verne") }
+    if debug {
+        home.join(".verne-dev")
+    } else {
+        home.join(".verne")
+    }
 }
 
 pub fn socket_path() -> PathBuf {
@@ -54,10 +62,17 @@ pub fn sidecar_pid_file_path() -> PathBuf {
 /// `VERNE_HOOK_PORT`; dev/prod default to distinct ports so two instances don't
 /// collide. The sidecar still falls back to an ephemeral port if this is taken.
 pub fn hook_port() -> u16 {
-    if let Some(p) = std::env::var("VERNE_HOOK_PORT").ok().and_then(|v| v.parse::<u16>().ok()) {
+    if let Some(p) = std::env::var("VERNE_HOOK_PORT")
+        .ok()
+        .and_then(|v| v.parse::<u16>().ok())
+    {
         return p;
     }
-    if cfg!(debug_assertions) { 9611 } else { 9610 }
+    if cfg!(debug_assertions) {
+        9611
+    } else {
+        9610
+    }
 }
 
 pub fn browser_control_file() -> PathBuf {
@@ -93,10 +108,17 @@ pub fn notes_dir(root_path: &str) -> PathBuf {
 /// else falls back to the build-time default. The renderer learns the actual
 /// port via the `get_ws_port` RPC, so host and daemon always agree.
 pub fn ws_port() -> u16 {
-    if let Some(p) = std::env::var("VERNE_WS_PORT").ok().and_then(|v| v.parse::<u16>().ok()) {
+    if let Some(p) = std::env::var("VERNE_WS_PORT")
+        .ok()
+        .and_then(|v| v.parse::<u16>().ok())
+    {
         return p;
     }
-    if cfg!(debug_assertions) { 9601 } else { 9600 }
+    if cfg!(debug_assertions) {
+        9601
+    } else {
+        9600
+    }
 }
 
 pub fn pid_file_path() -> PathBuf {
@@ -115,11 +137,17 @@ pub fn ensure_cli_symlink() -> std::io::Result<PathBuf> {
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no home dir"))?;
     let bin_dir = home.join(".local").join("bin");
     std::fs::create_dir_all(&bin_dir)?;
-    let name = if cfg!(debug_assertions) { "verne-dev" } else { "verne" };
+    let name = if cfg!(debug_assertions) {
+        "verne-dev"
+    } else {
+        "verne"
+    };
     let link = bin_dir.join(name);
     let target = std::env::current_exe()?;
     if let Ok(existing) = std::fs::read_link(&link) {
-        if existing == target { return Ok(link); }
+        if existing == target {
+            return Ok(link);
+        }
     }
     if link.symlink_metadata().is_ok() {
         std::fs::remove_file(&link)?;

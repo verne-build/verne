@@ -4,8 +4,8 @@
 //! sidecar via the `agent-hook-fileops` event (Electron forwards it).
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -33,12 +33,39 @@ fn bump_block_gen(tab_id: &str) -> u64 {
     *g
 }
 fn current_block_gen(tab_id: &str) -> u64 {
-    block_gen().lock().unwrap().get(tab_id).copied().unwrap_or(0)
+    block_gen()
+        .lock()
+        .unwrap()
+        .get(tab_id)
+        .copied()
+        .unwrap_or(0)
 }
 /// Agents whose "blocked" is debounced (auto tool-approval can fire a permission
 /// hook that's instantly superseded by completion).
 fn debounce_blocked(agent_type: &str) -> bool {
     matches!(agent_type, "codex" | "antigravity")
+}
+
+/// A main-loop `Stop` can fire while background subagents are still running
+/// (Claude emits Stop on every loop yield). Defer the idle commit; any newer
+/// event (next tool hook) bumps the generation and cancels it.
+const IDLE_DEBOUNCE_MS: u64 = 2_500;
+
+fn debounce_idle(event: &str) -> bool {
+    matches!(event, "Stop" | "stop")
+}
+
+/// Debounce window for a hook commit, or `None` to commit immediately. Only
+/// `Stop`→idle and auto-approval agents' `blocked` are deferred; `SessionEnd`/
+/// `Notification` idle and all `working` stay immediate.
+fn commit_debounce_ms(event: &str, mapped_state: Option<&str>, agent_type: &str) -> Option<u64> {
+    if mapped_state == Some("blocked") && debounce_blocked(agent_type) {
+        Some(BLOCK_DEBOUNCE_MS)
+    } else if mapped_state == Some("idle") && debounce_idle(event) {
+        Some(IDLE_DEBOUNCE_MS)
+    } else {
+        None
+    }
 }
 
 /// Map a hook event + payload to an agent state string.
@@ -66,14 +93,22 @@ fn parse_state(state: Option<&str>) -> Option<crate::services::detect::AgentStat
     }
 }
 
-fn hook_display_title(agent_type: &str, event: &str, payload: &serde_json::Value) -> Option<String> {
+fn hook_display_title(
+    agent_type: &str,
+    event: &str,
+    payload: &serde_json::Value,
+) -> Option<String> {
     use crate::services::agent_status::manifest::TitleStrategy;
 
     let config = crate::services::agent_status::manifest::title_config(agent_type);
     if config.strategy == TitleStrategy::Osc {
         return None;
     }
-    if !config.prompt_events.iter().any(|candidate| candidate == event) {
+    if !config
+        .prompt_events
+        .iter()
+        .any(|candidate| candidate == event)
+    {
         return None;
     }
     for path in &config.prompt_fields {
@@ -203,12 +238,16 @@ async fn handle_connection(
             header_end = idx + 4;
             break;
         }
-        if accum.len() > 1_048_576 { return; } // 1 MB header cap
+        if accum.len() > 1_048_576 {
+            return;
+        } // 1 MB header cap
     }
 
     let head = String::from_utf8_lossy(&accum[..header_end]);
     if !head.starts_with("POST /hook") {
-        let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n").await;
+        let _ = stream
+            .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n")
+            .await;
         return;
     }
 
@@ -221,9 +260,14 @@ async fn handle_connection(
     }
 
     // Secret check
-    let presented = headers.get("x-verne-daemon-secret").map(|s| s.as_str()).unwrap_or("");
+    let presented = headers
+        .get("x-verne-daemon-secret")
+        .map(|s| s.as_str())
+        .unwrap_or("");
     if presented != secret {
-        let _ = stream.write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n").await;
+        let _ = stream
+            .write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n")
+            .await;
         return;
     }
 
@@ -242,7 +286,9 @@ async fn handle_connection(
         };
         body.extend_from_slice(&tmp[..n]);
     }
-    if body.len() > content_length { body.truncate(content_length); }
+    if body.len() > content_length {
+        body.truncate(content_length);
+    }
 
     let event = headers.get("x-verne-event").cloned().unwrap_or_default();
     let agent_id = headers.get("x-verne-agent-id").cloned().unwrap_or_default();
@@ -299,21 +345,27 @@ async fn handle_connection(
                 };
                 log::info!(
                     "[hook] event={} sid={} tab={} state={:?} source={} seq={}",
-                    event, session_id, tab_id, mapped_state, hook_source, hook_sequence,
+                    event,
+                    session_id,
+                    tab_id,
+                    mapped_state,
+                    hook_source,
+                    hook_sequence,
                 );
                 let gen = bump_block_gen(tab_id);
-                if mapped_state == Some("blocked") && debounce_blocked(&agent_type) {
-                    // Defer the blocked commit: only fire if no newer event arrives
-                    // within the window. An auto-approved tool's completion event
-                    // (→ working) bumps the generation and supersedes this.
+                if let Some(debounce_ms) = commit_debounce_ms(&event, mapped_state, &agent_type) {
+                    // Defer the commit: only fire if no newer event arrives within
+                    // the window. A blocked→completion (→ working) or a transient
+                    // Stop→next-tool event bumps the generation and supersedes this.
                     let sessions = sessions.clone();
                     let event_bus = event_bus.clone();
                     let tab = tab_id.to_string();
                     let agent_type = agent_type.clone();
                     let session_id = session_id.clone();
                     let hook_source = hook_source.clone();
+                    let state = parse_state(mapped_state);
                     tokio::spawn(async move {
-                        tokio::time::sleep(std::time::Duration::from_millis(BLOCK_DEBOUNCE_MS)).await;
+                        tokio::time::sleep(std::time::Duration::from_millis(debounce_ms)).await;
                         if current_block_gen(&tab) != gen {
                             return; // superseded by a newer event
                         }
@@ -323,11 +375,11 @@ async fn handle_connection(
                             &tab,
                             &agent_type,
                             &session_id,
-                            None,
-                            false,
+                            display_title,
+                            user_prompt_submitted,
                             &hook_source,
                             hook_sequence,
-                            Some(crate::services::detect::AgentState::Blocked),
+                            state,
                         );
                     });
                 } else {
@@ -379,7 +431,9 @@ async fn handle_connection(
         );
     }
 
-    let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n").await;
+    let _ = stream
+        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+        .await;
 }
 
 fn apply_hook_report(
@@ -463,6 +517,57 @@ mod tests {
     #[test]
     fn ignores_osc_only_agents() {
         let payload = serde_json::json!({ "prompt": "keep me out of the title" });
-        assert_eq!(hook_display_title("claude", "UserPromptSubmit", &payload), None);
+        assert_eq!(
+            hook_display_title("claude", "UserPromptSubmit", &payload),
+            None
+        );
+    }
+
+    #[test]
+    fn debounces_stop_idle() {
+        assert_eq!(
+            commit_debounce_ms("Stop", Some("idle"), "claude"),
+            Some(IDLE_DEBOUNCE_MS)
+        );
+    }
+
+    #[test]
+    fn session_end_idle_immediate() {
+        assert_eq!(
+            commit_debounce_ms("SessionEnd", Some("idle"), "claude"),
+            None
+        );
+    }
+
+    #[test]
+    fn notification_idle_immediate() {
+        assert_eq!(
+            commit_debounce_ms("Notification", Some("idle"), "claude"),
+            None
+        );
+    }
+
+    #[test]
+    fn working_never_debounced() {
+        assert_eq!(
+            commit_debounce_ms("PreToolUse", Some("working"), "claude"),
+            None
+        );
+    }
+
+    #[test]
+    fn debounces_codex_blocked() {
+        assert_eq!(
+            commit_debounce_ms("PermissionRequest", Some("blocked"), "codex"),
+            Some(BLOCK_DEBOUNCE_MS)
+        );
+    }
+
+    #[test]
+    fn claude_blocked_immediate() {
+        assert_eq!(
+            commit_debounce_ms("PermissionRequest", Some("blocked"), "claude"),
+            None
+        );
     }
 }

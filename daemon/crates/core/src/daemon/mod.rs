@@ -5,13 +5,13 @@
 //! dispatch + DB tab logic (kept in this crate so paths resolve); the daemon
 //! process itself uses `rpc_daemon`.
 
-pub mod rpc_server; // sidecar dispatch (full surface)
-pub mod rpc_daemon; // daemon dispatch (PTY/detect)
-pub mod lifecycle;
-pub mod tabs; // sidecar tab row logic
-pub mod tab_pty; // daemon PTY spawn/kill
+pub mod agent_status;
 pub mod hook_receiver; // daemon hook HTTP listener
-pub mod agent_status; // daemon-owned identity/state engine
+pub mod lifecycle;
+pub mod rpc_daemon; // daemon dispatch (PTY/detect)
+pub mod rpc_server; // sidecar dispatch (full surface)
+pub mod tab_pty; // daemon PTY spawn/kill
+pub mod tabs; // sidecar tab row logic // daemon-owned identity/state engine
 
 /// Run the lean daemon: WS terminal bridge, hooks, status, and PTY RPC.
 /// It stays DB-free; Electron persists presentation snapshots only.
@@ -60,7 +60,11 @@ pub fn run() {
         // Hook HTTP receiver. Bind before the RPC serve so the port is stored
         // in DaemonState before Electron can call `__get_hook_config`.
         {
-            let secret = state.hook_secret.lock().map(|g| g.clone()).unwrap_or_default();
+            let secret = state
+                .hook_secret
+                .lock()
+                .map(|g| g.clone())
+                .unwrap_or_default();
             let desired = crate::paths::hook_port();
             let port = crate::daemon::hook_receiver::start(
                 std::sync::Arc::clone(&state.sessions),
@@ -69,7 +73,9 @@ pub fn run() {
                 desired,
             )
             .await;
-            state.hook_port.store(port, std::sync::atomic::Ordering::Relaxed);
+            state
+                .hook_port
+                .store(port, std::sync::atomic::Ordering::Relaxed);
         }
 
         crate::daemon::agent_status::start(

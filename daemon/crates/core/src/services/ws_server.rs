@@ -111,7 +111,11 @@ async fn handle_grid_connection(
     // Sync (consistent-cut snapshot) MUST reach the client before any delta so
     // it can size the grid. Send it synchronously before the forward loop —
     // deltas are now the biased-first arm, so we can't rely on queue order.
-    if ws_sink.send(Message::Binary(sync_frame.into())).await.is_err() {
+    if ws_sink
+        .send(Message::Binary(sync_frame.into()))
+        .await
+        .is_err()
+    {
         return;
     }
 
@@ -125,8 +129,7 @@ async fn handle_grid_connection(
 
     // In-flight fetch/search cancel flags, keyed by client reqId. A `cancel`
     // message flips the flag; the worker checks it between chunks and bails.
-    let inflight: Arc<Mutex<HashMap<u64, Arc<AtomicBool>>>> =
-        Arc::new(Mutex::new(HashMap::new()));
+    let inflight: Arc<Mutex<HashMap<u64, Arc<AtomicBool>>>> = Arc::new(Mutex::new(HashMap::new()));
 
     let emulator_fwd = emulator.clone();
     let fwd = tokio::spawn(async move {
@@ -170,7 +173,9 @@ async fn handle_grid_connection(
             Message::Close(_) => break,
             _ => continue,
         };
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else { continue };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+            continue;
+        };
         match v["type"].as_str() {
             Some("resize") => {
                 let cols = v["cols"].as_u64().unwrap_or(80) as u16;
@@ -210,10 +215,16 @@ async fn handle_grid_connection(
                             break;
                         }
                         let end = (start + CHUNK).min(to);
-                        let snap = emu.lock().ok().map(|e| (e.visual_rows(start, end), e.base()));
+                        let snap = emu
+                            .lock()
+                            .ok()
+                            .map(|e| (e.visual_rows(start, end), e.base()));
                         let Some((rows, base)) = snap else { break };
                         // rows: Vec<(Vec<WireCell>, bool)> — cells + wrap bit per row
-                        if tx.blocking_send(encode_history(req_id, start, base, &rows)).is_err() {
+                        if tx
+                            .blocking_send(encode_history(req_id, start, base, &rows))
+                            .is_err()
+                        {
                             break; // client gone
                         }
                         start = end;
@@ -297,8 +308,13 @@ mod fwd_tests {
 
         // Reply channel capacity is bounded: try_send fails past the bound.
         // One slot is already occupied by the reply queued above; fill the rest.
-        for _ in 0..63 { reply_tx.try_send(0).unwrap(); }
-        assert!(reply_tx.try_send(0).is_err(), "reply channel must be bounded");
+        for _ in 0..63 {
+            reply_tx.try_send(0).unwrap();
+        }
+        assert!(
+            reply_tx.try_send(0).is_err(),
+            "reply channel must be bounded"
+        );
     }
 }
 

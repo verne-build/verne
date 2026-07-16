@@ -109,7 +109,8 @@ pub fn init_db(conn: &Connection) {
     .unwrap();
 
     // Drop autocomplete_cache if it exists (feature removed)
-    conn.execute_batch("DROP TABLE IF EXISTS autocomplete_cache;").unwrap();
+    conn.execute_batch("DROP TABLE IF EXISTS autocomplete_cache;")
+        .unwrap();
 
     // Migrate recent_files: old schema used 'dir' column, new uses 'directory_id'
     let has_dir_col: bool = conn
@@ -140,7 +141,8 @@ pub fn init_db(conn: &Connection) {
         conn.execute_batch(
             "ALTER TABLE sidebar_state ADD COLUMN right_sidebar_view TEXT;\
              ALTER TABLE sidebar_state ADD COLUMN file_panel_active_id TEXT;",
-        ).unwrap();
+        )
+        .unwrap();
     }
 
     // Sidebar tabs: add diff metadata columns so pinned diff tabs can persist.
@@ -156,7 +158,8 @@ pub fn init_db(conn: &Connection) {
              ALTER TABLE sidebar_tabs ADD COLUMN diff_staged INTEGER;\
              ALTER TABLE sidebar_tabs ADD COLUMN diff_commit_id TEXT;\
              ALTER TABLE sidebar_tabs ADD COLUMN diff_commit_short_id TEXT;",
-        ).unwrap();
+        )
+        .unwrap();
     }
 
     // Phase 7: parent_directory_id for worktree workspaces (each worktree is a
@@ -180,7 +183,8 @@ pub fn init_db(conn: &Connection) {
         .map(|c| c > 0)
         .unwrap_or(false);
     if !has_tab_state {
-        conn.execute_batch("ALTER TABLE tabs ADD COLUMN last_agent_state TEXT;").unwrap();
+        conn.execute_batch("ALTER TABLE tabs ADD COLUMN last_agent_state TEXT;")
+            .unwrap();
     }
 
     // Add user_renamed flag to tabs (locks the label against auto-naming).
@@ -203,7 +207,8 @@ pub fn init_db(conn: &Connection) {
     if !has_dir_settings {
         conn.execute_batch(
             "ALTER TABLE directories ADD COLUMN settings_json TEXT NOT NULL DEFAULT '{}';",
-        ).unwrap();
+        )
+        .unwrap();
     }
 
     // sidebar_tabs / sidebar_state / recent_files: scope_type column for
@@ -293,7 +298,10 @@ pub fn init_db(conn: &Connection) {
         .map(|c| c > 0)
         .unwrap_or(false);
     if !has_pinned {
-        let _ = conn.execute("ALTER TABLE sidebar_tabs ADD COLUMN pinned BOOLEAN NOT NULL DEFAULT 0", []);
+        let _ = conn.execute(
+            "ALTER TABLE sidebar_tabs ADD COLUMN pinned BOOLEAN NOT NULL DEFAULT 0",
+            [],
+        );
     }
 
     // NOTE: tab→group backfill is owned by the frontend (`ingestGroups` in the
@@ -377,7 +385,8 @@ pub fn insert_directory(conn: &Connection, dir: &WorkingDirectory) {
             dir.sort_order,
             dir.parent_directory_id,
         ],
-    ).unwrap();
+    )
+    .unwrap();
 }
 
 pub fn get_directory_settings(conn: &Connection, dir_id: &str) -> crate::types::DirectorySettings {
@@ -465,7 +474,11 @@ pub fn rename_directory(conn: &Connection, id: &str, name: &str) -> Option<Worki
             params![name, id],
         )
         .unwrap();
-    if updated > 0 { get_directory(conn, id) } else { None }
+    if updated > 0 {
+        get_directory(conn, id)
+    } else {
+        None
+    }
 }
 
 pub fn reorder_directories(conn: &Connection, ids: &[String]) {
@@ -500,7 +513,11 @@ pub fn set_app_state(conn: &Connection, key: &str, value: Option<&str>) {
 
 // --- Editor tabs (open_tabs table) ---
 
-pub fn get_editor_tabs(conn: &Connection, scope_type: &str, scope_id: &str) -> Option<StoredTabState> {
+pub fn get_editor_tabs(
+    conn: &Connection,
+    scope_type: &str,
+    scope_id: &str,
+) -> Option<StoredTabState> {
     conn.query_row(
         "SELECT tabs, active_tab_id FROM open_tabs WHERE scope_type = ? AND scope_id = ?",
         params![scope_type, scope_id],
@@ -541,7 +558,12 @@ pub fn get_recent_files(conn: &Connection, scope_type: &str, scope_id: &str) -> 
     .collect()
 }
 
-pub fn save_editor_tabs(conn: &Connection, scope_type: &str, scope_id: &str, state: &StoredTabState) {
+pub fn save_editor_tabs(
+    conn: &Connection,
+    scope_type: &str,
+    scope_id: &str,
+    state: &StoredTabState,
+) {
     let tabs_json = serde_json::to_string(&state.tabs).unwrap();
     conn.execute(
         "INSERT OR REPLACE INTO open_tabs (scope_type, scope_id, tabs, active_tab_id) VALUES (?, ?, ?, ?)",
@@ -574,7 +596,10 @@ pub fn get_sidebar_tabs(conn: &Connection, scope_type: &str, scope_id: &str) -> 
             diff_commit_id: row.get(11)?,
             diff_commit_short_id: row.get(12)?,
             browser_url: row.get(13)?,
-            pinned: row.get::<_, Option<i64>>(14)?.map(|v| v != 0).unwrap_or(false),
+            pinned: row
+                .get::<_, Option<i64>>(14)?
+                .map(|v| v != 0)
+                .unwrap_or(false),
         })
     })
     .unwrap()
@@ -628,7 +653,11 @@ pub fn save_sidebar_tabs(
     .unwrap();
 }
 
-pub fn get_sidebar_state(conn: &Connection, scope_type: &str, scope_id: &str) -> Option<SidebarState> {
+pub fn get_sidebar_state(
+    conn: &Connection,
+    scope_type: &str,
+    scope_id: &str,
+) -> Option<SidebarState> {
     conn.query_row(
         "SELECT directory_id, active_tab_id, list_column_width, right_sidebar_view, file_panel_active_id FROM sidebar_state WHERE scope_type = ? AND directory_id = ?",
         params![scope_type, scope_id],
@@ -659,32 +688,40 @@ pub fn insert_tab(conn: &Connection, tab: &Tab) {
 }
 
 pub fn get_tabs(conn: &Connection, directory_id: Option<&str>) -> Vec<Tab> {
-    let map_row = |r: &rusqlite::Row<'_>| Ok(Tab {
-        id: r.get(0)?,
-        directory_id: r.get(1)?,
-        label: r.get(2)?,
-        cwd: r.get(3)?,
-        sort_order: r.get(4)?,
-        created_at: r.get(5)?,
-        last_agent_type: r.get(6)?,
-        last_agent_session_id: r.get(7)?,
-        last_agent_state: r.get(8)?,
-        user_renamed: r.get::<_, i64>(9)? != 0,
-    });
+    let map_row = |r: &rusqlite::Row<'_>| {
+        Ok(Tab {
+            id: r.get(0)?,
+            directory_id: r.get(1)?,
+            label: r.get(2)?,
+            cwd: r.get(3)?,
+            sort_order: r.get(4)?,
+            created_at: r.get(5)?,
+            last_agent_type: r.get(6)?,
+            last_agent_session_id: r.get(7)?,
+            last_agent_state: r.get(8)?,
+            user_renamed: r.get::<_, i64>(9)? != 0,
+        })
+    };
     match directory_id {
         Some(d) => {
             let mut s = conn.prepare(
                 "SELECT id, directory_id, label, cwd, sort_order, created_at, last_agent_type, last_agent_session_id, last_agent_state, user_renamed
                  FROM tabs WHERE directory_id = ?1 ORDER BY sort_order, created_at"
             ).unwrap();
-            s.query_map([d], map_row).unwrap().filter_map(|r| r.ok()).collect()
+            s.query_map([d], map_row)
+                .unwrap()
+                .filter_map(|r| r.ok())
+                .collect()
         }
         None => {
             let mut s = conn.prepare(
                 "SELECT id, directory_id, label, cwd, sort_order, created_at, last_agent_type, last_agent_session_id, last_agent_state, user_renamed
                  FROM tabs ORDER BY directory_id, sort_order, created_at"
             ).unwrap();
-            s.query_map([], map_row).unwrap().filter_map(|r| r.ok()).collect()
+            s.query_map([], map_row)
+                .unwrap()
+                .filter_map(|r| r.ok())
+                .collect()
         }
     }
 }
@@ -753,7 +790,8 @@ pub fn rename_tab(conn: &Connection, id: &str, label: &str) {
     conn.execute(
         "UPDATE tabs SET label = ?2, user_renamed = 1 WHERE id = ?1",
         params![id, label],
-    ).unwrap();
+    )
+    .unwrap();
 }
 
 pub fn reorder_tabs(conn: &Connection, ids: &[String]) {
@@ -766,7 +804,8 @@ pub fn reorder_tabs(conn: &Connection, ids: &[String]) {
 }
 
 pub fn delete_tab(conn: &Connection, id: &str) {
-    conn.execute("DELETE FROM tabs WHERE id = ?1", [id]).unwrap();
+    conn.execute("DELETE FROM tabs WHERE id = ?1", [id])
+        .unwrap();
 }
 
 // --- Tab group (split layout) CRUD ---
@@ -775,33 +814,53 @@ pub fn insert_group(conn: &Connection, g: &TabGroup) {
     conn.execute(
         "INSERT INTO tab_groups (id, directory_id, sort_order, active_pane_id, layout, created_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![g.id, g.directory_id, g.sort_order, g.active_pane_id, g.layout, g.created_at],
-    ).unwrap();
+        params![
+            g.id,
+            g.directory_id,
+            g.sort_order,
+            g.active_pane_id,
+            g.layout,
+            g.created_at
+        ],
+    )
+    .unwrap();
 }
 
 pub fn get_groups(conn: &Connection, directory_id: Option<&str>) -> Vec<TabGroup> {
-    let map_row = |r: &rusqlite::Row<'_>| Ok(TabGroup {
-        id: r.get(0)?,
-        directory_id: r.get(1)?,
-        sort_order: r.get(2)?,
-        active_pane_id: r.get(3)?,
-        layout: r.get(4)?,
-        created_at: r.get(5)?,
-    });
+    let map_row = |r: &rusqlite::Row<'_>| {
+        Ok(TabGroup {
+            id: r.get(0)?,
+            directory_id: r.get(1)?,
+            sort_order: r.get(2)?,
+            active_pane_id: r.get(3)?,
+            layout: r.get(4)?,
+            created_at: r.get(5)?,
+        })
+    };
     match directory_id {
         Some(d) => {
-            let mut s = conn.prepare(
-                "SELECT id, directory_id, sort_order, active_pane_id, layout, created_at
-                 FROM tab_groups WHERE directory_id = ?1 ORDER BY sort_order, created_at"
-            ).unwrap();
-            s.query_map([d], map_row).unwrap().filter_map(|r| r.ok()).collect()
+            let mut s = conn
+                .prepare(
+                    "SELECT id, directory_id, sort_order, active_pane_id, layout, created_at
+                 FROM tab_groups WHERE directory_id = ?1 ORDER BY sort_order, created_at",
+                )
+                .unwrap();
+            s.query_map([d], map_row)
+                .unwrap()
+                .filter_map(|r| r.ok())
+                .collect()
         }
         None => {
-            let mut s = conn.prepare(
-                "SELECT id, directory_id, sort_order, active_pane_id, layout, created_at
-                 FROM tab_groups ORDER BY directory_id, sort_order, created_at"
-            ).unwrap();
-            s.query_map([], map_row).unwrap().filter_map(|r| r.ok()).collect()
+            let mut s = conn
+                .prepare(
+                    "SELECT id, directory_id, sort_order, active_pane_id, layout, created_at
+                 FROM tab_groups ORDER BY directory_id, sort_order, created_at",
+                )
+                .unwrap();
+            s.query_map([], map_row)
+                .unwrap()
+                .filter_map(|r| r.ok())
+                .collect()
         }
     }
 }
@@ -811,10 +870,16 @@ pub fn next_group_sort_order(conn: &Connection, directory_id: &str) -> i64 {
         "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM tab_groups WHERE directory_id = ?1",
         [directory_id],
         |r| r.get(0),
-    ).unwrap_or(0)
+    )
+    .unwrap_or(0)
 }
 
-pub fn update_group_layout(conn: &Connection, id: &str, layout: &str, active_pane_id: Option<&str>) {
+pub fn update_group_layout(
+    conn: &Connection,
+    id: &str,
+    layout: &str,
+    active_pane_id: Option<&str>,
+) {
     conn.execute(
         "UPDATE tab_groups SET layout = ?2, active_pane_id = COALESCE(?3, active_pane_id) WHERE id = ?1",
         params![id, layout, active_pane_id],
@@ -825,7 +890,8 @@ pub fn set_group_active_pane(conn: &Connection, id: &str, pane_id: &str) {
     conn.execute(
         "UPDATE tab_groups SET active_pane_id = ?2 WHERE id = ?1",
         params![id, pane_id],
-    ).unwrap();
+    )
+    .unwrap();
 }
 
 pub fn reorder_groups(conn: &Connection, ids: &[String]) {
@@ -838,10 +904,17 @@ pub fn reorder_groups(conn: &Connection, ids: &[String]) {
 }
 
 pub fn delete_group(conn: &Connection, id: &str) {
-    conn.execute("DELETE FROM tab_groups WHERE id = ?1", [id]).unwrap();
+    conn.execute("DELETE FROM tab_groups WHERE id = ?1", [id])
+        .unwrap();
 }
 
-pub fn record_tab_session(conn: &Connection, session_id: &str, tab_id: &str, working_dir: &str, agent_type: &str) {
+pub fn record_tab_session(
+    conn: &Connection,
+    session_id: &str,
+    tab_id: &str,
+    working_dir: &str,
+    agent_type: &str,
+) {
     let now = chrono::Utc::now().timestamp_millis();
     conn.execute(
         "INSERT INTO tab_sessions (session_id, tab_id, agent_type, working_dir, created_at, last_seen_at)
@@ -856,7 +929,9 @@ pub fn tab_id_for_session(conn: &Connection, session_id: &str) -> Option<String>
         "SELECT tab_id FROM tab_sessions WHERE session_id = ?1",
         [session_id],
         |r| r.get(0),
-    ).optional().unwrap()
+    )
+    .optional()
+    .unwrap()
 }
 
 pub fn latest_tab_session(conn: &Connection, tab_id: &str) -> Option<TabSessionRow> {
@@ -864,15 +939,19 @@ pub fn latest_tab_session(conn: &Connection, tab_id: &str) -> Option<TabSessionR
         "SELECT session_id, tab_id, agent_type, working_dir, created_at, last_seen_at
          FROM tab_sessions WHERE tab_id = ?1 ORDER BY last_seen_at DESC LIMIT 1",
         [tab_id],
-        |r| Ok(TabSessionRow {
-            session_id: r.get(0)?,
-            tab_id: r.get(1)?,
-            agent_type: r.get(2)?,
-            working_dir: r.get(3)?,
-            created_at: r.get(4)?,
-            last_seen_at: r.get(5)?,
-        })
-    ).optional().unwrap()
+        |r| {
+            Ok(TabSessionRow {
+                session_id: r.get(0)?,
+                tab_id: r.get(1)?,
+                agent_type: r.get(2)?,
+                working_dir: r.get(3)?,
+                created_at: r.get(4)?,
+                last_seen_at: r.get(5)?,
+            })
+        },
+    )
+    .optional()
+    .unwrap()
 }
 
 #[cfg(test)]

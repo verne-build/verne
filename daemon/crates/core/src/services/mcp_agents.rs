@@ -74,7 +74,11 @@ fn install_disabled() -> bool {
 /// the wrong (`build.verne` vs `build.verne-dev`) data dir. Must stay paired
 /// with `verne_binary()`'s flavored symlink.
 pub fn mcp_server_name() -> &'static str {
-    if cfg!(debug_assertions) { "verne-dev" } else { "verne" }
+    if cfg!(debug_assertions) {
+        "verne-dev"
+    } else {
+        "verne"
+    }
 }
 
 /// The stable launcher path baked into agent configs: the `~/.local/bin/verne`
@@ -83,7 +87,11 @@ pub fn mcp_server_name() -> &'static str {
 /// running executable if the symlink is somehow absent.
 pub fn verne_binary() -> PathBuf {
     if let Some(home) = dirs::home_dir() {
-        let name = if cfg!(debug_assertions) { "verne-dev" } else { "verne" };
+        let name = if cfg!(debug_assertions) {
+            "verne-dev"
+        } else {
+            "verne"
+        };
         let link = home.join(".local/bin").join(name);
         if link.exists() {
             return link;
@@ -266,7 +274,13 @@ mod tests {
     #[test]
     fn set_nested_creates_outer_when_missing() {
         let mut cfg = serde_json::json!({});
-        json_set_nested(&mut cfg, "mcp", "verne", serde_json::json!({ "type": "local" })).unwrap();
+        json_set_nested(
+            &mut cfg,
+            "mcp",
+            "verne",
+            serde_json::json!({ "type": "local" }),
+        )
+        .unwrap();
         assert_eq!(cfg["mcp"]["verne"]["type"], "local");
     }
 
@@ -292,18 +306,41 @@ mod tests {
 
 struct Claude;
 impl McpAgent for Claude {
-    fn key(&self) -> &'static str { "claude" }
-    fn display_name(&self) -> &'static str { "Claude Code" }
-    fn binary_names(&self) -> &'static [&'static str] { &["claude"] }
+    fn key(&self) -> &'static str {
+        "claude"
+    }
+    fn display_name(&self) -> &'static str {
+        "Claude Code"
+    }
+    fn binary_names(&self) -> &'static [&'static str] {
+        &["claude"]
+    }
 
     fn ensure_mcp(&self, _verne: &Path) -> Result<(), String> {
-        if install_disabled() { return Ok(()); }
+        if install_disabled() {
+            return Ok(());
+        }
         let bin = resolve_on_path(self.binary_names()).ok_or("claude CLI not found")?;
-        let v = crate::paths::mcp_launcher_path().to_string_lossy().to_string();
+        let v = crate::paths::mcp_launcher_path()
+            .to_string_lossy()
+            .to_string();
         let name = mcp_server_name();
         // Idempotent: remove any prior entry, then add fresh (refreshes the path).
         let _ = run(&bin, &["mcp", "remove", name]);
-        let out = run(&bin, &["mcp", "add", "--scope", "user", "--transport", "stdio", name, "--", &v])?;
+        let out = run(
+            &bin,
+            &[
+                "mcp",
+                "add",
+                "--scope",
+                "user",
+                "--transport",
+                "stdio",
+                name,
+                "--",
+                &v,
+            ],
+        )?;
         if out.status.success() {
             Ok(())
         } else {
@@ -318,7 +355,9 @@ impl McpAgent for Claude {
     }
 
     fn status(&self) -> Status {
-        let Some(bin) = resolve_on_path(self.binary_names()) else { return Status::NotDetected };
+        let Some(bin) = resolve_on_path(self.binary_names()) else {
+            return Status::NotDetected;
+        };
         match run(&bin, &["mcp", "get", mcp_server_name()]) {
             Ok(o) if o.status.success() => Status::Registered,
             Ok(_) => Status::Detected,
@@ -367,14 +406,24 @@ impl Codex {
 }
 
 impl McpAgent for Codex {
-    fn key(&self) -> &'static str { "codex" }
-    fn display_name(&self) -> &'static str { "Codex" }
-    fn binary_names(&self) -> &'static [&'static str] { &["codex"] }
+    fn key(&self) -> &'static str {
+        "codex"
+    }
+    fn display_name(&self) -> &'static str {
+        "Codex"
+    }
+    fn binary_names(&self) -> &'static [&'static str] {
+        &["codex"]
+    }
 
     fn ensure_mcp(&self, _verne: &Path) -> Result<(), String> {
-        if install_disabled() { return Ok(()); }
+        if install_disabled() {
+            return Ok(());
+        }
         let bin = resolve_on_path(self.binary_names()).ok_or("codex CLI not found")?;
-        let v = crate::paths::mcp_launcher_path().to_string_lossy().to_string();
+        let v = crate::paths::mcp_launcher_path()
+            .to_string_lossy()
+            .to_string();
         let name = mcp_server_name();
         let _ = run(&bin, &["mcp", "remove", name]);
         let out = run(&bin, &["mcp", "add", name, "--", &v])?;
@@ -392,7 +441,9 @@ impl McpAgent for Codex {
     }
 
     fn status(&self) -> Status {
-        let Some(bin) = resolve_on_path(self.binary_names()) else { return Status::NotDetected };
+        let Some(bin) = resolve_on_path(self.binary_names()) else {
+            return Status::NotDetected;
+        };
         match run(&bin, &["mcp", "get", mcp_server_name()]) {
             Ok(o) if o.status.success() => Status::Registered,
             Ok(_) => Status::Detected,
@@ -415,20 +466,32 @@ struct Cursor;
 
 impl Cursor {
     fn config_path() -> PathBuf {
-        dirs::home_dir().unwrap_or_default().join(".cursor/mcp.json")
+        dirs::home_dir()
+            .unwrap_or_default()
+            .join(".cursor/mcp.json")
     }
 }
 
 impl McpAgent for Cursor {
-    fn key(&self) -> &'static str { "cursor" }
-    fn display_name(&self) -> &'static str { "Cursor CLI" }
-    fn binary_names(&self) -> &'static [&'static str] { &["cursor-agent", "agent"] }
+    fn key(&self) -> &'static str {
+        "cursor"
+    }
+    fn display_name(&self) -> &'static str {
+        "Cursor CLI"
+    }
+    fn binary_names(&self) -> &'static [&'static str] {
+        &["cursor-agent", "agent"]
+    }
 
     fn ensure_mcp(&self, _verne: &Path) -> Result<(), String> {
-        if install_disabled() { return Ok(()); }
+        if install_disabled() {
+            return Ok(());
+        }
         let path = Self::config_path();
         let name = mcp_server_name();
-        let v = crate::paths::mcp_launcher_path().to_string_lossy().to_string();
+        let v = crate::paths::mcp_launcher_path()
+            .to_string_lossy()
+            .to_string();
         let mut cfg = load_json(&path);
         json_set_nested(
             &mut cfg,
@@ -471,7 +534,11 @@ impl McpAgent for Cursor {
             .and_then(|s| s.get(name))
             .is_some();
         if !registered {
-            return if detected { Status::Detected } else { Status::NotDetected };
+            return if detected {
+                Status::Detected
+            } else {
+                Status::NotDetected
+            };
         }
         // Registered in mcp.json — check whether the CLI has it loaded vs. pending approval.
         if let Some(bin) = resolve_on_path(self.binary_names()) {
@@ -480,7 +547,11 @@ impl McpAgent for Cursor {
                 let pending = text
                     .lines()
                     .any(|l| l.contains(name) && l.contains("approval"));
-                return if pending { Status::NeedsApproval } else { Status::Registered };
+                return if pending {
+                    Status::NeedsApproval
+                } else {
+                    Status::Registered
+                };
             }
         }
         Status::Registered
@@ -511,14 +582,24 @@ impl OpenCode {
 }
 
 impl McpAgent for OpenCode {
-    fn key(&self) -> &'static str { "opencode" }
-    fn display_name(&self) -> &'static str { "OpenCode" }
-    fn binary_names(&self) -> &'static [&'static str] { &["opencode"] }
+    fn key(&self) -> &'static str {
+        "opencode"
+    }
+    fn display_name(&self) -> &'static str {
+        "OpenCode"
+    }
+    fn binary_names(&self) -> &'static [&'static str] {
+        &["opencode"]
+    }
 
     fn ensure_mcp(&self, _verne: &Path) -> Result<(), String> {
-        if install_disabled() { return Ok(()); }
+        if install_disabled() {
+            return Ok(());
+        }
         let path = Self::config_path();
-        let v = crate::paths::mcp_launcher_path().to_string_lossy().to_string();
+        let v = crate::paths::mcp_launcher_path()
+            .to_string_lossy()
+            .to_string();
         let mut cfg = load_json(&path);
         json_set_nested(
             &mut cfg,

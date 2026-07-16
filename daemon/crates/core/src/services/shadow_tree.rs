@@ -141,7 +141,10 @@ impl ShadowTree {
 
         let sig = sig();
         let ts = chrono::Utc::now().timestamp();
-        let msg = format!("shadow: {} {} {}{}", rel_path, ts, BASELINE_TAG, baseline_hex);
+        let msg = format!(
+            "shadow: {} {} {}{}",
+            rel_path, ts, BASELINE_TAG, baseline_hex
+        );
 
         let head = self.repo.head().map_err(|e| e.to_string())?;
         let parent = head.peel_to_commit().map_err(|e| e.to_string())?;
@@ -169,7 +172,10 @@ impl ShadowTree {
         fs::read_to_string(file_path).ok()
     }
 
-    pub fn read_file_with_baseline(&self, rel_path: &str) -> Result<Option<ShadowReadResult>, String> {
+    pub fn read_file_with_baseline(
+        &self,
+        rel_path: &str,
+    ) -> Result<Option<ShadowReadResult>, String> {
         validate_rel_path(rel_path)?;
         let content = match self.read_file(rel_path) {
             Some(c) => c,
@@ -178,7 +184,12 @@ impl ShadowTree {
 
         let head = match self.repo.head() {
             Ok(h) => h,
-            Err(_) => return Ok(Some(ShadowReadResult { content, baseline_hash: String::new() })),
+            Err(_) => {
+                return Ok(Some(ShadowReadResult {
+                    content,
+                    baseline_hash: String::new(),
+                }))
+            }
         };
         let start = head.peel_to_commit().map_err(|e| e.to_string())?;
 
@@ -198,7 +209,10 @@ impl ShadowTree {
             }
         }
 
-        Ok(Some(ShadowReadResult { content, baseline_hash: String::new() }))
+        Ok(Some(ShadowReadResult {
+            content,
+            baseline_hash: String::new(),
+        }))
     }
 
     pub fn diff_file(&self, rel_path: &str, disk_content: &str) -> Result<Vec<DiffHunk>, String> {
@@ -358,7 +372,11 @@ mod tests {
     use super::*;
 
     fn tmp(label: &str) -> PathBuf {
-        std::env::temp_dir().join(format!("verne-shadow-tree-{}-{}", label, std::process::id()))
+        std::env::temp_dir().join(format!(
+            "verne-shadow-tree-{}-{}",
+            label,
+            std::process::id()
+        ))
     }
 
     // ── validate_rel_path ────────────────────────────────────────────────────
@@ -425,9 +443,7 @@ mod tests {
         let st = ShadowTree::open(&internal, &project).expect("open");
         st.commit_file("foo.txt", "line1\n").expect("commit");
 
-        let hunks = st
-            .diff_file("foo.txt", "line1\nline2\n")
-            .expect("diff");
+        let hunks = st.diff_file("foo.txt", "line1\nline2\n").expect("diff");
         assert!(!hunks.is_empty(), "expected non-empty diff hunks");
 
         let _ = std::fs::remove_dir_all(&internal);
@@ -446,7 +462,10 @@ mod tests {
         st.commit_file("foo.txt", "line1\n").expect("commit");
 
         let hunks = st.diff_file("foo.txt", "line1\n").expect("diff");
-        assert!(hunks.is_empty(), "expected empty diff for identical content");
+        assert!(
+            hunks.is_empty(),
+            "expected empty diff for identical content"
+        );
 
         let _ = std::fs::remove_dir_all(&internal);
         let _ = std::fs::remove_dir_all(&project);

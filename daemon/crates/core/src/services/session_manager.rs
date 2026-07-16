@@ -797,7 +797,11 @@ pub fn create_raw_session(
 
     let base_path = shell_path();
     let new_path = match dirs::home_dir() {
-        Some(home) => format!("{}:{}", home.join(".local").join("bin").to_string_lossy(), base_path),
+        Some(home) => format!(
+            "{}:{}",
+            home.join(".local").join("bin").to_string_lossy(),
+            base_path
+        ),
         None => base_path,
     };
     cmd.env("PATH", &new_path);
@@ -946,7 +950,11 @@ pub fn create_session(
     // Common env — use login shell PATH so MCP servers can find node/bun/etc
     let base_path = shell_path();
     let new_path = match dirs::home_dir() {
-        Some(home) => format!("{}:{}", home.join(".local").join("bin").to_string_lossy(), base_path),
+        Some(home) => format!(
+            "{}:{}",
+            home.join(".local").join("bin").to_string_lossy(),
+            base_path
+        ),
         None => base_path,
     };
     cmd.env("PATH", &new_path);
@@ -1012,9 +1020,7 @@ pub fn create_session(
         last_output_at: last_output_at.clone(),
         output_sequence: output_sequence.clone(),
         resize_sequence: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-        current_size: std::sync::atomic::AtomicU32::new(Session::pack_size(
-            opts.cols, opts.rows,
-        )),
+        current_size: std::sync::atomic::AtomicU32::new(Session::pack_size(opts.cols, opts.rows)),
         last_interrupt_at: Arc::new(std::sync::atomic::AtomicI64::new(0)),
         agent_status: Arc::new(Mutex::new(
             crate::services::agent_status::AgentStatusEngine::default(),

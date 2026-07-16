@@ -8,6 +8,7 @@ import RightPanel from "./components/RightPanel.vue";
 import ResourceMonitor from "./components/ResourceMonitor.vue";
 import ThemeSelector from "./components/ThemeSelector.vue";
 import { Toaster } from "./components/ui/sonner";
+import { toast } from "vue-sonner";
 import { PanelLeft, FolderOpen, Check, Search } from "@lucide/vue";
 import PanelLeftFilled from "./components/icons/PanelLeftFilled.vue";
 import { Button } from "./components/ui/button";
@@ -330,6 +331,7 @@ async function newTerminal() {
     await store.createTab({ directoryId: dirId });
   } catch (e) {
     console.error("[App] newTerminal failed:", e);
+    toast.error(`Couldn't open terminal: ${e}`);
   }
 }
 
@@ -339,9 +341,13 @@ async function newAgentTerminal() {
   const cwd = store.selectedDirectory?.path;
   try {
     const ok = await review.launchAgentTab(dirId, cwd, settings.value.defaultAgent || "claude");
-    if (!ok) console.error("[App] newAgentTerminal: launch failed");
+    if (!ok) {
+      console.error("[App] newAgentTerminal: launch failed");
+      toast.error("Couldn't launch agent.");
+    }
   } catch (e) {
     console.error("[App] newAgentTerminal failed:", e);
+    toast.error(`Couldn't launch agent: ${e}`);
   }
 }
 

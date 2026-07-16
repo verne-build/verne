@@ -10,6 +10,14 @@ export default defineConfig({
   test: {
     environment: "node",
     // tests/renderer is a Playwright suite (real Chromium WebGL), not vitest.
-    exclude: [...configDefaults.exclude, "tests/renderer/**"],
+    exclude: [
+      ...configDefaults.exclude,
+      "tests/renderer/**",
+      "**/.pnpm-store/**",
+      "**/.worktrees/**",
+      "**/target/**",
+      "out/**",
+      "release/**",
+    ],
   },
 });

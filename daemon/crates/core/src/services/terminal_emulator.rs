@@ -39,10 +39,22 @@ impl TermColors {
         bg: (0x1e, 0x1e, 0x1e),
         cursor: (0xd8, 0xd8, 0xd8),
         ansi: [
-            (0x00, 0x00, 0x00), (0x80, 0x00, 0x00), (0x00, 0x80, 0x00), (0x80, 0x80, 0x00),
-            (0x00, 0x00, 0x80), (0x80, 0x00, 0x80), (0x00, 0x80, 0x80), (0xc0, 0xc0, 0xc0),
-            (0x80, 0x80, 0x80), (0xff, 0x00, 0x00), (0x00, 0xff, 0x00), (0xff, 0xff, 0x00),
-            (0x00, 0x00, 0xff), (0xff, 0x00, 0xff), (0x00, 0xff, 0xff), (0xff, 0xff, 0xff),
+            (0x00, 0x00, 0x00),
+            (0x80, 0x00, 0x00),
+            (0x00, 0x80, 0x00),
+            (0x80, 0x80, 0x00),
+            (0x00, 0x00, 0x80),
+            (0x80, 0x00, 0x80),
+            (0x00, 0x80, 0x80),
+            (0xc0, 0xc0, 0xc0),
+            (0x80, 0x80, 0x80),
+            (0xff, 0x00, 0x00),
+            (0x00, 0xff, 0x00),
+            (0xff, 0xff, 0x00),
+            (0x00, 0x00, 0xff),
+            (0xff, 0x00, 0xff),
+            (0x00, 0xff, 0xff),
+            (0xff, 0xff, 0xff),
         ],
     };
 
@@ -126,7 +138,11 @@ const MAX_RESPONSE_BUF: usize = 64 * 1024;
 
 impl ResponseCollector {
     fn new(size: Arc<Mutex<(u16, u16)>>, colors: Arc<Mutex<TermColors>>) -> Self {
-        Self { out: Arc::new(Mutex::new(Vec::new())), size, colors }
+        Self {
+            out: Arc::new(Mutex::new(Vec::new())),
+            size,
+            colors,
+        }
     }
 
     fn push(&self, bytes: &[u8]) {
@@ -220,7 +236,6 @@ fn is_dim_named(color: Color) -> bool {
     )
 }
 
-
 /// A cell counts as a trailing blank (trimmable at line end) when it's a plain
 /// space with default background and no visible attributes.
 fn is_blank(cell: &Cell) -> bool {
@@ -291,7 +306,10 @@ impl TerminalEmulator {
         let (cshape, cblink) = global_terminal_cursor();
         let config = Config {
             scrolling_history: scrollback,
-            default_cursor_style: CursorStyle { shape: cshape, blinking: cblink },
+            default_cursor_style: CursorStyle {
+                shape: cshape,
+                blinking: cblink,
+            },
             ..Default::default()
         };
         let term_size = TermSize::new(cols as usize, rows as usize);
@@ -326,7 +344,10 @@ impl TerminalEmulator {
 
     /// Set the fallback cursor style (user preference); apps' DECSCUSR wins.
     pub fn set_default_cursor_style(&mut self, shape: CursorShape, blink: bool) {
-        self.config.default_cursor_style = CursorStyle { shape, blinking: blink };
+        self.config.default_cursor_style = CursorStyle {
+            shape,
+            blinking: blink,
+        };
         self.term.set_options(self.config.clone());
         // Push the change to connected clients on the next coalescer tick (the
         // new cursor rides the delta header) instead of waiting for output.
@@ -350,7 +371,9 @@ impl TerminalEmulator {
         // Raise the scrollback limit past anything this batch can produce (≤ one
         // new line per byte) so alacritty can't silently evict — and lose the
         // count — mid-advance. Raising only sets a field; rows alloc lazily.
-        self.term.grid_mut().update_history(self.scrollback_cap + bytes.len());
+        self.term
+            .grid_mut()
+            .update_history(self.scrollback_cap + bytes.len());
         self.parser.advance(&mut self.term, bytes);
         // Trim back to the cap, counting the rows dropped off the top. `evicted`
         // is the stable base clients add to a visual index for an absolute id.
@@ -411,7 +434,8 @@ impl TerminalEmulator {
         self.rows = rows;
         self.cols = cols;
         *self.size.lock().unwrap() = (cols, rows);
-        self.term.resize(TermSize::new(cols as usize, rows as usize));
+        self.term
+            .resize(TermSize::new(cols as usize, rows as usize));
     }
 
     /// Visible cursor position as `(line, column)`, 0-based.
@@ -488,22 +512,48 @@ impl TerminalEmulator {
     fn cell_to_wire(cell: &Cell) -> WireCell {
         let mut flags = 0u16;
         let f = cell.flags;
-        if f.contains(Flags::BOLD) { flags |= wf::BOLD; }
-        if f.contains(Flags::DIM) { flags |= wf::DIM; }
-        if f.contains(Flags::ITALIC) { flags |= wf::ITALIC; }
-        if f.contains(Flags::UNDERLINE) { flags |= wf::UNDERLINE; }
-        if f.contains(Flags::DOUBLE_UNDERLINE) { flags |= wf::DOUBLE_UNDERLINE; }
-        if f.contains(Flags::UNDERCURL) { flags |= wf::UNDERCURL; }
-        if f.contains(Flags::DOTTED_UNDERLINE) { flags |= wf::DOTTED_UNDERLINE; }
-        if f.contains(Flags::DASHED_UNDERLINE) { flags |= wf::DASHED_UNDERLINE; }
-        if f.contains(Flags::INVERSE) { flags |= wf::INVERSE; }
-        if f.contains(Flags::STRIKEOUT) { flags |= wf::STRIKEOUT; }
-        if f.contains(Flags::HIDDEN) { flags |= wf::HIDDEN; }
+        if f.contains(Flags::BOLD) {
+            flags |= wf::BOLD;
+        }
+        if f.contains(Flags::DIM) {
+            flags |= wf::DIM;
+        }
+        if f.contains(Flags::ITALIC) {
+            flags |= wf::ITALIC;
+        }
+        if f.contains(Flags::UNDERLINE) {
+            flags |= wf::UNDERLINE;
+        }
+        if f.contains(Flags::DOUBLE_UNDERLINE) {
+            flags |= wf::DOUBLE_UNDERLINE;
+        }
+        if f.contains(Flags::UNDERCURL) {
+            flags |= wf::UNDERCURL;
+        }
+        if f.contains(Flags::DOTTED_UNDERLINE) {
+            flags |= wf::DOTTED_UNDERLINE;
+        }
+        if f.contains(Flags::DASHED_UNDERLINE) {
+            flags |= wf::DASHED_UNDERLINE;
+        }
+        if f.contains(Flags::INVERSE) {
+            flags |= wf::INVERSE;
+        }
+        if f.contains(Flags::STRIKEOUT) {
+            flags |= wf::STRIKEOUT;
+        }
+        if f.contains(Flags::HIDDEN) {
+            flags |= wf::HIDDEN;
+        }
         let wide = f.contains(Flags::WIDE_CHAR);
-        if wide { flags |= wf::WIDE; }
+        if wide {
+            flags |= wf::WIDE;
+        }
         // Dim-named fg/bg carry their faintness via the DIM flag (their base
         // color is emitted by wire_color).
-        if is_dim_named(cell.fg) || is_dim_named(cell.bg) { flags |= wf::DIM; }
+        if is_dim_named(cell.fg) || is_dim_named(cell.bg) {
+            flags |= wf::DIM;
+        }
         WireCell {
             ch: cell.c,
             fg: Self::wire_color(cell.fg),
@@ -549,7 +599,9 @@ impl TerminalEmulator {
     fn row_wrapped(&self, line: i32) -> bool {
         let grid = self.term.grid();
         let last = (self.cols as usize).saturating_sub(1);
-        grid[Line(line)][Column(last)].flags.contains(Flags::WRAPLINE)
+        grid[Line(line)][Column(last)]
+            .flags
+            .contains(Flags::WRAPLINE)
     }
 
     /// One wire cell per visible column for `line`, skipping wide spacers.
@@ -589,8 +641,7 @@ impl TerminalEmulator {
     pub fn viewport_snapshot(&self) -> GridSnapshot {
         let rows_cells: Vec<Vec<WireCell>> =
             (0..self.rows as i32).map(|l| self.wire_row(l)).collect();
-        let rows_wrapped: Vec<bool> =
-            (0..self.rows as i32).map(|l| self.row_wrapped(l)).collect();
+        let rows_wrapped: Vec<bool> = (0..self.rows as i32).map(|l| self.row_wrapped(l)).collect();
         GridSnapshot {
             rev: self.rev,
             cols: self.cols,
@@ -709,7 +760,11 @@ impl TerminalEmulator {
             return Vec::new();
         }
         let qlen = query.chars().count();
-        let needle = if case_sensitive { query.to_string() } else { query.to_lowercase() };
+        let needle = if case_sensitive {
+            query.to_string()
+        } else {
+            query.to_lowercase()
+        };
         let cols_n = self.cols as usize;
         let total = self.grid_total_lines();
         let grid = self.term.grid();
@@ -732,13 +787,21 @@ impl TerminalEmulator {
             // Case-fold a copy when insensitive; columns are looked up via `cols`,
             // which holds 1:1 for ASCII. Non-ASCII case folding that changes char
             // count is rare in terminals and may shift the column there.
-            let text = if case_sensitive { chars } else { chars.to_lowercase() };
+            let text = if case_sensitive {
+                chars
+            } else {
+                chars.to_lowercase()
+            };
             let mut byte_start = 0;
             while let Some(rel) = text[byte_start..].find(&needle) {
                 let byte_idx = byte_start + rel;
                 let ci = text[..byte_idx].chars().count();
                 let col = cols.get(ci).copied().unwrap_or(ci);
-                out.push(SearchMatch { line: i, col, len: qlen });
+                out.push(SearchMatch {
+                    line: i,
+                    col,
+                    len: qlen,
+                });
                 if out.len() >= limit {
                     return out;
                 }
@@ -754,7 +817,6 @@ impl TerminalEmulator {
     pub fn is_alt_screen(&self) -> bool {
         self.term.mode().contains(TermMode::ALT_SCREEN)
     }
-
 
     /// All logical lines (history + visible) as cells. Soft-wrapped rows
     /// (WRAPLINE on the last column) are rejoined; trailing blank cells trimmed.
@@ -839,8 +901,14 @@ mod tests {
         m.process(b"\x1b]8;;https://example.com\x1b\\ab\x1b]8;;\x1b\\c");
         let snap = m.viewport_snapshot();
         assert_eq!(snap.rows_cells[0][0].ch, 'a');
-        assert_eq!(snap.rows_cells[0][0].hyperlink.as_deref(), Some("https://example.com"));
-        assert_eq!(snap.rows_cells[0][1].hyperlink.as_deref(), Some("https://example.com"));
+        assert_eq!(
+            snap.rows_cells[0][0].hyperlink.as_deref(),
+            Some("https://example.com")
+        );
+        assert_eq!(
+            snap.rows_cells[0][1].hyperlink.as_deref(),
+            Some("https://example.com")
+        );
         assert_eq!(snap.rows_cells[0][2].ch, 'c');
         assert_eq!(snap.rows_cells[0][2].hyperlink, None);
     }
@@ -862,7 +930,10 @@ mod tests {
         let mut m = TerminalEmulator::new(3, 10, 100);
         m.process(b"hello");
         let _ = m.take_delta();
-        assert!(m.take_delta().is_none(), "no new output should produce no delta");
+        assert!(
+            m.take_delta().is_none(),
+            "no new output should produce no delta"
+        );
     }
 
     #[test]
@@ -874,7 +945,11 @@ mod tests {
         let delta = m.take_delta().expect("output should produce a delta");
         assert!(delta.rev > rev_before, "rev must increase");
         assert_eq!(m.rev(), delta.rev);
-        let run = delta.runs.iter().find(|r| r.line == 0).expect("row 0 damaged");
+        let run = delta
+            .runs
+            .iter()
+            .find(|r| r.line == 0)
+            .expect("row 0 damaged");
         let text: String = run.cells.iter().map(|c| c.ch).collect();
         assert!(text.starts_with("AB"), "got {text:?}");
     }
@@ -902,7 +977,11 @@ mod tests {
     #[test]
     fn hidden_cursor_dectcem_reported_as_hidden() {
         let mut m = TerminalEmulator::new(5, 20, 100);
-        assert_eq!(m.viewport_snapshot().cursor_shape, "block", "shown by default");
+        assert_eq!(
+            m.viewport_snapshot().cursor_shape,
+            "block",
+            "shown by default"
+        );
         m.process(b"\x1b[?25l"); // DECTCEM off — program hides the cursor for an overlay
         assert_eq!(m.viewport_snapshot().cursor_shape, "hidden");
         m.process(b"\x1b[?25h"); // back on
@@ -914,16 +993,25 @@ mod tests {
         let mut m = TerminalEmulator::new(5, 20, 100);
         m.process(b"\x1b]11;?\x07");
         let s = String::from_utf8_lossy(&m.take_responses()).to_string();
-        assert!(s.contains("11;rgb:"), "expected OSC 11 color reply, got {s:?}");
+        assert!(
+            s.contains("11;rgb:"),
+            "expected OSC 11 color reply, got {s:?}"
+        );
     }
 
     #[test]
     fn osc11_reflects_pushed_theme_background() {
         let mut m = TerminalEmulator::new(5, 20, 100);
-        m.set_colors(TermColors { bg: (0xff, 0xff, 0xff), ..TermColors::DARK });
+        m.set_colors(TermColors {
+            bg: (0xff, 0xff, 0xff),
+            ..TermColors::DARK
+        });
         m.process(b"\x1b]11;?\x07");
         let s = String::from_utf8_lossy(&m.take_responses()).to_string();
-        assert!(s.contains("ffff/ffff/ffff"), "OSC 11 should report the set bg, got {s:?}");
+        assert!(
+            s.contains("ffff/ffff/ffff"),
+            "OSC 11 should report the set bg, got {s:?}"
+        );
     }
 
     #[test]
@@ -931,7 +1019,10 @@ mod tests {
         let mut m = TerminalEmulator::new(5, 20, 100);
         m.process(b"\x1b[c");
         let resp = m.take_responses();
-        assert!(resp.starts_with(b"\x1b[?"), "expected DA reply, got {resp:?}");
+        assert!(
+            resp.starts_with(b"\x1b[?"),
+            "expected DA reply, got {resp:?}"
+        );
     }
 
     #[test]
@@ -943,11 +1034,23 @@ mod tests {
         let _ = m.take_delta();
         m.process(b"\x1b[38;2;153;153;153mG\x1b[38;2;215;119;87mO");
         let delta = m.take_delta().expect("output should produce a delta");
-        let run = delta.runs.iter().find(|r| r.line == 0).expect("row 0 damaged");
+        let run = delta
+            .runs
+            .iter()
+            .find(|r| r.line == 0)
+            .expect("row 0 damaged");
         let g = run.cells.iter().find(|c| c.ch == 'G').expect("G present");
         let o = run.cells.iter().find(|c| c.ch == 'O').expect("O present");
-        assert_eq!(g.fg, WireColor::Rgb(153, 153, 153), "grey truecolor must survive");
-        assert_eq!(o.fg, WireColor::Rgb(215, 119, 87), "orange truecolor must survive");
+        assert_eq!(
+            g.fg,
+            WireColor::Rgb(153, 153, 153),
+            "grey truecolor must survive"
+        );
+        assert_eq!(
+            o.fg,
+            WireColor::Rgb(215, 119, 87),
+            "orange truecolor must survive"
+        );
     }
 
     #[test]
@@ -956,9 +1059,16 @@ mod tests {
         let _ = m.take_delta();
         m.process(b"\x1b[2mX"); // SGR 2 = faint
         let delta = m.take_delta().expect("output should produce a delta");
-        let run = delta.runs.iter().find(|r| r.line == 0).expect("row 0 damaged");
+        let run = delta
+            .runs
+            .iter()
+            .find(|r| r.line == 0)
+            .expect("row 0 damaged");
         let x = run.cells.iter().find(|c| c.ch == 'X').expect("X present");
-        assert!(x.flags & wf::DIM != 0, "faint cell must set the DIM wire flag");
+        assert!(
+            x.flags & wf::DIM != 0,
+            "faint cell must set the DIM wire flag"
+        );
     }
 
     #[test]
@@ -1012,14 +1122,49 @@ mod tests {
         // case-sensitive: only the two lowercase "beta" on line 1
         let hits = m.search("beta", 10, true);
         assert_eq!(hits.len(), 2);
-        assert_eq!(hits[0], SearchMatch { line: 1, col: 0, len: 4 });
-        assert_eq!(hits[1], SearchMatch { line: 1, col: 11, len: 4 });
+        assert_eq!(
+            hits[0],
+            SearchMatch {
+                line: 1,
+                col: 0,
+                len: 4
+            }
+        );
+        assert_eq!(
+            hits[1],
+            SearchMatch {
+                line: 1,
+                col: 11,
+                len: 4
+            }
+        );
         // case-insensitive: also matches "Beta" on line 0
         let ci = m.search("beta", 10, false);
         assert_eq!(ci.len(), 3);
-        assert_eq!(ci[0], SearchMatch { line: 0, col: 6, len: 4 });
-        assert_eq!(ci[1], SearchMatch { line: 1, col: 0, len: 4 });
-        assert_eq!(ci[2], SearchMatch { line: 1, col: 11, len: 4 });
+        assert_eq!(
+            ci[0],
+            SearchMatch {
+                line: 0,
+                col: 6,
+                len: 4
+            }
+        );
+        assert_eq!(
+            ci[1],
+            SearchMatch {
+                line: 1,
+                col: 0,
+                len: 4
+            }
+        );
+        assert_eq!(
+            ci[2],
+            SearchMatch {
+                line: 1,
+                col: 11,
+                len: 4
+            }
+        );
         // limit caps results
         assert_eq!(m.search("beta", 2, false).len(), 2);
         // empty query → no matches
@@ -1048,7 +1193,10 @@ mod tests {
     fn parses_visible_text() {
         let mut m = TerminalEmulator::new(24, 80, 1000);
         m.process(b"hello world");
-        assert_eq!(m.screen_text().lines().next().unwrap().trim_end(), "hello world");
+        assert_eq!(
+            m.screen_text().lines().next().unwrap().trim_end(),
+            "hello world"
+        );
     }
 
     #[test]
@@ -1076,13 +1224,20 @@ mod tests {
         m.process(CLEAR);
         let after = m.grid_total_lines();
         // Scrollback fully gone: total == screen height.
-        assert_eq!(after, m.rows as usize, "clear must zero scrollback: {before} -> {after}");
+        assert_eq!(
+            after, m.rows as usize,
+            "clear must zero scrollback: {before} -> {after}"
+        );
 
         // The clear forces a FULL frame (all rows) carrying the new, smaller
         // total so the client can drop stale scrollback — not a partial delta.
         let d = m.take_delta().expect("clear must produce a delta");
         assert_eq!(d.total_lines, after, "delta must carry the zeroed total");
-        assert_eq!(d.runs.len(), m.rows as usize, "clear must force a full frame");
+        assert_eq!(
+            d.runs.len(),
+            m.rows as usize,
+            "clear must force a full frame"
+        );
     }
 
     #[test]
@@ -1117,7 +1272,11 @@ mod tests {
         }
         batch.extend_from_slice(b"\x1b[3J\x1b[H\x1b[2J");
         m.process(&batch);
-        assert_eq!(m.grid_total_lines(), m.rows as usize, "bundled clear must zero");
+        assert_eq!(
+            m.grid_total_lines(),
+            m.rows as usize,
+            "bundled clear must zero"
+        );
     }
 
     #[test]
@@ -1131,7 +1290,10 @@ mod tests {
         let _ = m.take_delta();
         let before = m.grid_total_lines();
         m.process(b"\x1b[H\x1b[2J");
-        assert!(m.grid_total_lines() >= before, "Ctrl+L must keep scrollback");
+        assert!(
+            m.grid_total_lines() >= before,
+            "Ctrl+L must keep scrollback"
+        );
     }
 
     #[test]
@@ -1147,7 +1309,10 @@ mod tests {
         m.resize(5, 40);
         let text = m.all_text();
         let count = text.matches("line number 7").count();
-        assert_eq!(count, 1, "emulator duplicated scrollback on resize:\n{text}");
+        assert_eq!(
+            count, 1,
+            "emulator duplicated scrollback on resize:\n{text}"
+        );
     }
 
     #[test]
@@ -1171,9 +1336,13 @@ mod tests {
         fn absolute_id_of(m: &TerminalEmulator, needle: &str) -> Option<usize> {
             let total = m.grid_total_lines();
             let rows = m.visual_rows(0, total);
-            let idx = rows
-                .iter()
-                .position(|(cells, _)| cells.iter().map(|c| c.ch).collect::<String>().contains(needle))?;
+            let idx = rows.iter().position(|(cells, _)| {
+                cells
+                    .iter()
+                    .map(|c| c.ch)
+                    .collect::<String>()
+                    .contains(needle)
+            })?;
             Some(m.base() + idx)
         }
 
