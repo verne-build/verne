@@ -1,7 +1,7 @@
 {
   "name": "verne",
   "productName": "Verne",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "type": "module",
   "main": "out/main/index.cjs",
   "scripts": {
