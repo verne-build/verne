@@ -18,7 +18,7 @@ function focusTab(tabId: string): void {
       const dir = store.directories.find((d) => d.id === dirId);
       if (dir) store.selectDirectory(dir);
     }
-    store.setActiveTab(dirId, tabId);
+    store.focusSession(tabId);
     break;
   }
 }

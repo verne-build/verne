@@ -1,37 +1,28 @@
 import { defineStore } from "pinia";
 import { ref, shallowRef, triggerRef, computed, watch } from "vue";
-import type { WorkingDirectory, TabUpdatedEvent, Tab, TabGroup, LayoutNode, CreateTabOpts, AgentState } from "@/types";
+import type { WorkingDirectory, TabUpdatedEvent, Tab, CreateTabOpts, AgentState } from "@/types";
 import { useRpc } from "@/composables/useRpc";
 import { stopClient } from "@/composables/useLanguageClient";
 import { dropFilePanelScope } from "@/composables/useFilePanelTabs";
 import { forgetAgentNotificationTab } from "@/composables/useAgentNotifications";
 import {
-  parseLayout,
   firstLeaf,
   collectPaneIds,
-  insertSplit,
-  removeLeaf,
-  applySizes,
   singlePaneResizeTargets,
   type SplitDir,
 } from "@/lib/paneLayout";
 import { shouldApplyAgentRevision } from "@/lib/agentStatus";
 import { buildSessionsList, type SessionRow } from "@/lib/sessionsView";
 import {
-  deriveArrangement,
+  applyArrangementSizes,
+  insertIntoArrangement,
+  migrateGroupsToArrangements,
   parseArrangementMap,
+  pruneArrangement,
+  removeFromArrangement,
   serializeArrangementMap,
   type Arrangement,
 } from "@/lib/arrangement";
-
-/** A pane group with its layout parsed into a tree (DB stores `layout` as JSON). */
-export interface PaneGroup {
-  id: string;
-  directoryId: string;
-  sortOrder: number;
-  activePaneId?: string;
-  layout: LayoutNode;
-}
 
 const LSP_LANGUAGES = ["typescript"];
 
@@ -144,16 +135,162 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   // tab falls back to the previously-active tab, not index 0.
   const tabActivationHistory: Record<string, string[]> = {};
 
-  // Split layout: each directory has an ordered list of pane GROUPS (one pill
-  // per group in the tab bar); a group's `layout` is a tree of panes (= tabs).
-  // `activeTabIdByDirectory` stays the source of truth for "the focused tab"
-  // (Agents panel / detection / shortcuts read it) and is kept = the active
-  // group's active pane.
-  const tabGroupsByDirectory = ref<Record<string, PaneGroup[]>>({});
-  const activeGroupIdByDirectory = ref<Record<string, string | undefined>>({});
+  // ---- sessions model (slice 2: arrangements own writes) ----
+  // Per-scope layout tree of session (== tab) ids. This is now the single
+  // write model for "what panes are visible and how" — groups (below) are
+  // read-only, kept only for the one-time migration.
+  const arrangementByScope = ref<Record<string, Arrangement>>({});
+  let arrangementsHydrated: Promise<void> | null = null;
 
-  // Persisted "last active group" per directory (app_state JSON map) so the
-  // tab the user was on is restored on reload instead of defaulting to group 0.
+  function hydrateArrangements(): Promise<void> {
+    arrangementsHydrated ??= useRpc()
+      .request.getAppState({ key: "arrangement_by_scope" })
+      .then((raw) => {
+        arrangementByScope.value = { ...parseArrangementMap(raw), ...arrangementByScope.value };
+      })
+      .catch(() => {});
+    return arrangementsHydrated;
+  }
+
+  function arrangementFor(scopeId: string): Arrangement | null {
+    return arrangementByScope.value[scopeId] ?? null;
+  }
+
+  function writeArrangement(scopeId: string, arr: Arrangement | null) {
+    const map = { ...arrangementByScope.value };
+    if (arr) map[scopeId] = arr;
+    else delete map[scopeId];
+    arrangementByScope.value = map;
+    useRpc()
+      .request.setAppState({ key: "arrangement_by_scope", value: serializeArrangementMap(map) })
+      .catch(() => {});
+  }
+
+  const focusedByScope = ref<Record<string, string | undefined>>({});
+
+  function focusSession(sessionId: string) {
+    const dirId = tabDirId(sessionId);
+    if (!dirId) return;
+    focusedByScope.value = { ...focusedByScope.value, [dirId]: sessionId };
+    activeTabIdByDirectory.value = { ...activeTabIdByDirectory.value, [dirId]: sessionId };
+    acknowledgeTab(sessionId);
+    recordTabActivation(dirId, sessionId);
+  }
+
+  function tabDirId(sessionId: string): string | undefined {
+    for (const [dirId, tabs] of Object.entries(terminalTabsByDirectory.value))
+      if (tabs.some((t) => t.id === sessionId)) return dirId;
+    return undefined;
+  }
+
+  async function newSession(directoryId: string, opts: { cwd?: string } = {}): Promise<Tab> {
+    const existing = terminalTabsByDirectory.value[directoryId] ?? [];
+    const tab = await useRpc().request.tabsCreate({
+      directoryId,
+      cwd: opts.cwd,
+      label: String(existing.length + 1),
+    });
+    terminalTabsByDirectory.value = {
+      ...terminalTabsByDirectory.value,
+      [directoryId]: [...existing, tab],
+    };
+    writeArrangement(directoryId, { version: 1, layout: { pane: tab.id } });
+    focusSession(tab.id);
+    return tab;
+  }
+
+  // Compat alias — App.vue/menu callers use the old CreateTabOpts shape.
+  const createTab = (opts: CreateTabOpts): Promise<Tab> => newSession(opts.directoryId, { cwd: opts.cwd });
+
+  async function splitSessionWithNew(sessionId: string, direction: SplitDir, before = false): Promise<void> {
+    const dirId = tabDirId(sessionId);
+    if (!dirId) return;
+    const src = (terminalTabsByDirectory.value[dirId] ?? []).find((t) => t.id === sessionId);
+    const existing = terminalTabsByDirectory.value[dirId] ?? [];
+    const tab = await useRpc().request.tabsCreate({
+      directoryId: dirId,
+      cwd: src?.cwd,
+      label: String(existing.length + 1),
+    });
+    terminalTabsByDirectory.value = {
+      ...terminalTabsByDirectory.value,
+      [dirId]: [...existing, tab],
+    };
+    writeArrangement(dirId, insertIntoArrangement(arrangementFor(dirId), sessionId, tab.id, direction, before));
+    focusSession(tab.id);
+  }
+
+  // Same-scope only — cross-scope moves are forbidden by spec (a session
+  // never leaves the directory that owns its PTY).
+  function splitSessionWithExisting(sessionId: string, otherSessionId: string, direction: SplitDir, before = false): void {
+    const dirId = tabDirId(sessionId);
+    if (!dirId || tabDirId(otherSessionId) !== dirId) return;
+    const current = arrangementFor(dirId);
+    if (!current) return;
+    const without = removeFromArrangement(current, otherSessionId) ?? current;
+    writeArrangement(dirId, insertIntoArrangement(without, sessionId, otherSessionId, direction, before));
+    focusSession(otherSessionId);
+  }
+
+  /** Drop a session out of its scope's arrangement without killing its PTY. */
+  function removeFromView(sessionId: string): void {
+    const dirId = tabDirId(sessionId);
+    if (!dirId) return;
+    const current = arrangementFor(dirId);
+    if (!current) return;
+    const next = removeFromArrangement(current, sessionId);
+    writeArrangement(dirId, next);
+    if (focusedByScope.value[dirId] === sessionId && next) focusSession(firstLeaf(next.layout));
+  }
+
+  function setArrangementSizes(scopeId: string, key: string, sizes: number[]): void {
+    const current = arrangementFor(scopeId);
+    if (current) writeArrangement(scopeId, applyArrangementSizes(current, key, sizes));
+  }
+
+  // Title precedence: manual rename → daemon agent display title → live OSC
+  // title → foreground/agent process → numbered fallback. Computed live so
+  // renames propagate to rows. Named `sessionName` post slice-2 (one session
+  // == one pane, no more group indirection); `tabGroupName` alias kept for one
+  // slice to limit consumer churn.
+  function sessionName(sessionId: string): string {
+    const dirId = tabDirId(sessionId) ?? selectedDirectoryId.value ?? "";
+    const tab = (terminalTabsByDirectory.value[dirId] ?? []).find((t) => t.id === sessionId);
+
+    // 1. Manual rename always wins.
+    if (tab?.userRenamed && tab.label) return tab.label;
+    // 2. Hook-derived agent display title from the persistent daemon.
+    const rt = tabRuntime.value.get(sessionId);
+    if (rt?.displayTitle) return rt.displayTitle;
+    // 3. Live OSC title from the running process.
+    const osc = oscTitleByTab.value.get(sessionId);
+    if (osc) return osc;
+    // 4. Foreground process / agent name from detection.
+    if (rt?.agentType) return rt.agentType.charAt(0).toUpperCase() + rt.agentType.slice(1);
+    if (rt?.foregroundCommand) return rt.foregroundCommand;
+    // 5. Fallback: the numbered label.
+    return tab?.label ?? "shell";
+  }
+  const tabGroupName = sessionName;
+
+  /** A mounted full-area terminal reports its grid size; mirror it onto every
+   *  OTHER single-pane scope's PTY so a backgrounded tab is already the right
+   *  size when reactivated (no SIGWINCH jump → no TUI redraw miscount that
+   *  duplicates chrome / garbles text). Gated on the reporter being a single
+   *  pane: only then does its container equal the whole terminal viewport. Split
+   *  arrangements size their panes per-pane on activation, so they're left
+   *  alone. */
+  function syncViewportSize(reporterTabId: string, cols: number, rows: number) {
+    if (cols < 1 || rows < 1) return;
+    const layouts = Object.values(arrangementByScope.value).map((a) => a.layout);
+    for (const tabId of singlePaneResizeTargets(layouts, reporterTabId)) {
+      // No-op on the daemon if that tab has no live PTY — cheap and safe.
+      void useRpc().request.tabResize({ tabId, cols, rows }).catch(() => {});
+    }
+  }
+
+  // Persisted "last active group" per directory (app_state JSON map) — read
+  // only, feeds the one-time groups → arrangements migration below.
   const persistedActiveGroupByDir = ref<Record<string, string>>({});
   let activeGroupHydrated: Promise<void> | null = null;
   function hydrateActiveGroups(): Promise<void> {
@@ -171,190 +308,33 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     }
     return activeGroupHydrated;
   }
-  function persistActiveGroup(dirId: string, groupId: string | undefined) {
-    if (!groupId || persistedActiveGroupByDir.value[dirId] === groupId) return;
-    persistedActiveGroupByDir.value = { ...persistedActiveGroupByDir.value, [dirId]: groupId };
-    useRpc()
-      .request.setAppState({
-        key: "active_group_by_directory",
-        value: JSON.stringify(persistedActiveGroupByDir.value),
-      })
-      .catch(() => {});
-  }
 
-  function groupsOf(dirId: string): PaneGroup[] {
-    return tabGroupsByDirectory.value[dirId] ?? [];
-  }
-
-  // ---- sessions model (slice 1: derived from groups, dual-written) ----
-  const arrangementByScope = ref<Record<string, Arrangement>>({});
-  let arrangementsHydrated: Promise<void> | null = null;
-
-  function hydrateArrangements(): Promise<void> {
-    arrangementsHydrated ??= useRpc()
-      .request.getAppState({ key: "arrangement_by_scope" })
-      .then((raw) => {
-        arrangementByScope.value = { ...parseArrangementMap(raw), ...arrangementByScope.value };
-      })
-      .catch(() => {});
-    return arrangementsHydrated;
-  }
-
-  // Derive the scope's arrangement from its active group. Called wherever the
-  // active group/layout changes (syncActiveTab, updateGroupSizes).
-  function syncArrangement(dirId: string) {
-    const groups = groupsOf(dirId);
-    const gid = activeGroupIdByDirectory.value[dirId];
-    const g = groups.find((x) => x.id === gid) ?? groups[0];
-    const arr = deriveArrangement(g?.layout);
-    const map = { ...arrangementByScope.value };
-    if (arr) map[dirId] = arr;
-    else delete map[dirId];
-
-    // Skip no-op writes: compare serialized state.
-    const oldArr = arrangementByScope.value[dirId];
-    if (!arr && oldArr === undefined) return; // nothing stored, nothing to store
-    if (arr && oldArr && JSON.stringify(arr) === JSON.stringify(oldArr)) return;
-
-    arrangementByScope.value = map;
-    useRpc()
-      .request.setAppState({ key: "arrangement_by_scope", value: serializeArrangementMap(map) })
-      .catch(() => {});
-  }
-
-  // The owning tab's display name for a pane = the group's primary (first)
-  // pane label. Precedence: manual rename → daemon agent display title → live
-  // OSC title → foreground/agent process → numbered fallback. Computed live so
-  // renames propagate to rows.
-  function tabGroupName(paneId: string): string {
-    const loc = locateGroup(paneId);
-    const dirId = loc?.dirId ?? selectedDirectoryId.value ?? "";
-    const primaryId = loc ? firstLeaf(loc.group.layout) : paneId;
-    const tab = (terminalTabsByDirectory.value[dirId] ?? []).find((t) => t.id === primaryId);
-
-    // 1. Manual rename always wins.
-    if (tab?.userRenamed && tab.label) return tab.label;
-    // 2. Hook-derived agent display title from the persistent daemon.
-    const rt = tabRuntime.value.get(primaryId);
-    if (rt?.displayTitle) return rt.displayTitle;
-    // 3. Live OSC title from the running process.
-    const osc = oscTitleByTab.value.get(primaryId);
-    if (osc) return osc;
-    // 4. Foreground process / agent name from detection.
-    if (rt?.agentType) return rt.agentType.charAt(0).toUpperCase() + rt.agentType.slice(1);
-    if (rt?.foregroundCommand) return rt.foregroundCommand;
-    // 5. Fallback: the numbered label.
-    return tab?.label ?? "shell";
-  }
-
-  function locateGroup(paneId: string): { group: PaneGroup; dirId: string } | undefined {
-    for (const [dirId, groups] of Object.entries(tabGroupsByDirectory.value)) {
-      for (const group of groups) {
-        if (collectPaneIds(group.layout).includes(paneId)) return { group, dirId };
-      }
+  // One-time groups → arrangements conversion, gated per-directory (so a
+  // partially-converted install can't leave some directories stuck on the
+  // old model). After conversion (or if already converted), prune the
+  // arrangement against currently-live tabs and backfill if empty.
+  async function ensureLayoutModel2(dirId: string, tabs: Tab[]) {
+    await hydrateArrangements();
+    const flagKey = `layout_model:${dirId}`;
+    const model = await useRpc().request.getAppState({ key: flagKey });
+    if (model !== "2") {
+      const raw = await useRpc().request.groupsList({ directoryId: dirId });
+      const { arrangements, focusedByDir, orderByDir } = migrateGroupsToArrangements(
+        { [dirId]: raw },
+        { [dirId]: persistedActiveGroupByDir.value[dirId] },
+      );
+      if (arrangements[dirId]) writeArrangement(dirId, arrangements[dirId]);
+      if (orderByDir[dirId]?.length) await useRpc().request.tabsReorder({ ids: orderByDir[dirId] }).catch(() => {});
+      if (focusedByDir[dirId]) focusSession(focusedByDir[dirId]!);
+      await useRpc().request.setAppState({ key: flagKey, value: "2" }).catch(() => {});
     }
-    return undefined;
-  }
-
-  function setGroups(dirId: string, groups: PaneGroup[]) {
-    tabGroupsByDirectory.value = { ...tabGroupsByDirectory.value, [dirId]: groups };
-  }
-
-  /** A mounted full-area terminal reports its grid size; mirror it onto every
-   *  OTHER single-pane group's PTY so a backgrounded tab is already the right
-   *  size when reactivated (no SIGWINCH jump → no TUI redraw miscount that
-   *  duplicates chrome / garbles text). Gated on the reporter being a single
-   *  pane: only then does its container equal the whole terminal viewport. Split
-   *  groups size their panes per-pane on activation, so they're left alone. */
-  function syncViewportSize(reporterTabId: string, cols: number, rows: number) {
-    if (cols < 1 || rows < 1) return;
-    const layouts = Object.values(tabGroupsByDirectory.value).flatMap((gs) => gs.map((g) => g.layout));
-    for (const tabId of singlePaneResizeTargets(layouts, reporterTabId)) {
-      // No-op on the daemon if that tab has no live PTY — cheap and safe.
-      void useRpc().request.tabResize({ tabId, cols, rows }).catch(() => {});
-    }
-  }
-
-  function replaceGroup(dirId: string, group: PaneGroup) {
-    setGroups(dirId, groupsOf(dirId).map((g) => (g.id === group.id ? group : g)));
-  }
-
-  // Mirror the active group's active pane into activeTabIdByDirectory so every
-  // existing consumer of "the active tab" keeps working unchanged.
-  function syncActiveTab(dirId: string) {
-    const gid = activeGroupIdByDirectory.value[dirId];
-    const groups = groupsOf(dirId);
-    const g = groups.find((x) => x.id === gid) ?? groups[0];
-    if (g && g.id !== gid) {
-      activeGroupIdByDirectory.value = { ...activeGroupIdByDirectory.value, [dirId]: g.id };
-    }
-    const paneId = g?.activePaneId ?? (g ? firstLeaf(g.layout) : undefined);
-    activeTabIdByDirectory.value = { ...activeTabIdByDirectory.value, [dirId]: paneId };
-    acknowledgeTab(paneId);
-    recordTabActivation(dirId, paneId);
-    persistActiveGroup(dirId, g?.id);
-    syncArrangement(dirId);
-  }
-
-  // Serialize reconcile per directory so concurrent load paths (startup
-  // loadAllTabs + a dir-select loadTabsForDirectory) can't double-create groups.
-  const groupLoadInFlight = new Map<string, Promise<void>>();
-
-  function ingestGroups(dirId: string, tabs: Tab[]): Promise<void> {
-    const existing = groupLoadInFlight.get(dirId);
-    if (existing) return existing;
-    const run = ingestGroupsInner(dirId, tabs).finally(() => groupLoadInFlight.delete(dirId));
-    groupLoadInFlight.set(dirId, run);
-    return run;
-  }
-
-  // Fetch the directory's groups (always fresh — never trust a pre-fetched list,
-  // which could be stale after a concurrent reconcile), prune panes that no
-  // longer exist, and create a single-pane group for any uncovered tab. This is
-  // also the migration path: tabs that predate groups get a group on first load.
-  async function ingestGroupsInner(dirId: string, tabs: Tab[]) {
-    const rows = await useRpc().request.groupsList({ directoryId: dirId });
-    const valid = new Set(tabs.map((t) => t.id));
-    const covered = new Set<string>();
-    const groups: PaneGroup[] = [];
-    for (const r of rows) {
-      let layout: LayoutNode | null = parseLayout(r.layout);
-      for (const pid of collectPaneIds(layout)) {
-        if (!valid.has(pid)) layout = layout ? removeLeaf(layout, pid) : null;
-      }
-      if (!layout) {
-        // All panes gone — drop the orphan group.
-        void useRpc().request.groupDelete({ id: r.id }).catch(() => {});
-        continue;
-      }
-      collectPaneIds(layout).forEach((p) => covered.add(p));
-      const active = r.activePaneId && valid.has(r.activePaneId) ? r.activePaneId : firstLeaf(layout);
-      groups.push({ id: r.id, directoryId: dirId, sortOrder: r.sortOrder, activePaneId: active, layout });
-    }
-    // Tabs without a group → give each its own single-pane group.
-    for (const t of tabs) {
-      if (covered.has(t.id)) continue;
-      const g = await persistNewGroup(dirId, { pane: t.id }, t.id);
-      groups.push(g);
-    }
-    groups.sort((a, b) => a.sortOrder - b.sortOrder);
-    setGroups(dirId, groups);
-    if (!activeGroupIdByDirectory.value[dirId] && groups.length) {
-      const saved = persistedActiveGroupByDir.value[dirId];
-      const initial = saved && groups.some((g) => g.id === saved) ? saved : groups[0].id;
-      activeGroupIdByDirectory.value = { ...activeGroupIdByDirectory.value, [dirId]: initial };
-    }
-    syncActiveTab(dirId);
-    await ensureTerminal(dirId);
-  }
-
-  async function persistNewGroup(dirId: string, layout: LayoutNode, activePaneId: string): Promise<PaneGroup> {
-    const row = await useRpc().request.groupCreate({
-      directoryId: dirId,
-      layout: JSON.stringify(layout),
-      activePaneId,
-    });
-    return { id: row.id, directoryId: dirId, sortOrder: row.sortOrder, activePaneId, layout };
+    // Prune arrangements against live tabs (dead sessions dropped).
+    const live = new Set(tabs.map((t) => t.id));
+    const arr = arrangementFor(dirId);
+    const pruned = arr ? pruneArrangement(arr, live) : null;
+    if (JSON.stringify(pruned) !== JSON.stringify(arr)) writeArrangement(dirId, pruned);
+    if (!arrangementFor(dirId) && tabs.length)
+      writeArrangement(dirId, { version: 1, layout: { pane: tabs[tabs.length - 1].id } });
   }
 
   // A tab becoming active means the user is looking at it — clear the "done"
@@ -429,8 +409,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     };
     hydrateTabRuntime(tabs);
     await hydrateActiveGroups();
-    await hydrateArrangements();
-    await ingestGroups(directoryId, tabs);
+    await ensureLayoutModel2(directoryId, tabs);
     // Override DB-backed state with daemon's live truth (survives app restarts)
     void hydrateAgentStatesFromDaemon();
     void hydrateSessionLifecycle();
@@ -447,93 +426,13 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     terminalTabsByDirectory.value = { ...terminalTabsByDirectory.value, ...grouped };
     hydrateTabRuntime(tabs);
     await hydrateActiveGroups();
-    await hydrateArrangements();
     await Promise.all(
-      Object.entries(grouped).map(([dirId, list]) => ingestGroups(dirId, list)),
+      Object.entries(grouped).map(([dirId, list]) => ensureLayoutModel2(dirId, list)),
     );
     // Override DB-backed state with daemon's live truth (survives app restarts)
     void hydrateAgentStatesFromDaemon();
     void hydrateSessionLifecycle();
     return tabs;
-  }
-
-  async function createTab(opts: CreateTabOpts) {
-    const rpc = useRpc();
-    // Number new tabs by GROUP count, not total panes — splitting a tab adds
-    // panes (backend tabs) that must not inflate the "1, 2, 3…" tab numbering.
-    const withLabel: CreateTabOpts = opts.label
-      ? opts
-      : { ...opts, label: String(groupsOf(opts.directoryId).length + 1) };
-    const tab = await rpc.request.tabsCreate(withLabel);
-    const existing = terminalTabsByDirectory.value[opts.directoryId] ?? [];
-    terminalTabsByDirectory.value = {
-      ...terminalTabsByDirectory.value,
-      [opts.directoryId]: [...existing, tab],
-    };
-    // A new tab is its own single-pane group.
-    const group = await persistNewGroup(opts.directoryId, { pane: tab.id }, tab.id);
-    setGroups(opts.directoryId, [...groupsOf(opts.directoryId), group]);
-    activeGroupIdByDirectory.value = {
-      ...activeGroupIdByDirectory.value,
-      [opts.directoryId]: group.id,
-    };
-    syncActiveTab(opts.directoryId);
-    return tab;
-  }
-
-  /** Guarantee a directory always has ≥1 terminal — spawn a fresh one if empty. */
-  async function ensureTerminal(dirId: string) {
-    if (groupsOf(dirId).length === 0) await createTab({ directoryId: dirId });
-  }
-
-  /** Split a pane: spawn a new terminal beside it inside the same group. */
-  async function splitPane(paneId: string, direction: SplitDir, before = false) {
-    const loc = locateGroup(paneId);
-    if (!loc) return;
-    const { group, dirId } = loc;
-    const tabsInDir = terminalTabsByDirectory.value[dirId] ?? [];
-    const srcTab = tabsInDir.find((t) => t.id === paneId);
-    // New panes inherit the tab's name (the primary pane's label) — they're
-    // part of the same tab, not a new numbered tab.
-    const primaryLabel = tabsInDir.find((t) => t.id === firstLeaf(group.layout))?.label;
-    const tab = await useRpc().request.tabsCreate({ directoryId: dirId, cwd: srcTab?.cwd, label: primaryLabel });
-    terminalTabsByDirectory.value = {
-      ...terminalTabsByDirectory.value,
-      [dirId]: [...(terminalTabsByDirectory.value[dirId] ?? []), tab],
-    };
-    const layout = insertSplit(group.layout, paneId, tab.id, direction, before);
-    const next: PaneGroup = { ...group, layout, activePaneId: tab.id };
-    replaceGroup(dirId, next);
-    activeGroupIdByDirectory.value = { ...activeGroupIdByDirectory.value, [dirId]: group.id };
-    syncActiveTab(dirId);
-    await useRpc().request.groupUpdateLayout({ id: group.id, layout: JSON.stringify(layout), activePaneId: tab.id }).catch(() => {});
-    return tab;
-  }
-
-  /** Close every pane in a group (= closing the tab-bar pill), then the group. */
-  async function closeGroup(groupId: string) {
-    const dirId = Object.keys(tabGroupsByDirectory.value).find((d) =>
-      groupsOf(d).some((g) => g.id === groupId),
-    );
-    if (!dirId) return;
-    const group = groupsOf(dirId).find((g) => g.id === groupId);
-    if (!group) return;
-    const groups = groupsOf(dirId);
-    const idx = groups.findIndex((g) => g.id === groupId);
-    for (const paneId of collectPaneIds(group.layout)) {
-      await destroyPane(paneId);
-      forgetTab(dirId, paneId);
-      forgetAgentNotificationTab(paneId);
-    }
-    await useRpc().request.groupDelete({ id: groupId }).catch(() => {});
-    const remaining = groups.filter((g) => g.id !== groupId);
-    setGroups(dirId, remaining);
-    if (activeGroupIdByDirectory.value[dirId] === groupId) {
-      const nextG = remaining[idx] ?? remaining[idx - 1] ?? remaining[0];
-      activeGroupIdByDirectory.value = { ...activeGroupIdByDirectory.value, [dirId]: nextG?.id };
-    }
-    syncActiveTab(dirId);
-    await ensureTerminal(dirId);
   }
 
   // Fully stop a pane's PTY and release its cached xterm. Resolve the session
@@ -546,83 +445,42 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     if (sid) window.dispatchEvent(new CustomEvent("dispose-terminal-session", { detail: sid }));
   }
 
-  /** Drop a pane's flat-list + runtime + history state (PTY stop is the caller's job). */
-  function forgetTab(dirId: string, id: string) {
-    terminalTabsByDirectory.value = {
-      ...terminalTabsByDirectory.value,
-      [dirId]: (terminalTabsByDirectory.value[dirId] ?? []).filter((t) => t.id !== id),
-    };
+  /** Drop a session's runtime + history state (PTY stop / list removal are the
+   *  caller's job — see closeSession). */
+  function forgetTab(id: string) {
     tabRuntime.value.delete(id);
     triggerRef(tabRuntime);
     oscTitleByTab.value.delete(id);
     triggerRef(oscTitleByTab);
     sessionLifecycle.value.delete(id);
     triggerRef(sessionLifecycle);
-    const hist = tabActivationHistory[dirId];
-    if (hist) {
+    for (const hist of Object.values(tabActivationHistory)) {
       const hi = hist.indexOf(id);
       if (hi !== -1) hist.splice(hi, 1);
     }
   }
 
-  /** Resize: persist the splitter percentages for one internal node. */
-  function updateGroupSizes(groupId: string, nodeKey: string, sizes: number[]) {
-    const dirId = Object.keys(tabGroupsByDirectory.value).find((d) =>
-      groupsOf(d).some((g) => g.id === groupId),
-    );
-    if (!dirId) return;
-    const group = groupsOf(dirId).find((g) => g.id === groupId);
-    if (!group) return;
-    const layout = applySizes(group.layout, nodeKey, sizes);
-    replaceGroup(dirId, { ...group, layout });
-    void useRpc().request.groupUpdateLayout({ id: groupId, layout: JSON.stringify(layout), activePaneId: group.activePaneId }).catch(() => {});
-    syncArrangement(dirId);
-  }
-
-  /** Drag a pane next to another pane within the same group. */
-  async function movePane(paneId: string, targetPaneId: string, direction: SplitDir, before = false) {
-    if (paneId === targetPaneId) return;
-    const loc = locateGroup(paneId);
-    if (!loc) return;
-    const { group, dirId } = loc;
-    if (!collectPaneIds(group.layout).includes(targetPaneId)) return; // same group only
-    const removed = removeLeaf(group.layout, paneId);
-    if (!removed) return;
-    const layout = insertSplit(removed, targetPaneId, paneId, direction, before);
-    replaceGroup(dirId, { ...group, layout });
-    syncArrangement(dirId);
-    await useRpc().request.groupUpdateLayout({ id: group.id, layout: JSON.stringify(layout), activePaneId: group.activePaneId }).catch(() => {});
-  }
-
-  function setActivePane(groupId: string, paneId: string) {
-    const dirId = Object.keys(tabGroupsByDirectory.value).find((d) =>
-      groupsOf(d).some((g) => g.id === groupId),
-    );
-    if (!dirId) return;
-    const group = groupsOf(dirId).find((g) => g.id === groupId);
-    if (group && group.activePaneId !== paneId) {
-      replaceGroup(dirId, { ...group, activePaneId: paneId });
-    }
-    activeGroupIdByDirectory.value = { ...activeGroupIdByDirectory.value, [dirId]: groupId };
-    syncActiveTab(dirId);
-    void useRpc().request.groupSetActivePane({ id: groupId, paneId }).catch(() => {});
-  }
-
-  function setActiveGroup(dirId: string, groupId: string) {
-    activeGroupIdByDirectory.value = { ...activeGroupIdByDirectory.value, [dirId]: groupId };
-    syncActiveTab(dirId);
-  }
-
-  async function reorderGroupsInDirectory(directoryId: string, ids: string[]) {
-    const current = groupsOf(directoryId);
-    const byId = new Map(current.map((g) => [g.id, g]));
-    const reordered = ids.map((id) => byId.get(id)).filter((g): g is PaneGroup => !!g);
-    if (reordered.length !== current.length) return;
-    setGroups(directoryId, reordered);
-    try {
-      await useRpc().request.groupsReorder({ ids });
-    } catch (e) {
-      console.error("[workspace] groupsReorder failed:", e);
+  /** Kill a session's PTY, drop its row, and remove it from its scope's
+   *  arrangement. Replaces closeTab/closePane/closeGroup. */
+  async function closeSession(sessionId: string): Promise<void> {
+    const dirId = tabDirId(sessionId);
+    await destroyPane(sessionId);
+    forgetTab(sessionId);
+    forgetAgentNotificationTab(sessionId);
+    if (dirId) {
+      terminalTabsByDirectory.value = {
+        ...terminalTabsByDirectory.value,
+        [dirId]: (terminalTabsByDirectory.value[dirId] ?? []).filter((t) => t.id !== sessionId),
+      };
+      const current = arrangementFor(dirId);
+      const next = current ? removeFromArrangement(current, sessionId) : null;
+      const remaining = terminalTabsByDirectory.value[dirId] ?? [];
+      if (next) writeArrangement(dirId, next);
+      else if (remaining.length) writeArrangement(dirId, { version: 1, layout: { pane: remaining[remaining.length - 1].id } });
+      else writeArrangement(dirId, null);
+      const arr = arrangementFor(dirId);
+      if (arr) focusSession(firstLeaf(arr.layout));
+      if (!remaining.length && dirId === selectedDirectoryId.value) void newSession(dirId); // ensureTerminal equivalent
     }
   }
 
@@ -636,61 +494,6 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       [tab.directoryId]: next,
     };
     return tab;
-  }
-
-  // Close a single pane (= one tab). Stops the PTY, collapses it out of its
-  // group's layout, and deletes the group if it was the last pane. This is
-  // also the per-pane "Close Pane" action.
-  async function closeTab(id: string) {
-    let dirId: string | undefined;
-    for (const [d, list] of Object.entries(terminalTabsByDirectory.value)) {
-      if (list.some(t => t.id === id)) { dirId = d; break; }
-    }
-    if (!dirId) return;
-    await destroyPane(id);
-    forgetTab(dirId, id);
-    forgetAgentNotificationTab(id);
-
-    const group = groupsOf(dirId).find((g) => collectPaneIds(g.layout).includes(id));
-    if (group) {
-      const layout = removeLeaf(group.layout, id);
-      if (!layout) {
-        // Last pane in the group → drop the group (and its pill).
-        const groups = groupsOf(dirId);
-        const idx = groups.findIndex((g) => g.id === group.id);
-        const remaining = groups.filter((g) => g.id !== group.id);
-        setGroups(dirId, remaining);
-        await useRpc().request.groupDelete({ id: group.id }).catch(() => {});
-        if (activeGroupIdByDirectory.value[dirId] === group.id) {
-          const nextG = remaining[idx] ?? remaining[idx - 1] ?? remaining[0];
-          activeGroupIdByDirectory.value = { ...activeGroupIdByDirectory.value, [dirId]: nextG?.id };
-        }
-      } else {
-        const survivors = collectPaneIds(layout);
-        const activePaneId = survivors.includes(group.activePaneId ?? "") ? group.activePaneId : survivors[0];
-        replaceGroup(dirId, { ...group, layout, activePaneId });
-        await useRpc().request.groupUpdateLayout({ id: group.id, layout: JSON.stringify(layout), activePaneId }).catch(() => {});
-      }
-    }
-    syncActiveTab(dirId);
-    await ensureTerminal(dirId);
-  }
-
-  // Focus a tab by id — activates its group and marks it the active pane, so
-  // every "focus this tab" caller (Agents panel, file search, cycling) works
-  // regardless of splits.
-  function setActiveTab(directoryId: string, tabId: string) {
-    const group = groupsOf(directoryId).find((g) => collectPaneIds(g.layout).includes(tabId));
-    if (group) {
-      setActivePane(group.id, tabId);
-      return;
-    }
-    activeTabIdByDirectory.value = {
-      ...activeTabIdByDirectory.value,
-      [directoryId]: tabId,
-    };
-    acknowledgeTab(tabId);
-    recordTabActivation(directoryId, tabId);
   }
 
   async function reorderTabsInDirectory(directoryId: string, ids: string[]) {
@@ -842,9 +645,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     directories.value.find(d => d.id === selectedDirectoryId.value) || null
   );
 
-  // Spec selection model, slice-1 aliases: activeScope == selected directory;
-  // focused session == the directory's active tab. Real independence lands in
-  // slice 2 when groups stop being the write model.
+  // Spec selection model: activeScope == selected directory; focused session
+  // == the directory's active tab (kept mirrored by focusSession).
   const activeScopeId = computed(() => selectedDirectoryId.value);
   const focusedSessionId = computed(() =>
     selectedDirectoryId.value ? activeTabIdByDirectory.value[selectedDirectoryId.value] : undefined,
@@ -855,7 +657,10 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       const tabs = terminalTabsByDirectory.value[dir.id] ?? [];
       if (!tabs.some((t) => t.id === sessionId)) continue;
       if (dir.id !== selectedDirectoryId.value) selectDirectory(dir);
-      setActiveTab(dir.id, sessionId);
+      const arr = arrangementFor(dir.id);
+      const member = collectPaneIds(arr?.layout ?? { pane: "" }).includes(sessionId);
+      if (!member) writeArrangement(dir.id, { version: 1, layout: { pane: sessionId } });
+      focusSession(sessionId);
       return;
     }
   }
@@ -984,25 +789,22 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     applyTabTitle,
     terminalTabsByDirectory,
     activeTabIdByDirectory,
-    tabGroupsByDirectory,
-    activeGroupIdByDirectory,
     loadTabsForDirectory,
     loadAllTabs,
     createTab,
+    newSession,
+    splitSessionWithNew,
+    splitSessionWithExisting,
+    removeFromView,
+    closeSession,
+    focusSession,
+    setArrangementSizes,
+    arrangementFor,
     renameTab,
-    closeTab,
-    setActiveTab,
     reorderTabsInDirectory,
-    splitPane,
-    closePane: closeTab,
-    closeGroup,
     tabGroupName,
-    updateGroupSizes,
-    movePane,
-    setActivePane,
-    setActiveGroup,
+    sessionName,
     syncViewportSize,
-    reorderGroupsInDirectory,
     reorderRootDirectories,
     reorderWorktrees,
     directoriesLoaded,
