@@ -486,11 +486,15 @@ function handleGlobalKeydown(e: KeyboardEvent) {
       return;
     }
   }
-  // Kill session (⌘⇧W) — explicit kill, distinct from ⌘W's remove-from-view.
+  // Kill session (⌥⌘W) — explicit kill, distinct from ⌘W's remove-from-view. Only
+  // when a terminal owns focus, same gate as the split-pane branch above.
   if (shortcuts.matches("kill-session", e)) {
-    e.preventDefault();
-    window.dispatchEvent(new CustomEvent("kill-active-terminal-session"));
-    return;
+    const el = document.activeElement as HTMLElement | null;
+    if (el?.closest(".xterm") || el?.closest("[data-terminal-drop]")) {
+      e.preventDefault();
+      window.dispatchEvent(new CustomEvent("kill-active-terminal-session"));
+      return;
+    }
   }
   // ⌘1–9: jump to terminal tab N. Parametric range — match logic stays hardcoded
   // (rebinding jump-to-tab is not wired in v1; the registry entry is display-only).

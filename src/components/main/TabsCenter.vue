@@ -39,7 +39,7 @@ const welcome = computed(() =>
 
 async function confirmKill(id: string | undefined) {
   if (!id) return;
-  const running = await rpc.request.tabsHasRunningChild({ id });
+  const running = await rpc.request.tabsHasRunningChild({ id }).catch(() => false);
   if (
     running &&
     !(await ask("Close Session?", {
