@@ -75,10 +75,14 @@ pub fn spawn_tab_pty(
     let sessions_exit = Arc::clone(sessions);
     let bus_exit = event_bus.clone();
     let tab_id_exit = plan.tab_id.clone();
+    let exited_early = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let exited_flag = Arc::clone(&exited_early);
 
     let on_exit = move || {
         // PTY read loop ended: drop the dead session so get_session_by_agent
-        // stops matching it (unblocks respawn), then tell the UI.
+        // stops matching it (unblocks respawn), then tell the UI. If the child
+        // died before `insert_session` below ran, this lookup finds nothing —
+        // the flag lets the post-insert check catch that race.
         let sid = {
             let mut sm = sessions_exit.lock().unwrap_or_else(|p| p.into_inner());
             let sid = sm.get_session_by_agent(&tab_id_exit).map(|s| s.id.clone());
@@ -87,6 +91,7 @@ pub fn spawn_tab_pty(
             }
             sid
         };
+        exited_flag.store(true, std::sync::atomic::Ordering::SeqCst);
         if sid.is_some() {
             bus_exit.emit("tab-exited", serde_json::json!({ "tabId": tab_id_exit }));
         }
@@ -119,6 +124,25 @@ pub fn spawn_tab_pty(
         sm.insert_session(session);
     }
     SessionManager::release_spawn_slot(&spawn_slots);
+
+    // on_exit may have already fired before insert_session ran (child died
+    // instantly, e.g. bad $SHELL) — its lookup found nothing to remove, so the
+    // just-inserted session would otherwise be permanently stale. Catch that
+    // race here; emit only if we actually found something, so a normal
+    // exit-after-insert (already handled by on_exit) doesn't double-emit.
+    if exited_early.load(std::sync::atomic::Ordering::SeqCst) {
+        let sid = {
+            let mut sm = sessions.lock().unwrap_or_else(|p| p.into_inner());
+            let sid = sm.get_session_by_agent(&plan.tab_id).map(|s| s.id.clone());
+            if let Some(ref sid) = sid {
+                sm.remove_session(sid);
+            }
+            sid
+        };
+        if sid.is_some() {
+            event_bus.emit("tab-exited", serde_json::json!({ "tabId": plan.tab_id }));
+        }
+    }
 
     Ok(session_id)
 }
