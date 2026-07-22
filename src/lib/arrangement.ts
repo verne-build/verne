@@ -8,6 +8,19 @@ export interface Arrangement {
   layout: LayoutNode;
 }
 
+function isValidLayout(n: unknown): n is LayoutNode {
+  if (!n || typeof n !== "object") return false;
+  const o = n as Record<string, unknown>;
+  if (typeof o.pane === "string") return true;
+  return (
+    (o.direction === "h" || o.direction === "v") &&
+    Array.isArray(o.children) &&
+    o.children.length > 0 &&
+    o.children.every(isValidLayout) &&
+    Array.isArray(o.sizes)
+  );
+}
+
 export function deriveArrangement(layout: LayoutNode | undefined | null): Arrangement | null {
   return layout ? { version: 1, layout } : null;
 }
@@ -30,7 +43,7 @@ export function parseArrangementMap(raw: string | null): Record<string, Arrangem
     const obj = JSON.parse(raw) as Record<string, Arrangement | undefined>;
     const out: Record<string, Arrangement> = {};
     for (const [k, v] of Object.entries(obj)) {
-      if (v && v.version === 1 && v.layout) out[k] = v;
+      if (v && v.version === 1 && isValidLayout(v.layout)) out[k] = v;
     }
     return out;
   } catch {

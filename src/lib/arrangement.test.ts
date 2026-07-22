@@ -50,4 +50,11 @@ describe("parse/serializeArrangementMap", () => {
     expect(parseArrangementMap("not json")).toEqual({});
     expect(parseArrangementMap(JSON.stringify({ d1: { version: 2, layout: leaf("t") } }))).toEqual({});
   });
+  it("drops entries whose layout shape is malformed", () => {
+    const raw = JSON.stringify({
+      bad: { version: 1, layout: {} },
+      good: { version: 1, layout: { pane: "t1" } },
+    });
+    expect(parseArrangementMap(raw)).toEqual({ good: { version: 1, layout: { pane: "t1" } } });
+  });
 });
