@@ -101,9 +101,11 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   async function hydrateSessionLifecycle(): Promise<void> {
     try {
       const live = new Set(await useRpc().request.listLiveTabIds());
-      const next = new Map<string, "running" | "exited">();
+      const current = sessionLifecycle.value;
+      const next = new Map(current);
       for (const tabs of Object.values(terminalTabsByDirectory.value))
-        for (const t of tabs) next.set(t.id, live.has(t.id) ? "running" : "exited");
+        for (const t of tabs)
+          if (!current.has(t.id)) next.set(t.id, live.has(t.id) ? "running" : "exited");
       sessionLifecycle.value = next;
     } catch {}
   }
@@ -544,6 +546,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     triggerRef(tabRuntime);
     oscTitleByTab.value.delete(id);
     triggerRef(oscTitleByTab);
+    sessionLifecycle.value.delete(id);
+    triggerRef(sessionLifecycle);
     const hist = tabActivationHistory[dirId];
     if (hist) {
       const hi = hist.indexOf(id);
