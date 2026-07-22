@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyArrangementSizes,
   deriveArrangement,
+  insertIntoArrangement,
+  migrateGroupsToArrangements,
   parseArrangementMap,
   pruneArrangement,
+  removeFromArrangement,
   serializeArrangementMap,
   type Arrangement,
 } from "./arrangement";
@@ -56,5 +60,60 @@ describe("parse/serializeArrangementMap", () => {
       good: { version: 1, layout: { pane: "t1" } },
     });
     expect(parseArrangementMap(raw)).toEqual({ good: { version: 1, layout: { pane: "t1" } } });
+  });
+});
+
+describe("insertIntoArrangement", () => {
+  it("creates a solo arrangement from null", () => {
+    expect(insertIntoArrangement(null, null, "t1", "h", false)).toEqual({
+      version: 1, layout: { pane: "t1" },
+    });
+  });
+  it("splits beside the anchor", () => {
+    const arr: Arrangement = { version: 1, layout: leaf("t1") };
+    expect(insertIntoArrangement(arr, "t1", "t2", "h", false)).toEqual({
+      version: 1,
+      layout: { direction: "h", children: [leaf("t1"), leaf("t2")], sizes: [50, 50] },
+    });
+  });
+});
+
+describe("removeFromArrangement", () => {
+  it("collapses to the survivor", () => {
+    const arr: Arrangement = { version: 1, layout: split("t1", "t2") };
+    expect(removeFromArrangement(arr, "t2")).toEqual({ version: 1, layout: leaf("t1") });
+  });
+  it("null when last leaf removed", () => {
+    expect(removeFromArrangement({ version: 1, layout: leaf("t1") }, "t1")).toBeNull();
+  });
+});
+
+describe("applyArrangementSizes", () => {
+  it("writes sizes into the matching internal node", () => {
+    const arr: Arrangement = { version: 1, layout: split("t1", "t2") };
+    expect(applyArrangementSizes(arr, "t1|t2", [40, 60])).toEqual({
+      version: 1,
+      layout: { direction: "h", children: [leaf("t1"), leaf("t2")], sizes: [40, 60] },
+    });
+  });
+});
+
+describe("migrateGroupsToArrangements", () => {
+  it("active group's tree becomes the arrangement; order = group order then leaf order", () => {
+    const g1 = { id: "g1", layout: JSON.stringify(split("t1", "t2")), activePaneId: "t2", sortOrder: 0, createdAt: 1 };
+    const g2 = { id: "g2", layout: JSON.stringify(leaf("t3")), activePaneId: "t3", sortOrder: 1, createdAt: 2 };
+    const out = migrateGroupsToArrangements({ d1: [g1, g2] }, { d1: "g1" });
+    expect(out.arrangements.d1).toEqual({ version: 1, layout: split("t1", "t2") });
+    expect(out.focusedByDir.d1).toBe("t2");
+    expect(out.orderByDir.d1).toEqual(["t1", "t2", "t3"]);
+  });
+
+  it("falls back to the first group when the active id is unknown", () => {
+    const g1 = { id: "g1", layout: JSON.stringify(split("t1", "t2")), activePaneId: "t2", sortOrder: 0, createdAt: 1 };
+    const g2 = { id: "g2", layout: JSON.stringify(leaf("t3")), activePaneId: "t3", sortOrder: 1, createdAt: 2 };
+    const out = migrateGroupsToArrangements({ d1: [g1, g2] }, { d1: "g?" });
+    expect(out.arrangements.d1).toEqual({ version: 1, layout: split("t1", "t2") });
+    expect(out.focusedByDir.d1).toBe("t2");
+    expect(out.orderByDir.d1).toEqual(["t1", "t2", "t3"]);
   });
 });
