@@ -89,9 +89,9 @@ pub fn spawn_tab_pty(
             if let Some(ref sid) = sid {
                 sm.remove_session(sid);
             }
+            exited_flag.store(true, std::sync::atomic::Ordering::SeqCst);
             sid
         };
-        exited_flag.store(true, std::sync::atomic::Ordering::SeqCst);
         if sid.is_some() {
             bus_exit.emit("tab-exited", serde_json::json!({ "tabId": tab_id_exit }));
         }
