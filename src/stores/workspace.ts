@@ -178,9 +178,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
     // Skip no-op writes: compare serialized state.
     const oldArr = arrangementByScope.value[dirId];
-    const unchanged = JSON.stringify(arr) === JSON.stringify(oldArr) &&
-      (!!arr) === (!!oldArr);
-    if (unchanged) return;
+    if (!arr && oldArr === undefined) return; // nothing stored, nothing to store
+    if (arr && oldArr && JSON.stringify(arr) === JSON.stringify(oldArr)) return;
 
     arrangementByScope.value = map;
     useRpc()
@@ -552,6 +551,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     if (!removed) return;
     const layout = insertSplit(removed, targetPaneId, paneId, direction, before);
     replaceGroup(dirId, { ...group, layout });
+    syncArrangement(dirId);
     await useRpc().request.groupUpdateLayout({ id: group.id, layout: JSON.stringify(layout), activePaneId: group.activePaneId }).catch(() => {});
   }
 
