@@ -22,6 +22,15 @@ function freshId(prefix: string) {
 }
 
 const setAppStateCalls: Array<{ key: string; value: string | null }> = [];
+const { getLiveTabIds, setLiveTabIds } = vi.hoisted(() => {
+  let liveTabIds: string[] = [];
+  return {
+    getLiveTabIds: () => liveTabIds,
+    setLiveTabIds: (ids: string[]) => {
+      liveTabIds = ids;
+    },
+  };
+});
 
 vi.mock("@/composables/useLanguageClient", () => ({
   stopClient: vi.fn(),
@@ -55,6 +64,7 @@ vi.mock("@/composables/useRpc", () => ({
       groupsReorder: vi.fn(async () => true),
       tabsClose: vi.fn(async () => true),
       tabsSessionId: vi.fn(async () => null),
+      listLiveTabIds: vi.fn(async () => getLiveTabIds()),
     },
   }),
 }));
@@ -72,6 +82,7 @@ describe("workspace store arrangement dual-write", () => {
     setActivePinia(createPinia());
     setAppStateCalls.length = 0;
     nextId = 0;
+    setLiveTabIds([]);
   });
 
   it("dual-writes on createTab", async () => {
@@ -122,5 +133,26 @@ describe("workspace store arrangement dual-write", () => {
 
     const write = lastArrangementWrite();
     expect(write).toBeTruthy();
+  });
+});
+
+describe("workspace store session lifecycle", () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    setAppStateCalls.length = 0;
+    nextId = 0;
+    setLiveTabIds([]);
+  });
+
+  it("hydrateSessionLifecycle marks live ids running and others exited", async () => {
+    const store = useWorkspaceStore();
+    const tab1 = await store.createTab({ directoryId: "dir-1" });
+    const tab2 = await store.createTab({ directoryId: "dir-1" });
+    setLiveTabIds([tab1!.id]);
+
+    await store.hydrateSessionLifecycle();
+
+    expect(store.sessionLifecycle.get(tab1!.id)).toBe("running");
+    expect(store.sessionLifecycle.get(tab2!.id)).toBe("exited");
   });
 });

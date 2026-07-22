@@ -85,6 +85,29 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     triggerRef(tabRuntime);
   }
 
+  // Lifecycle is orthogonal to agent state (spec: session rows carry both).
+  // Missing entry = assumed running (hydration fills the truth).
+  const sessionLifecycle = shallowRef<Map<string, "running" | "exited">>(new Map());
+
+  function markSessionExited(tabId: string) {
+    sessionLifecycle.value.set(tabId, "exited");
+    triggerRef(sessionLifecycle);
+  }
+  function markSessionRunning(tabId: string) {
+    sessionLifecycle.value.set(tabId, "running");
+    triggerRef(sessionLifecycle);
+  }
+
+  async function hydrateSessionLifecycle(): Promise<void> {
+    try {
+      const live = new Set(await useRpc().request.listLiveTabIds());
+      const next = new Map<string, "running" | "exited">();
+      for (const tabs of Object.values(terminalTabsByDirectory.value))
+        for (const t of tabs) next.set(t.id, live.has(t.id) ? "running" : "exited");
+      sessionLifecycle.value = next;
+    } catch {}
+  }
+
   // Live OSC 0 titles from the running process, keyed by tab_id. The daemon
   // includes its cached title in canonical hydration after an app relaunch.
   const oscTitleByTab = shallowRef<Map<string, string>>(new Map());
@@ -398,6 +421,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     await ingestGroups(directoryId, tabs);
     // Override DB-backed state with daemon's live truth (survives app restarts)
     void hydrateAgentStatesFromDaemon();
+    void hydrateSessionLifecycle();
     return tabs;
   }
 
@@ -417,6 +441,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     );
     // Override DB-backed state with daemon's live truth (survives app restarts)
     void hydrateAgentStatesFromDaemon();
+    void hydrateSessionLifecycle();
     return tabs;
   }
 
@@ -937,6 +962,10 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     selectDirectory,
     tabRuntime,
     applyTabUpdate,
+    sessionLifecycle,
+    markSessionExited,
+    markSessionRunning,
+    hydrateSessionLifecycle,
     oscTitleByTab,
     applyTabTitle,
     terminalTabsByDirectory,

@@ -457,6 +457,11 @@ function handleTabTitle(e: Event) {
   if (payload?.tabId) store.applyTabTitle(payload);
 }
 
+function handleTabExited(e: Event) {
+  const detail = (e as CustomEvent<{ tabId: string }>).detail;
+  if (detail?.tabId) store.markSessionExited(detail.tabId);
+}
+
 function handleGlobalKeydown(e: KeyboardEvent) {
   if ((e.metaKey || e.ctrlKey) && e.key === "r") e.preventDefault();
   // ⌘⌃⇧F — hidden FPS meter toggle (debug; deliberately not in the registry).
@@ -567,6 +572,7 @@ onMounted(async () => {
   window.addEventListener("keydown", handleGlobalKeydown, true);
   window.addEventListener("tab-updated", handleTabUpdated as EventListener);
   window.addEventListener("tab-title", handleTabTitle as EventListener);
+  window.addEventListener("tab-exited", handleTabExited as EventListener);
 
   // Voice dictation: subscribe to speech events / hotkey, and push the current
   // hotkey config to the main process.
@@ -692,6 +698,7 @@ onUnmounted(() => {
   window.removeEventListener("tab-updated", handleTabUpdated as EventListener);
   unwireAgentNotifications();
   window.removeEventListener("tab-title", handleTabTitle as EventListener);
+  window.removeEventListener("tab-exited", handleTabExited as EventListener);
   window.removeEventListener("show-bttf", handleShowBttf);
   for (const timer of Object.values(panelSaveTimers)) clearTimeout(timer);
   if (collapseTimer) clearTimeout(collapseTimer);

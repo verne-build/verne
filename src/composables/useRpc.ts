@@ -82,6 +82,9 @@ listen<string>("file-deleted", (e) => {
         new CustomEvent("tab-title", { detail: e.payload }),
       );
     }),
+    listen<{ tabId: string }>("tab-exited", (e) => {
+      window.dispatchEvent(new CustomEvent("tab-exited", { detail: e.payload }));
+    }),
   ]);
   for (const r of results) {
     if (r.status === "fulfilled") unlistenFns.push(r.value);
@@ -141,6 +144,7 @@ const request = {
     invoke("tabs_session_id", { id: p.id }),
   tabsHasRunningChild: (p: { id: string }): Promise<boolean> =>
     invoke("tabs_has_running_child", { id: p.id }),
+  listLiveTabIds: (): Promise<string[]> => invoke("list_live_tab_ids"),
   getAgentStates: (): Promise<Array<{
     tabId: string;
     agentState: string;

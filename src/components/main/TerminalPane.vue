@@ -194,6 +194,7 @@ async function mountActive() {
   if (gen !== mountGen) return;
   if (!sid) return;
   sessionId.value = sid;
+  store.markSessionRunning(props.paneId);
 }
 
 watch(() => props.paneId, () => { void mountActive(); });
