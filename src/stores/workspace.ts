@@ -159,7 +159,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     arrangementsHydrated ??= useRpc()
       .request.getAppState({ key: "arrangement_by_scope" })
       .then((raw) => {
-        arrangementByScope.value = parseArrangementMap(raw);
+        arrangementByScope.value = { ...parseArrangementMap(raw), ...arrangementByScope.value };
       })
       .catch(() => {});
     return arrangementsHydrated;
@@ -175,6 +175,13 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     const map = { ...arrangementByScope.value };
     if (arr) map[dirId] = arr;
     else delete map[dirId];
+
+    // Skip no-op writes: compare serialized state.
+    const oldArr = arrangementByScope.value[dirId];
+    const unchanged = JSON.stringify(arr) === JSON.stringify(oldArr) &&
+      (!!arr) === (!!oldArr);
+    if (unchanged) return;
+
     arrangementByScope.value = map;
     useRpc()
       .request.setAppState({ key: "arrangement_by_scope", value: serializeArrangementMap(map) })
@@ -388,7 +395,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     };
     hydrateTabRuntime(tabs);
     await hydrateActiveGroups();
-    void hydrateArrangements();
+    await hydrateArrangements();
     await ingestGroups(directoryId, tabs);
     // Override DB-backed state with daemon's live truth (survives app restarts)
     void hydrateAgentStatesFromDaemon();
@@ -405,7 +412,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     terminalTabsByDirectory.value = { ...terminalTabsByDirectory.value, ...grouped };
     hydrateTabRuntime(tabs);
     await hydrateActiveGroups();
-    void hydrateArrangements();
+    await hydrateArrangements();
     await Promise.all(
       Object.entries(grouped).map(([dirId, list]) => ingestGroups(dirId, list)),
     );
