@@ -5,9 +5,9 @@
 
 use std::sync::{Arc, Mutex};
 
+use crate::services::session_manager::{self, SessionManager, StartSessionOpts};
 use crate::state::EventBus;
 use crate::types::TabSpawnPlan;
-use crate::services::session_manager::{self, SessionManager, StartSessionOpts};
 
 /// Spawn (or reuse) the live PTY session for a tab, keyed by `tab_id`. Returns
 /// the session id. Idempotent: if a live session already exists for the tab
@@ -72,6 +72,26 @@ pub fn spawn_tab_pty(
         }
     };
 
+    let sessions_exit = Arc::clone(sessions);
+    let bus_exit = event_bus.clone();
+    let tab_id_exit = plan.tab_id.clone();
+
+    let on_exit = move || {
+        // PTY read loop ended: drop the dead session so get_session_by_agent
+        // stops matching it (unblocks respawn), then tell the UI.
+        let sid = {
+            let mut sm = sessions_exit.lock().unwrap_or_else(|p| p.into_inner());
+            let sid = sm.get_session_by_agent(&tab_id_exit).map(|s| s.id.clone());
+            if let Some(ref sid) = sid {
+                sm.remove_session(sid);
+            }
+            sid
+        };
+        if sid.is_some() {
+            bus_exit.emit("tab-exited", serde_json::json!({ "tabId": tab_id_exit }));
+        }
+    };
+
     let create_result = session_manager::create_session(
         plan.tab_id.clone(),
         start_opts,
@@ -81,7 +101,7 @@ pub fn spawn_tab_pty(
         |_working: bool| {},
         || {},
         noop_resume,
-        || {},
+        on_exit,
     );
 
     let (session_id, session) = match create_result {
