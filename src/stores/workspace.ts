@@ -190,9 +190,13 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       cwd: opts.cwd,
       label: String(existing.length + 1),
     });
+    // Re-read post-await — a concurrent newSession in this directory may have
+    // already appended its own tab; spreading the stale pre-await snapshot
+    // would drop it.
+    const current = terminalTabsByDirectory.value[directoryId] ?? [];
     terminalTabsByDirectory.value = {
       ...terminalTabsByDirectory.value,
-      [directoryId]: [...existing, tab],
+      [directoryId]: [...current, tab],
     };
     writeArrangement(directoryId, { version: 1, layout: { pane: tab.id } });
     focusSession(tab.id);
@@ -212,9 +216,11 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       cwd: src?.cwd,
       label: String(existing.length + 1),
     });
+    // Re-read post-await (see newSession) so a concurrent create isn't dropped.
+    const current = terminalTabsByDirectory.value[dirId] ?? [];
     terminalTabsByDirectory.value = {
       ...terminalTabsByDirectory.value,
-      [dirId]: [...existing, tab],
+      [dirId]: [...current, tab],
     };
     writeArrangement(dirId, insertIntoArrangement(arrangementFor(dirId), sessionId, tab.id, direction, before));
     focusSession(tab.id);
@@ -326,7 +332,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       if (arrangements[dirId]) writeArrangement(dirId, arrangements[dirId]);
       if (orderByDir[dirId]?.length) await useRpc().request.tabsReorder({ ids: orderByDir[dirId] }).catch(() => {});
       if (focusedByDir[dirId]) focusSession(focusedByDir[dirId]!);
-      await useRpc().request.setAppState({ key: flagKey, value: "2" }).catch(() => {});
+      await useRpc().request.setAppState({ key: flagKey, value: "2" });
     }
     // Prune arrangements against live tabs (dead sessions dropped).
     const live = new Set(tabs.map((t) => t.id));
@@ -475,12 +481,15 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       const current = arrangementFor(dirId);
       const next = current ? removeFromArrangement(current, sessionId) : null;
       const remaining = terminalTabsByDirectory.value[dirId] ?? [];
+      const wasFocused = focusedByScope.value[dirId] === sessionId;
       if (next) writeArrangement(dirId, next);
       else if (remaining.length) writeArrangement(dirId, { version: 1, layout: { pane: remaining[remaining.length - 1].id } });
       else writeArrangement(dirId, null);
       const arr = arrangementFor(dirId);
-      if (arr) focusSession(firstLeaf(arr.layout));
-      if (!remaining.length && dirId === selectedDirectoryId.value) void newSession(dirId); // ensureTerminal equivalent
+      // Only refocus when the closed session actually held focus — a
+      // background/non-focused pane closing shouldn't steal focus.
+      if (arr && wasFocused) focusSession(firstLeaf(arr.layout));
+      if (!remaining.length && dirId === selectedDirectoryId.value) void newSession(dirId).catch(() => {}); // ensureTerminal equivalent
     }
   }
 

@@ -11,16 +11,9 @@ const lastState = new Map<string, AgentNotifyState>();
 function focusTab(tabId: string): void {
   // Surface the tab even if settings cover the workspace.
   useSettingsScreen().showSettings.value = false;
-  const store = useWorkspaceStore();
-  for (const [dirId, tabs] of Object.entries(store.terminalTabsByDirectory)) {
-    if (!tabs.some((t) => t.id === tabId)) continue;
-    if (store.selectedDirectoryId !== dirId) {
-      const dir = store.directories.find((d) => d.id === dirId);
-      if (dir) store.selectDirectory(dir);
-    }
-    store.focusSession(tabId);
-    break;
-  }
+  // selectSession implements the old semantics: member -> focus in place,
+  // non-member -> solo replace, cross-scope -> selectDirectory first.
+  useWorkspaceStore().selectSession(tabId);
 }
 
 function showToast(kind: AgentNotifyKind, payload: TabUpdatedEvent): void {

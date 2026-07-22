@@ -29,13 +29,23 @@ const {
   setLiveTabIdsDeferred,
   resolveLiveTabIdsDeferred,
   queueLiveTabIdsDeferred,
+  getTabsCreateDeferred,
+  queueTabsCreateDeferred,
 } = vi.hoisted(() => {
   let liveTabIds: string[] = [];
   let deferred: { promise: Promise<string[]>; resolve: (ids: string[]) => void } | null = null;
   const queue: Array<{ promise: Promise<string[]>; resolve: (ids: string[]) => void }> = [];
+  const tabsCreateQueue: Array<{ promise: Promise<void>; resolve: () => void }> = [];
   function makeDeferred() {
     let resolve!: (ids: string[]) => void;
     const promise = new Promise<string[]>((r) => {
+      resolve = r;
+    });
+    return { promise, resolve };
+  }
+  function makeVoidDeferred() {
+    let resolve!: () => void;
+    const promise = new Promise<void>((r) => {
       resolve = r;
     });
     return { promise, resolve };
@@ -62,6 +72,14 @@ const {
       queue.push(d);
       return d;
     },
+    // Consumed in tabsCreate call order; letting the test resolve them out
+    // of order simulates concurrent tabsCreate RPCs completing out of order.
+    getTabsCreateDeferred: () => tabsCreateQueue.shift() ?? null,
+    queueTabsCreateDeferred: () => {
+      const d = makeVoidDeferred();
+      tabsCreateQueue.push(d);
+      return d;
+    },
   };
 });
 
@@ -78,12 +96,16 @@ vi.mock("@/composables/useRpc", () => ({
         return true;
       }),
       groupsList: vi.fn(async () => []),
-      tabsCreate: vi.fn(async (opts: { directoryId: string; label?: string; cwd?: string }) => ({
-        id: freshId("tab"),
-        directoryId: opts.directoryId,
-        label: opts.label ?? "shell",
-        cwd: opts.cwd ?? null,
-      })),
+      tabsCreate: vi.fn(async (opts: { directoryId: string; label?: string; cwd?: string }) => {
+        const deferred = getTabsCreateDeferred();
+        if (deferred) await deferred.promise;
+        return {
+          id: freshId("tab"),
+          directoryId: opts.directoryId,
+          label: opts.label ?? "shell",
+          cwd: opts.cwd ?? null,
+        };
+      }),
       tabsClose: vi.fn(async (p: { id: string }) => {
         tabsClosedIds.push(p.id);
         return true;
@@ -234,6 +256,39 @@ describe("workspace store arrangement writes (slice 2: arrangements own writes)"
     const tab = await store.newSession("dir-1");
     expect(store.arrangementFor("dir-1")).toEqual({ version: 1, layout: { pane: tab.id } });
     expect(store.arrangementFor("no-such-dir")).toBeNull();
+  });
+
+  it("concurrent newSession calls in one directory both land (no lost update)", async () => {
+    const store = useWorkspaceStore();
+    const d1 = queueTabsCreateDeferred();
+    const d2 = queueTabsCreateDeferred();
+
+    const p1 = store.newSession("dir-1");
+    const p2 = store.newSession("dir-1");
+
+    // Resolve out of order: the second call's tabsCreate completes first.
+    d2.resolve();
+    const tab2 = await p2;
+    d1.resolve();
+    const tab1 = await p1;
+
+    const ids = (store.terminalTabsByDirectory["dir-1"] ?? []).map((t) => t.id);
+    expect(ids.sort()).toEqual([tab1.id, tab2.id].sort());
+  });
+
+  it("closeSession on a non-focused session leaves focus untouched", async () => {
+    const store = useWorkspaceStore();
+    const tab1 = await store.newSession("dir-1");
+    await store.splitSessionWithNew(tab1.id, "h");
+    const arrBefore = parsedArrangement("dir-1");
+    const tab2Id = arrBefore.layout.children.find((c: { pane: string }) => c.pane !== tab1.id).pane;
+    store.selectDirectory({ id: "dir-1", path: "/dir-1", name: "dir-1", createdAt: 0, sortOrder: 0 });
+    store.focusSession(tab1.id);
+    setAppStateCalls.length = 0;
+
+    await store.closeSession(tab2Id);
+
+    expect(store.focusedSessionId).toBe(tab1.id);
   });
 });
 
