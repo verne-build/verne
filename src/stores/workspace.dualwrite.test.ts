@@ -22,24 +22,44 @@ function freshId(prefix: string) {
 }
 
 const setAppStateCalls: Array<{ key: string; value: string | null }> = [];
-const { getLiveTabIds, setLiveTabIds, setLiveTabIdsDeferred, resolveLiveTabIdsDeferred } = vi.hoisted(() => {
+const {
+  getLiveTabIds,
+  setLiveTabIds,
+  setLiveTabIdsDeferred,
+  resolveLiveTabIdsDeferred,
+  queueLiveTabIdsDeferred,
+} = vi.hoisted(() => {
   let liveTabIds: string[] = [];
   let deferred: { promise: Promise<string[]>; resolve: (ids: string[]) => void } | null = null;
+  const queue: Array<{ promise: Promise<string[]>; resolve: (ids: string[]) => void }> = [];
+  function makeDeferred() {
+    let resolve!: (ids: string[]) => void;
+    const promise = new Promise<string[]>((r) => {
+      resolve = r;
+    });
+    return { promise, resolve };
+  }
   return {
-    getLiveTabIds: () => deferred?.promise ?? liveTabIds,
+    getLiveTabIds: () => {
+      if (queue.length > 0) return queue.shift()!.promise;
+      return deferred?.promise ?? liveTabIds;
+    },
     setLiveTabIds: (ids: string[]) => {
       liveTabIds = ids;
     },
     setLiveTabIdsDeferred: () => {
-      let resolve!: (ids: string[]) => void;
-      const promise = new Promise<string[]>((r) => {
-        resolve = r;
-      });
-      deferred = { promise, resolve };
+      deferred = makeDeferred();
     },
     resolveLiveTabIdsDeferred: (ids: string[]) => {
       deferred?.resolve(ids);
       deferred = null;
+    },
+    // Queue N deferred promises consumed in call order by successive
+    // listLiveTabIds invocations (for testing concurrent hydrates).
+    queueLiveTabIdsDeferred: () => {
+      const d = makeDeferred();
+      queue.push(d);
+      return d;
     },
   };
 });
@@ -194,5 +214,30 @@ describe("workspace store session lifecycle", () => {
     await hydrate;
 
     expect(store.sessionLifecycle.get(tab1!.id)).toBe("exited");
+  });
+
+  it("concurrent hydrates don't clobber each other, and an event during both survives", async () => {
+    const store = useWorkspaceStore();
+    const tab1 = await store.createTab({ directoryId: "dir-1" });
+    const tab2 = await store.createTab({ directoryId: "dir-1" });
+
+    const d1 = queueLiveTabIdsDeferred();
+    const d2 = queueLiveTabIdsDeferred();
+
+    const hydrateA = store.hydrateSessionLifecycle();
+    const hydrateB = store.hydrateSessionLifecycle();
+
+    // Event lands while BOTH hydrates are in flight.
+    store.markSessionExited(tab1!.id);
+
+    // Resolve out of order: second call's promise first.
+    d2.resolve([tab1!.id, tab2!.id]);
+    d1.resolve([tab2!.id]);
+    await Promise.all([hydrateA, hydrateB]);
+
+    // tab1's live event must survive both snapshots even though each
+    // snapshot disagreed about tab1 (one said live, one didn't mention it).
+    expect(store.sessionLifecycle.get(tab1!.id)).toBe("exited");
+    expect(store.sessionLifecycle.get(tab2!.id)).toBe("running");
   });
 });
