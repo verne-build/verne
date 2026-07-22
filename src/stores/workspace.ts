@@ -89,25 +89,35 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   // Missing entry = assumed running (hydration fills the truth).
   const sessionLifecycle = shallowRef<Map<string, "running" | "exited">>(new Map());
 
+  // Live lifecycle events that land while a hydrate's RPC is in flight must
+  // not be clobbered by the (older) snapshot; everything else re-syncs.
+  let lifecycleEventsDuringHydrate: Set<string> | null = null;
+
   function markSessionExited(tabId: string) {
     sessionLifecycle.value.set(tabId, "exited");
+    lifecycleEventsDuringHydrate?.add(tabId);
     triggerRef(sessionLifecycle);
   }
   function markSessionRunning(tabId: string) {
     sessionLifecycle.value.set(tabId, "running");
+    lifecycleEventsDuringHydrate?.add(tabId);
     triggerRef(sessionLifecycle);
   }
 
   async function hydrateSessionLifecycle(): Promise<void> {
     try {
+      lifecycleEventsDuringHydrate = new Set();
       const live = new Set(await useRpc().request.listLiveTabIds());
-      const current = sessionLifecycle.value;
-      const next = new Map(current);
+      const fresh = lifecycleEventsDuringHydrate;
+      lifecycleEventsDuringHydrate = null;
+      const next = new Map(sessionLifecycle.value);
       for (const tabs of Object.values(terminalTabsByDirectory.value))
         for (const t of tabs)
-          if (!current.has(t.id)) next.set(t.id, live.has(t.id) ? "running" : "exited");
+          if (!fresh.has(t.id)) next.set(t.id, live.has(t.id) ? "running" : "exited");
       sessionLifecycle.value = next;
-    } catch {}
+    } catch {
+      lifecycleEventsDuringHydrate = null;
+    }
   }
 
   // Live OSC 0 titles from the running process, keyed by tab_id. The daemon

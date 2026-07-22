@@ -22,12 +22,24 @@ function freshId(prefix: string) {
 }
 
 const setAppStateCalls: Array<{ key: string; value: string | null }> = [];
-const { getLiveTabIds, setLiveTabIds } = vi.hoisted(() => {
+const { getLiveTabIds, setLiveTabIds, setLiveTabIdsDeferred, resolveLiveTabIdsDeferred } = vi.hoisted(() => {
   let liveTabIds: string[] = [];
+  let deferred: { promise: Promise<string[]>; resolve: (ids: string[]) => void } | null = null;
   return {
-    getLiveTabIds: () => liveTabIds,
+    getLiveTabIds: () => deferred?.promise ?? liveTabIds,
     setLiveTabIds: (ids: string[]) => {
       liveTabIds = ids;
+    },
+    setLiveTabIdsDeferred: () => {
+      let resolve!: (ids: string[]) => void;
+      const promise = new Promise<string[]>((r) => {
+        resolve = r;
+      });
+      deferred = { promise, resolve };
+    },
+    resolveLiveTabIdsDeferred: (ids: string[]) => {
+      deferred?.resolve(ids);
+      deferred = null;
     },
   };
 });
@@ -154,5 +166,33 @@ describe("workspace store session lifecycle", () => {
 
     expect(store.sessionLifecycle.get(tab1!.id)).toBe("running");
     expect(store.sessionLifecycle.get(tab2!.id)).toBe("exited");
+  });
+
+  it("a later hydrate re-syncs a stale entry (snapshot wins, not first-write-wins)", async () => {
+    const store = useWorkspaceStore();
+    const tab1 = await store.createTab({ directoryId: "dir-1" });
+    setLiveTabIds([tab1!.id]);
+    await store.hydrateSessionLifecycle();
+    expect(store.sessionLifecycle.get(tab1!.id)).toBe("running");
+
+    // Tab exits but no event lands (missed hook). A later hydrate on the
+    // same directory must re-sync it to exited, not skip it forever.
+    setLiveTabIds([]);
+    await store.hydrateSessionLifecycle();
+
+    expect(store.sessionLifecycle.get(tab1!.id)).toBe("exited");
+  });
+
+  it("a live event during an in-flight hydrate survives the (older) snapshot", async () => {
+    const store = useWorkspaceStore();
+    const tab1 = await store.createTab({ directoryId: "dir-1" });
+    setLiveTabIdsDeferred();
+
+    const hydrate = store.hydrateSessionLifecycle();
+    store.markSessionExited(tab1!.id);
+    resolveLiveTabIdsDeferred([tab1!.id]);
+    await hydrate;
+
+    expect(store.sessionLifecycle.get(tab1!.id)).toBe("exited");
   });
 });
