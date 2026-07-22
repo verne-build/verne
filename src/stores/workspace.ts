@@ -16,6 +16,13 @@ import {
   type SplitDir,
 } from "@/lib/paneLayout";
 import { shouldApplyAgentRevision } from "@/lib/agentStatus";
+import { buildSessionsList, type SessionRow } from "@/lib/sessionsView";
+import {
+  deriveArrangement,
+  parseArrangementMap,
+  serializeArrangementMap,
+  type Arrangement,
+} from "@/lib/arrangement";
 
 /** A pane group with its layout parsed into a tree (DB stores `layout` as JSON). */
 export interface PaneGroup {
@@ -144,6 +151,36 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     return tabGroupsByDirectory.value[dirId] ?? [];
   }
 
+  // ---- sessions model (slice 1: derived from groups, dual-written) ----
+  const arrangementByScope = ref<Record<string, Arrangement>>({});
+  let arrangementsHydrated: Promise<void> | null = null;
+
+  function hydrateArrangements(): Promise<void> {
+    arrangementsHydrated ??= useRpc()
+      .request.getAppState({ key: "arrangement_by_scope" })
+      .then((raw) => {
+        arrangementByScope.value = parseArrangementMap(raw);
+      })
+      .catch(() => {});
+    return arrangementsHydrated;
+  }
+
+  // Derive the scope's arrangement from its active group. Called wherever the
+  // active group/layout changes (syncActiveTab, updateGroupSizes).
+  function syncArrangement(dirId: string) {
+    const groups = groupsOf(dirId);
+    const gid = activeGroupIdByDirectory.value[dirId];
+    const g = groups.find((x) => x.id === gid) ?? groups[0];
+    const arr = deriveArrangement(g?.layout);
+    const map = { ...arrangementByScope.value };
+    if (arr) map[dirId] = arr;
+    else delete map[dirId];
+    arrangementByScope.value = map;
+    useRpc()
+      .request.setAppState({ key: "arrangement_by_scope", value: serializeArrangementMap(map) })
+      .catch(() => {});
+  }
+
   // The owning tab's display name for a pane = the group's primary (first)
   // pane label. Precedence: manual rename → daemon agent display title → live
   // OSC title → foreground/agent process → numbered fallback. Computed live so
@@ -215,6 +252,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     acknowledgeTab(paneId);
     recordTabActivation(dirId, paneId);
     persistActiveGroup(dirId, g?.id);
+    syncArrangement(dirId);
   }
 
   // Serialize reconcile per directory so concurrent load paths (startup
@@ -350,6 +388,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     };
     hydrateTabRuntime(tabs);
     await hydrateActiveGroups();
+    void hydrateArrangements();
     await ingestGroups(directoryId, tabs);
     // Override DB-backed state with daemon's live truth (survives app restarts)
     void hydrateAgentStatesFromDaemon();
@@ -366,6 +405,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     terminalTabsByDirectory.value = { ...terminalTabsByDirectory.value, ...grouped };
     hydrateTabRuntime(tabs);
     await hydrateActiveGroups();
+    void hydrateArrangements();
     await Promise.all(
       Object.entries(grouped).map(([dirId, list]) => ingestGroups(dirId, list)),
     );
@@ -491,6 +531,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     const layout = applySizes(group.layout, nodeKey, sizes);
     replaceGroup(dirId, { ...group, layout });
     void useRpc().request.groupUpdateLayout({ id: groupId, layout: JSON.stringify(layout), activePaneId: group.activePaneId }).catch(() => {});
+    syncArrangement(dirId);
   }
 
   /** Drag a pane next to another pane within the same group. */
@@ -687,23 +728,20 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     return updated;
   }
 
-  function agentsList(scope: "all" | "current"): { tab: Tab; directory: WorkingDirectory }[] {
+  function sessionsList(scope: "all" | "current"): SessionRow[] {
     const wantDir = scope === "current" ? selectedDirectoryId.value : null;
-    const out: { tab: Tab; directory: WorkingDirectory }[] = [];
-    for (const dir of directories.value) {
-      if (wantDir && dir.id !== wantDir) continue;
-      const tabs = terminalTabsByDirectory.value[dir.id] ?? [];
-      for (const t of tabs) {
-        // Once runtime exists for a tab, it's authoritative — falling
-        // back to the in-memory t.lastAgentType snapshot would keep
-        // showing a revoked agent (daemon clears DB, but t.lastAgentType
-        // here doesn't refresh until reload).
-        const runtime = tabRuntime.value.get(t.id);
-        const agentType = runtime ? runtime.agentType : t.lastAgentType;
-        if (agentType) out.push({ tab: t, directory: dir });
-      }
-    }
-    return out;
+    return buildSessionsList(
+      directories.value,
+      terminalTabsByDirectory.value,
+      tabRuntime.value,
+      wantDir,
+    );
+  }
+
+  function agentsList(scope: "all" | "current"): { tab: Tab; directory: WorkingDirectory }[] {
+    return sessionsList(scope)
+      .filter((r) => r.agentType)
+      .map(({ tab, directory }) => ({ tab, directory }));
   }
 
   const expandedDirectoryIds = ref<Set<string>>(new Set());
@@ -757,6 +795,24 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   const selectedDirectory = computed(() =>
     directories.value.find(d => d.id === selectedDirectoryId.value) || null
   );
+
+  // Spec selection model, slice-1 aliases: activeScope == selected directory;
+  // focused session == the directory's active tab. Real independence lands in
+  // slice 2 when groups stop being the write model.
+  const activeScopeId = computed(() => selectedDirectoryId.value);
+  const focusedSessionId = computed(() =>
+    selectedDirectoryId.value ? activeTabIdByDirectory.value[selectedDirectoryId.value] : undefined,
+  );
+
+  function selectSession(sessionId: string) {
+    for (const dir of directories.value) {
+      const tabs = terminalTabsByDirectory.value[dir.id] ?? [];
+      if (!tabs.some((t) => t.id === sessionId)) continue;
+      if (dir.id !== selectedDirectoryId.value) selectDirectory(dir);
+      setActiveTab(dir.id, sessionId);
+      return;
+    }
+  }
 
   const activeRoot = computed<{ path: string; scopeType: "directory" | "agent_worktree"; scopeId: string } | null>(() => {
     const dir = directories.value.find(d => d.id === selectedDirectoryId.value);
@@ -905,6 +961,12 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     picking,
     openAndSelectWorkspace,
     agentsList,
+    sessionsList,
+    arrangementByScope,
+    activeScopeId,
+    focusedSessionId,
+    selectSession,
+    hydrateArrangements,
     createWorktree,
     removeWorktree,
     renameWorktree,
