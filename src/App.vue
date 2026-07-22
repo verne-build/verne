@@ -333,7 +333,7 @@ function cycleTab(dir: 1 | -1) {
   const activeId = store.activeTabIdByDirectory[dirId];
   const idx = tabs.findIndex((t) => t.id === activeId);
   const next = tabs[(idx + dir + tabs.length) % tabs.length];
-  store.setActiveTab(dirId, next.id);
+  store.selectSession(next.id);
 }
 
 // Activate terminal tab N (1-based) in the selected directory.
@@ -343,7 +343,7 @@ function selectTabByIndex(n: number) {
   const tabs = store.terminalTabsByDirectory[dirId] ?? [];
   const tab = tabs[n - 1];
   if (!tab) return false;
-  store.setActiveTab(dirId, tab.id);
+  store.selectSession(tab.id);
   return true;
 }
 
@@ -379,10 +379,8 @@ function focusTerminal() {
 
 // Split the focused terminal pane. 'h' = side-by-side, 'v' = stacked.
 function splitActivePane(direction: "h" | "v") {
-  const dirId = store.selectedDirectoryId;
-  if (!dirId) return;
-  const paneId = store.activeTabIdByDirectory[dirId];
-  if (paneId) void store.splitPane(paneId, direction);
+  const id = store.focusedSessionId;
+  if (id) void store.splitSessionWithNew(id, direction);
 }
 
 function handleMenuAction(e: Event) {
@@ -413,6 +411,7 @@ function handleMenuAction(e: Event) {
   else if (action === "splitDown") splitActivePane("v");
   else if (action === "newFile") newFile();
   else if (action === "closeTab") closeActiveTab();
+  else if (action === "killTerminalSession") window.dispatchEvent(new CustomEvent("kill-active-terminal-session"));
   else if (action === "reopenClosedTab") filePanelTabs.reopenLastClosed();
   else if (action === "focusExplorer") focusFilePanel("explorer");
   else if (action === "focusSourceControl") focusFilePanel("sc");
@@ -486,6 +485,12 @@ function handleGlobalKeydown(e: KeyboardEvent) {
       splitActivePane(shortcuts.matches("split-pane-v", e) ? "v" : "h");
       return;
     }
+  }
+  // Kill session (⌘⇧W) — explicit kill, distinct from ⌘W's remove-from-view.
+  if (shortcuts.matches("kill-session", e)) {
+    e.preventDefault();
+    window.dispatchEvent(new CustomEvent("kill-active-terminal-session"));
+    return;
   }
   // ⌘1–9: jump to terminal tab N. Parametric range — match logic stays hardcoded
   // (rebinding jump-to-tab is not wired in v1; the registry entry is display-only).
@@ -616,7 +621,7 @@ onMounted(async () => {
         const dir = store.directories.find((d) => d.id === dirId);
         if (dir) store.selectDirectory(dir);
       }
-      store.setActiveTab(dirId, tabId);
+      store.selectSession(tabId);
       break;
     }
   });

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import { SquareTerminal, SplitSquareHorizontal, PanelRight, PanelLeft, PanelBottom, PanelTop, X } from "@lucide/vue";
+import { SquareTerminal, SplitSquareHorizontal, PanelRight, PanelLeft, PanelBottom, PanelTop, X, RotateCw } from "@lucide/vue";
 import { ask } from "@/platform";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useRpc } from "@/composables/useRpc";
@@ -11,6 +11,7 @@ import {
 import { useShortcuts } from "@/composables/useShortcuts";
 import { agentIconSurfaceForTheme, getAgentIconForSurface } from "@/composables/useAgentIcon";
 import { useTheme } from "@/composables/useTheme";
+import { collectPaneIds } from "@/lib/paneLayout";
 import GridTerminal from "@/components/terminal/GridTerminal.vue";
 import {
   getDroppedPaths,
@@ -33,17 +34,19 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuShortcut,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-const PANE_DND_TYPE = "application/x-verne-pane";
-
 const props = defineProps<{
   paneId: string;
-  groupId: string;
-  activePaneId?: string;
-  /** Group has more than one pane → show per-pane close + focus highlight. */
+  scopeId: string;
+  focusedSessionId?: string;
+  /** Arrangement has more than one pane → show per-pane close + focus highlight. */
   multi: boolean;
 }>();
 
@@ -64,10 +67,9 @@ const terminalWrapper = ref<HTMLElement | null>(null);
 // session and inject transcribed text via sendTextToSession().
 const sessionId = ref<string | null>(null);
 const dropActive = ref(false);
-// Pane drag-drop overlay: which edge the dragged pane would dock to.
-const paneDropEdge = ref<"left" | "right" | "top" | "bottom" | null>(null);
 
-const isActive = computed(() => props.multi && props.activePaneId === props.paneId);
+const isActive = computed(() => props.multi && props.focusedSessionId === props.paneId);
+const isExited = computed(() => store.sessionLifecycle.get(props.paneId) === "exited");
 
 function pastePaths(paths: string[]) {
   const text = formatPathsForShell(paths);
@@ -76,7 +78,6 @@ function pastePaths(paths: string[]) {
 
 // --- Native file-path drop (file-tree + OS items) ---
 function onDragOver(e: DragEvent) {
-  if (paneDragOver(e)) return;
   if (!hasPathDrop(e)) return;
   e.preventDefault();
   e.stopPropagation();
@@ -86,58 +87,14 @@ function onDragOver(e: DragEvent) {
 function onDragLeave(e: DragEvent) {
   if (e.relatedTarget && terminalWrapper.value?.contains(e.relatedTarget as Node)) return;
   dropActive.value = false;
-  paneDropEdge.value = null;
 }
 function onDrop(e: DragEvent) {
-  if (paneDrop(e)) return;
   dropActive.value = false;
   const paths = getDroppedPaths(e);
   if (!paths.length) return;
   e.preventDefault();
   e.stopPropagation();
   pastePaths(paths);
-}
-
-// --- Pane rearrange drag (title bar is the handle) ---
-function onPaneDragStart(e: DragEvent) {
-  if ((e.target as HTMLElement)?.closest("[data-no-drag]")) {
-    e.preventDefault();
-    return;
-  }
-  if (!e.dataTransfer) return;
-  e.dataTransfer.setData(PANE_DND_TYPE, props.paneId);
-  e.dataTransfer.effectAllowed = "move";
-}
-
-function edgeFor(e: DragEvent): "left" | "right" | "top" | "bottom" {
-  const r = terminalWrapper.value!.getBoundingClientRect();
-  const px = (e.clientX - r.left) / r.width;
-  const py = (e.clientY - r.top) / r.height;
-  const dist = { left: px, right: 1 - px, top: py, bottom: 1 - py };
-  return (Object.keys(dist) as (keyof typeof dist)[]).reduce((a, b) => (dist[a] <= dist[b] ? a : b));
-}
-
-function paneDragOver(e: DragEvent): boolean {
-  if (!e.dataTransfer?.types.includes(PANE_DND_TYPE)) return false;
-  e.preventDefault();
-  e.stopPropagation();
-  e.dataTransfer.dropEffect = "move";
-  paneDropEdge.value = edgeFor(e);
-  return true;
-}
-
-function paneDrop(e: DragEvent): boolean {
-  if (!e.dataTransfer?.types.includes(PANE_DND_TYPE)) return false;
-  e.preventDefault();
-  e.stopPropagation();
-  const dragged = e.dataTransfer.getData(PANE_DND_TYPE);
-  const edge = paneDropEdge.value;
-  paneDropEdge.value = null;
-  if (!dragged || dragged === props.paneId || !edge) return true;
-  const direction = edge === "left" || edge === "right" ? "h" : "v";
-  const before = edge === "left" || edge === "top";
-  void store.movePane(dragged, props.paneId, direction, before);
-  return true;
 }
 
 // dnd-kit (file tabs) custom-event drop path.
@@ -159,7 +116,7 @@ watch(terminalWrapper, (el, prev) => {
 });
 
 const tab = computed(() =>
-  (store.terminalTabsByDirectory[store.selectedDirectoryId ?? ""] ?? []).find((t) => t.id === props.paneId),
+  (store.terminalTabsByDirectory[props.scopeId] ?? []).find((t) => t.id === props.paneId),
 );
 
 const agentType = computed(() => {
@@ -183,6 +140,14 @@ const agentIconSrc = computed(() =>
   agentType.value ? getAgentIconForSurface(agentType.value, agentIconSurface.value) : null,
 );
 
+// Other live sessions this pane could split with (excludes panes already in
+// this scope's arrangement).
+const otherSessions = computed(() => {
+  const arr = store.arrangementFor(props.scopeId);
+  const inView = new Set(arr ? collectPaneIds(arr.layout) : []);
+  return store.sessionsList("current").filter((row) => !inView.has(row.tab.id));
+});
+
 // tabsSessionId → ensure_tab_session is idempotent (returns the existing
 // session, or respawns after a daemon restart). Only called on mount.
 let mountGen = 0;
@@ -200,12 +165,21 @@ async function mountActive() {
 watch(() => props.paneId, () => { void mountActive(); });
 
 function focusPane() {
-  if (props.activePaneId !== props.paneId) store.setActivePane(props.groupId, props.paneId);
+  if (store.focusedSessionId !== props.paneId) store.focusSession(props.paneId);
 }
 
-function split(direction: "h" | "v", before = false) { void store.splitPane(props.paneId, direction, before); }
+function split(direction: "h" | "v", before = false) {
+  void store.splitSessionWithNew(props.paneId, direction, before);
+}
 function splitH() { split("h"); }
 function splitV() { split("v"); }
+function splitWithExisting(otherId: string) {
+  store.splitSessionWithExisting(props.paneId, otherId, "h");
+}
+
+function removeFromView() {
+  store.removeFromView(props.paneId);
+}
 
 function runningProcessLabel(): string {
   const a = agentType.value;
@@ -213,17 +187,16 @@ function runningProcessLabel(): string {
   return foregroundCommand.value || "a process";
 }
 
-async function closePane() {
-  // Same running-process guard the tab pill uses.
+async function closeSession() {
   const hasChild = await rpc.request.tabsHasRunningChild({ id: props.paneId }).catch(() => false);
   if (hasChild) {
-    const ok = await ask("Close Pane?", {
-      detail: `${runningProcessLabel()} is still running. If you close the pane the process will be killed.`,
+    const ok = await ask("Close Session?", {
+      detail: `${runningProcessLabel()} is still running. If you close the session the process will be killed.`,
       confirmLabel: "Close",
     });
     if (!ok) return;
   }
-  void store.closePane(props.paneId);
+  await store.closeSession(props.paneId);
 }
 
 onMounted(() => {
@@ -234,18 +207,16 @@ onUnmounted(() => {
   decrementMountedTerminalViewCount();
   // GridTerminal tears down its own session/renderer on unmount. The PTY itself
   // lives in the daemon and is only closed by an explicit close
-  // (store.closePane → destroyPane).
+  // (store.closeSession).
 });
 </script>
 
 <template>
   <div class="flex flex-col h-full min-h-0" @focusin="focusPane">
-    <!-- Title bar: drag handle + label + split / close actions -->
+    <!-- Title bar: label + split / close actions -->
     <div
-      class="flex items-center pl-4 pr-1 h-8 text-xs bg-sidebar border-b overflow-hidden shrink-0 gap-1.5 cursor-grab active:cursor-grabbing"
+      class="flex items-center pl-4 pr-1 h-8 text-xs bg-sidebar border-b overflow-hidden shrink-0 gap-1.5"
       :class="isActive ? 'border-border text-foreground' : 'border-border text-muted-foreground'"
-      draggable="true"
-      @dragstart="onPaneDragStart"
     >
       <img v-if="agentIconSrc" :src="agentIconSrc" class="size-3.5 shrink-0" :alt="panelLabel" />
       <SquareTerminal v-else class="size-3.5 shrink-0" />
@@ -269,9 +240,32 @@ onUnmounted(() => {
             <DropdownMenuShortcut>{{ shortcutText("split-pane-v") }}</DropdownMenuShortcut>
           </DropdownMenuItem>
           <DropdownMenuItem @select="split('v', true)"><PanelTop class="size-3.5" /> Split Up</DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger :disabled="otherSessions.length === 0">
+              Split With Existing Session…
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent>
+              <DropdownMenuItem
+                v-for="row in otherSessions"
+                :key="row.tab.id"
+                @select="splitWithExisting(row.tab.id)"
+              >
+                {{ store.sessionName(row.tab.id) }}
+              </DropdownMenuItem>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
         </DropdownMenuContent>
       </DropdownMenu>
-      <Button v-if="multi" data-no-drag size="icon-xs" variant="ghost" class="text-muted-foreground" title="Close Pane" @click="closePane">
+      <Button
+        v-if="multi"
+        data-no-drag
+        size="icon-xs"
+        variant="ghost"
+        class="text-muted-foreground"
+        title="Remove From View"
+        @click="removeFromView"
+      >
         <X class="size-3.5" />
       </Button>
     </div>
@@ -282,7 +276,7 @@ onUnmounted(() => {
           ref="terminalWrapper"
           class="flex-1 min-h-0 relative"
           data-terminal-drop
-          :data-active-terminal="!multi || activePaneId === paneId ? 'true' : undefined"
+          :data-active-terminal="!multi || focusedSessionId === paneId ? 'true' : undefined"
           @dragover.capture="onDragOver"
           @dragleave.capture="onDragLeave"
           @drop.capture="onDrop"
@@ -306,17 +300,18 @@ onUnmounted(() => {
             v-if="dropActive"
             class="pointer-events-none absolute inset-0 z-20 border-2 border-primary/60 bg-primary/5"
           />
-          <!-- Pane-rearrange drop hint on the docking edge -->
-          <div
-            v-if="paneDropEdge"
-            class="pointer-events-none absolute z-20 bg-primary/25 border border-primary/60"
-            :class="{
-              'inset-y-0 left-0 w-1/2': paneDropEdge === 'left',
-              'inset-y-0 right-0 w-1/2': paneDropEdge === 'right',
-              'inset-x-0 top-0 h-1/2': paneDropEdge === 'top',
-              'inset-x-0 bottom-0 h-1/2': paneDropEdge === 'bottom',
-            }"
-          />
+          <!-- Exited overlay: PTY is gone; click to respawn. -->
+          <button
+            v-if="isExited"
+            type="button"
+            class="absolute inset-0 z-40 flex items-center justify-center bg-[var(--editor-bg)]/50 opacity-50 hover:opacity-70 transition-opacity cursor-pointer"
+            @click="mountActive"
+          >
+            <span class="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <RotateCw class="size-3.5" />
+              Session exited — click to restart
+            </span>
+          </button>
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent>
@@ -337,7 +332,9 @@ onUnmounted(() => {
           Split Down
           <ContextMenuShortcut>{{ shortcutText("split-pane-v") }}</ContextMenuShortcut>
         </ContextMenuItem>
-        <ContextMenuItem v-if="multi" @select="closePane">Close Pane</ContextMenuItem>
+        <ContextMenuItem v-if="multi" @select="removeFromView">Remove From View</ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem variant="destructive" @select="closeSession">Close Session</ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
   </div>

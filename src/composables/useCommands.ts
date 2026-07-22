@@ -81,6 +81,7 @@ export function useCommands() {
       { id: "tab.prev", title: "Previous Tab", category: "Tabs", icon: ArrowLeft, keywords: "switch cycle", run: () => menu("prevTab") },
       { id: "tab.new", title: "New File", category: "Tabs", icon: FilePlusCorner, when: hasDir, keywords: "create", run: () => menu("newFile") },
       { id: "tab.close", title: "Close Tab", category: "Tabs", icon: X, shortcut: "⌘W", run: () => menu("closeTab") },
+      { id: "session.kill", title: "Kill Session", category: "Tabs", icon: X, shortcut: "⇧⌘W", when: hasDir, keywords: "terminal stop process", run: () => menu("killTerminalSession") },
       { id: "tab.reopen", title: "Reopen Closed Tab", category: "Tabs", icon: RotateCcw, shortcut: "⇧⌘T", keywords: "restore", run: () => menu("reopenClosedTab") },
 
       // Editor

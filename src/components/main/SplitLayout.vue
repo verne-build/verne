@@ -12,8 +12,8 @@ import TerminalPane from "./TerminalPane.vue";
 
 const props = defineProps<{
   node: LayoutNode;
-  groupId: string;
-  activePaneId?: string;
+  scopeId: string;
+  focusedSessionId?: string;
   multi: boolean;
 }>();
 
@@ -26,7 +26,7 @@ function onLayout(sizes: number[]) {
   if (isLeaf(props.node)) return;
   const k = nodeKey(props.node);
   if (saveTimer) clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => store.updateGroupSizes(props.groupId, k, sizes), 400);
+  saveTimer = setTimeout(() => store.setArrangementSizes(props.scopeId, k, sizes), 400);
 }
 </script>
 
@@ -34,8 +34,8 @@ function onLayout(sizes: number[]) {
   <TerminalPane
     v-if="isLeaf(node)"
     :pane-id="node.pane"
-    :group-id="groupId"
-    :active-pane-id="activePaneId"
+    :scope-id="scopeId"
+    :focused-session-id="focusedSessionId"
     :multi="multi"
   />
   <ResizablePanelGroup
@@ -56,8 +56,8 @@ function onLayout(sizes: number[]) {
       >
         <SplitLayout
           :node="child"
-          :group-id="groupId"
-          :active-pane-id="activePaneId"
+          :scope-id="scopeId"
+          :focused-session-id="focusedSessionId"
           :multi="multi"
         />
       </ResizablePanel>

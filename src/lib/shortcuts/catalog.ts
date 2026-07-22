@@ -44,6 +44,7 @@ export const SHORTCUT_CATALOG: ShortcutDef[] = [
   // focus and never on Ctrl+D (EOF)" — see App.vue.
   { name: "split-pane-h", label: "Split Pane Horizontally", category: "Terminal", defaultBinding: "Cmd+D", target: "renderer" },
   { name: "split-pane-v", label: "Split Pane Vertically", category: "Terminal", defaultBinding: "Cmd+Shift+D", target: "renderer" },
+  { name: "kill-session", label: "Kill Session", category: "Terminal", defaultBinding: "Cmd+Shift+W", target: "renderer" },
 
   // Window
   { name: "close-window", label: "Close Window", category: "Window", defaultBinding: "Mod+Shift+W", target: "menu" },
