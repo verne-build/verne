@@ -10,7 +10,6 @@ import {
 } from "../composables/useTerminal";
 import { useFilePanelTabs } from "../composables/useFilePanelTabs";
 import { useWorkspaceStore } from "../stores/workspace";
-import { collectPaneIds } from "../lib/paneLayout";
 import type { DebugMetrics, ProcessBreakdown, ResourceUsage } from "@/types/shared";
 import {
   Cpu,
@@ -28,10 +27,9 @@ const store = useWorkspaceStore();
 const { fileTabs } = useFilePanelTabs(() => store.activeRoot);
 const editorTabCount = computed(() => fileTabs.value.length);
 
-// Tabs = pills (groups); Panes = live PTYs. usage.tabCount from the backend is
-// actually the PTY/session count (one per pane), so it maps to Panes now.
+// Sessions = terminal tabs (one per PTY). Groups are no longer counted.
 const tabCount = computed(() =>
-  Object.values(store.tabGroupsByDirectory).reduce((n, gs) => n + gs.length, 0),
+  Object.values(store.terminalTabsByDirectory).reduce((n, ts) => n + ts.length, 0),
 );
 
 const usage = ref<ResourceUsage | null>(null);
@@ -60,26 +58,15 @@ function paneProcLabel(p: ProcessBreakdown): string {
   return p.name.replace(/^Tab:\s*/, "");
 }
 
-// Pane processes grouped under their owning tab, preserving first-seen order.
 const tabProcessGroups = computed<TabProcGroup[]>(() => {
   const procs = debugMetrics.value?.processBreakdown.filter((p) => p.tabId) ?? [];
   const map = new Map<string, TabProcGroup>();
   const order: string[] = [];
-  // paneId → { id, name } for every pane in every group, built once (O(M)).
-  const paneToGroup = new Map<string, { id: string; name: string }>();
-  for (const groups of Object.values(store.tabGroupsByDirectory)) {
-    for (const g of groups) {
-      const paneIds = collectPaneIds(g.layout);
-      const name = store.tabGroupName(paneIds[0] ?? "");
-      for (const pid of paneIds) paneToGroup.set(pid, { id: g.id, name });
-    }
-  }
   for (const p of procs) {
-    const grp = paneToGroup.get(p.tabId!);
-    const key = grp?.id ?? p.tabId!;
+    const key = p.tabId!;
     let entry = map.get(key);
     if (!entry) {
-      entry = { key, name: grp?.name ?? store.tabGroupName(p.tabId!), ram: 0, cpu: 0, panes: [] };
+      entry = { key, name: store.tabGroupName(key), ram: 0, cpu: 0, panes: [] };
       map.set(key, entry);
       order.push(key);
     }
@@ -94,11 +81,8 @@ const tabProcessGroups = computed<TabProcGroup[]>(() => {
 // render placeholders at full height so the popover doesn't resize on first open.
 const CORE_PROCESS_PLACEHOLDERS = 3; // App, Daemon, Sidecar
 const expectedTabGroups = computed(() =>
-  Object.values(store.tabGroupsByDirectory).flatMap((groups) =>
-    groups.map((g) => {
-      const paneIds = collectPaneIds(g.layout);
-      return { key: g.id, name: store.tabGroupName(paneIds[0] ?? ""), paneCount: paneIds.length };
-    }),
+  Object.values(store.terminalTabsByDirectory).flatMap((tabs) =>
+    tabs.map((t) => ({ key: t.id, name: t.label, paneCount: 1 })),
   ),
 );
 
