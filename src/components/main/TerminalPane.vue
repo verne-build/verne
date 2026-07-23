@@ -48,6 +48,8 @@ const props = defineProps<{
   focusedSessionId?: string;
   /** Arrangement has more than one pane → show per-pane close + focus highlight. */
   multi: boolean;
+  /** Reserve the collapsed right-panel re-expand control's overlay slot. */
+  reserveRightOverlay?: boolean;
 }>();
 
 const store = useWorkspaceStore();
@@ -234,8 +236,11 @@ onUnmounted(() => {
   <div class="flex flex-col h-full min-h-0" @focusin="focusPane">
     <!-- Title bar: label + split / close actions -->
     <div
-      class="flex items-center pl-4 pr-1 h-8 text-xs bg-sidebar border-b overflow-hidden shrink-0 gap-1.5"
-      :class="isActive ? 'border-border text-foreground' : 'border-border text-muted-foreground'"
+      class="flex items-center pl-4 h-11.5 text-xs bg-sidebar border-b overflow-hidden shrink-0 gap-1.5"
+      :class="[
+        isActive ? 'border-border text-foreground' : 'border-border text-muted-foreground',
+        reserveRightOverlay ? 'pr-9' : 'pr-1',
+      ]"
     >
       <img v-if="agentIconSrc" :src="agentIconSrc" class="size-3.5 shrink-0" :alt="panelLabel" />
       <SquareTerminal v-else class="size-3.5 shrink-0" />

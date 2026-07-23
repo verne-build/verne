@@ -24,6 +24,7 @@ function expandRight() {
 }
 
 const dirId = computed(() => store.selectedDirectoryId);
+const showRightOverlay = computed(() => !!dirId.value && !!rightCollapsed?.value);
 const arrangement = computed(() =>
   dirId.value ? store.arrangementFor(dirId.value) : null,
 );
@@ -78,19 +79,19 @@ onUnmounted(() => {
     <!-- Orphaned TabBar affordances: traffic-light clearance + right-panel
          re-expand. Absolute row so it doesn't reserve layout height. -->
     <div
-      v-if="leftCollapsed || (dirId && rightCollapsed)"
-      class="absolute top-0 left-0 right-0 h-7 flex items-center justify-between z-10 pointer-events-none"
+      v-if="leftCollapsed || showRightOverlay"
+      class="absolute top-0 left-0 right-0 h-11.5 flex items-center justify-between z-10 pointer-events-none"
     >
       <div v-if="leftCollapsed" class="shrink-0 w-[128px]" />
       <div class="flex-1" />
       <TooltipProvider :delay-duration="250">
-        <Tooltip v-if="dirId && rightCollapsed">
+        <Tooltip v-if="showRightOverlay">
           <TooltipTrigger as-child>
             <Button
               type="button"
               size="icon-xs"
               variant="ghost"
-              class="text-muted-foreground pointer-events-auto mr-1.5 mt-1"
+              class="text-muted-foreground pointer-events-auto mr-1.5"
               aria-label="Show right sidebar"
               @click="expandRight"
             >
@@ -117,6 +118,7 @@ onUnmounted(() => {
         :scope-id="dirId"
         :focused-session-id="store.focusedSessionId"
         :multi="paneCount(arrangement.layout) > 1"
+        :reserve-right-overlay="showRightOverlay"
       />
       <!-- Transient: the scope has no arrangement yet — the empty-scope
            auto-session (ensureLayoutModel2 / selectDirectory / closeSession)

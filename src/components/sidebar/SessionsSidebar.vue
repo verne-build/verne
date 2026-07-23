@@ -347,12 +347,13 @@ async function onRemoveDirectory(dirId: string) {
     </Empty>
     <template v-else>
     <!-- Chip rail -->
-    <div class="relative shrink-0">
-    <div
-      ref="chipRailEl"
-      class="flex items-center gap-1.5 overflow-x-auto px-2 py-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-      @scroll="updateChipRail"
-    >
+    <div class="relative flex shrink-0 items-center gap-1.5 pr-2">
+    <div class="relative min-w-0 flex-1">
+      <div
+        ref="chipRailEl"
+        class="flex items-center gap-1.5 overflow-x-auto px-2 py-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        @scroll="updateChipRail"
+      >
       <Badge as="button" type="button" :variant="activeChip === 'all' ? 'default' : 'outline'"
         class="cursor-pointer select-none shrink-0" @click="activeChip = 'all'">All</Badge>
       <ContextMenu v-for="d in rootDirs" :key="d.id">
@@ -380,20 +381,21 @@ async function onRemoveDirectory(dirId: string) {
           <ContextMenuItem variant="destructive" @select="onRemoveDirectory(d.id)">Remove Workspace</ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
-      <Badge as="button" type="button" variant="outline" aria-label="Add Workspace"
-        class="cursor-pointer select-none shrink-0 disabled:pointer-events-none disabled:opacity-50"
-        :disabled="store.picking" @click="store.openAndSelectWorkspace()">
-        <Plus class="size-3" />
-      </Badge>
+      </div>
+      <div
+        class="pointer-events-none absolute inset-y-0 left-0 z-10 w-4 bg-linear-to-r from-sidebar to-transparent transition-opacity"
+        :class="chipRailAtStart ? 'opacity-0' : 'opacity-100'"
+      />
+      <div
+        class="pointer-events-none absolute inset-y-0 right-0 z-10 w-4 bg-linear-to-l from-sidebar to-transparent transition-opacity"
+        :class="chipRailAtEnd ? 'opacity-0' : 'opacity-100'"
+      />
     </div>
-    <div
-      class="pointer-events-none absolute inset-y-0 left-0 z-10 w-4 bg-linear-to-r from-sidebar to-transparent transition-opacity"
-      :class="chipRailAtStart ? 'opacity-0' : 'opacity-100'"
-    />
-    <div
-      class="pointer-events-none absolute inset-y-0 right-0 z-10 w-4 bg-linear-to-l from-sidebar to-transparent transition-opacity"
-      :class="chipRailAtEnd ? 'opacity-0' : 'opacity-100'"
-    />
+    <Badge as="button" type="button" variant="outline" aria-label="Add Workspace"
+      class="cursor-pointer select-none shrink-0 disabled:pointer-events-none disabled:opacity-50"
+      :disabled="store.picking" @click="store.openAndSelectWorkspace()">
+      <Plus class="size-3" />
+    </Badge>
     </div>
 
     <div v-if="renamingId" class="px-3 py-1.5 border-b flex items-center gap-2">

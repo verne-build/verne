@@ -240,13 +240,13 @@ async function closeSession() {
 </script>
 
 <template>
-  <div class="mb-1.5 mx-2 w-[calc(100%-1rem)]">
+  <div class="mb-0.5 mx-2 w-[calc(100%-1rem)]">
     <ContextMenu>
       <ContextMenuTrigger as-child>
         <Button
           :as="'div'"
           :variant="focused ? 'secondary' : 'ghost'"
-          class="rounded-md border bg-card px-2.5 py-2 w-full h-auto flex flex-col items-stretch gap-0.5 text-left"
+          class="rounded-md px-2.5 py-2 w-full h-auto flex flex-col items-stretch gap-0.5 text-left"
           :class="exited ? 'opacity-60' : ''"
           @click="focus"
           @dblclick="startRename()"
@@ -281,15 +281,15 @@ async function closeSession() {
               @blur="finishRename(($event.target as HTMLInputElement).value)"
               @vue:mounted="({ el }: any) => onRenameInputMounted(el)"
             />
-            <span v-else class="truncate text-sm">{{ title }}</span>
-            <span v-if="composed" class="ml-auto shrink-0 flex items-center gap-0.5 text-muted-foreground">
-              <Columns2 class="size-3" />
-              <span class="text-[10px] tabular-nums">{{ paneTotal }}</span>
-            </span>
+            <span v-else class="truncate text-xs">{{ title }}</span>
           </div>
           <div class="flex items-center gap-1.5 min-w-0">
             <span v-if="branch" class="truncate font-mono text-[11px] text-muted-foreground/80">{{ branch }}</span>
-            <span class="ml-auto shrink-0">
+            <span class="ml-auto shrink-0 flex items-center gap-1.5">
+              <span v-if="composed" class="flex items-center gap-0.5 text-muted-foreground">
+                <Columns2 class="size-3" />
+                <span class="text-[10px] tabular-nums">{{ paneTotal }}</span>
+              </span>
               <img v-if="row.agentType && iconSrc" :src="iconSrc" class="size-3.5" alt="" />
               <SquareTerminal v-else class="size-3.5 text-muted-foreground/70" />
             </span>

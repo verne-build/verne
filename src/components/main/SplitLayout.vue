@@ -15,6 +15,7 @@ const props = defineProps<{
   scopeId: string;
   focusedSessionId?: string;
   multi: boolean;
+  reserveRightOverlay?: boolean;
 }>();
 
 const store = useWorkspaceStore();
@@ -37,6 +38,7 @@ function onLayout(sizes: number[]) {
     :scope-id="scopeId"
     :focused-session-id="focusedSessionId"
     :multi="multi"
+    :reserve-right-overlay="reserveRightOverlay"
   />
   <ResizablePanelGroup
     v-else
@@ -59,6 +61,7 @@ function onLayout(sizes: number[]) {
           :scope-id="scopeId"
           :focused-session-id="focusedSessionId"
           :multi="multi"
+          :reserve-right-overlay="reserveRightOverlay"
         />
       </ResizablePanel>
     </template>
