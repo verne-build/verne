@@ -24,6 +24,7 @@ function freshId(prefix: string) {
 const setAppStateCalls: Array<{ key: string; value: string | null }> = [];
 const tabsClosedIds: string[] = [];
 const tabsSessionIdCalls: string[] = [];
+const tabsCreateCalls: Array<{ directoryId: string }> = [];
 const {
   getLiveTabIds,
   setLiveTabIds,
@@ -128,6 +129,7 @@ vi.mock("@/composables/useRpc", () => ({
       deleteDirectory: vi.fn(async () => true),
       worktreeRemove: vi.fn(async () => true),
       tabsCreate: vi.fn(async (opts: { directoryId: string; label?: string; cwd?: string }) => {
+        tabsCreateCalls.push({ directoryId: opts.directoryId });
         const deferred = getTabsCreateDeferred();
         if (deferred) await deferred.promise;
         return {
@@ -482,6 +484,20 @@ describe("exited-close skip (I4), focus persistence (I5), label threading (I6)",
     expect(store.focusedSessionId).toBe("tab-a");
   });
 
+  it("drops a hydrated focus id once tabs load and it no longer names a live session", async () => {
+    // "tab-a" was focused at persist time but has since been closed elsewhere
+    // (e.g. another window) — tabsList no longer returns it.
+    appState.set("focused_by_scope", JSON.stringify({ "dir-1": "tab-a" }));
+    appState.set("layout_model:dir-1", "2");
+    tabsListByDir["dir-1"] = [{ id: "tab-b", directoryId: "dir-1", label: "1", cwd: null }];
+
+    const store = useWorkspaceStore();
+    store.selectDirectory(dir("dir-1"));
+    await store.loadTabsForDirectory("dir-1");
+
+    expect(store.focusedSessionId).not.toBe("tab-a");
+  });
+
   it("createTab threads an explicit label through newSession", async () => {
     const store = useWorkspaceStore();
     const tab = await store.createTab({ directoryId: "dir-1", label: "Suggested changes" });
@@ -499,6 +515,7 @@ describe("empty-scope auto-session (C2)", () => {
     setAppStateCalls.length = 0;
     tabsClosedIds.length = 0;
     tabsSessionIdCalls.length = 0;
+    tabsCreateCalls.length = 0;
     nextId = 0;
     setLiveTabIds([]);
     appState.clear();
@@ -546,6 +563,30 @@ describe("empty-scope auto-session (C2)", () => {
       expect(store.terminalTabsByDirectory["dir-1"]?.length).toBe(1);
     });
     await new Promise((r) => setTimeout(r, 0));
+    expect(store.terminalTabsByDirectory["dir-1"]?.length).toBe(1);
+  });
+
+  it("concurrent selectDirectory + load-tail auto-create produce exactly one tabsCreate call", async () => {
+    const store = useWorkspaceStore();
+    // Populate the bucket as empty first (not selected), so selectDirectory's
+    // guard can fire directly (mirrors "tabs already loaded and empty" above).
+    await store.loadTabsForDirectory("dir-1");
+    expect(tabsCreateCalls.length).toBe(0);
+
+    const deferred = queueTabsCreateDeferred();
+    // selectDirectory fires the guard synchronously -> newSession -> tabsCreate
+    // (pending on `deferred`). Before it resolves, a second load's
+    // ensureLayoutModel2 tail re-checks the still-empty bucket and would fire
+    // its own auto-create if it weren't single-flighted with the first.
+    store.selectDirectory(dir("dir-1"));
+    await store.loadTabsForDirectory("dir-1");
+    deferred.resolve();
+
+    await vi.waitFor(() => {
+      expect(store.terminalTabsByDirectory["dir-1"]?.length).toBe(1);
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(tabsCreateCalls.length).toBe(1);
     expect(store.terminalTabsByDirectory["dir-1"]?.length).toBe(1);
   });
 });

@@ -354,6 +354,25 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   // Per-dir in-flight de-dupe: concurrent loads share one run (and only that
   // run may fire the empty-scope auto-session below).
   const ensureLayoutInFlight = new Map<string, Promise<void>>();
+  // Single-flight memo for AUTO-creates only (not the user's explicit "+").
+  // Both auto-create call sites (selectDirectory's guard and the
+  // ensureLayoutModel2 tail below) route through this so a still-pending
+  // tabsCreate from one site blocks the other from spawning a duplicate —
+  // the empty-bucket check alone can't do that since tabsCreate is async.
+  const autoSessionInFlight = new Map<string, Promise<void>>();
+  function ensureSessionForEmptyDir(dirId: string): Promise<void> {
+    const existing = autoSessionInFlight.get(dirId);
+    if (existing) return existing;
+    const run = (async () => {
+      // Re-check: an explicit newSession (the "+" button) may have landed
+      // first while this call was queued behind the memo.
+      if ((terminalTabsByDirectory.value[dirId] ?? []).length) return;
+      await newSession(dirId).catch(() => {});
+    })().finally(() => autoSessionInFlight.delete(dirId));
+    autoSessionInFlight.set(dirId, run);
+    return run;
+  }
+
   function ensureLayoutModel2(dirId: string, tabs: Tab[]): Promise<void> {
     const existing = ensureLayoutInFlight.get(dirId);
     if (existing) return existing;
@@ -362,8 +381,28 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     return run;
   }
 
+  // Drop a hydrated focus id that no longer names a live session in dirId's
+  // bucket, so focusedSessionId can't keep pointing at a pruned/closed
+  // session after relaunch.
+  function pruneStaleFocusId(dirId: string, tabs: Tab[]) {
+    const live = new Set(tabs.map((t) => t.id));
+    const focused = focusedByScope.value[dirId];
+    if (focused && !live.has(focused)) {
+      const next = { ...focusedByScope.value };
+      delete next[dirId];
+      focusedByScope.value = next;
+    }
+    const active = activeTabIdByDirectory.value[dirId];
+    if (active && !live.has(active)) {
+      const next = { ...activeTabIdByDirectory.value };
+      delete next[dirId];
+      activeTabIdByDirectory.value = next;
+    }
+  }
+
   async function doEnsureLayoutModel2(dirId: string, tabs: Tab[]) {
     await Promise.all([hydrateArrangements(), hydrateFocusedByScope()]);
+    pruneStaleFocusId(dirId, tabs);
     const flagKey = `layout_model:${dirId}`;
     const model = await useRpc().request.getAppState({ key: flagKey });
     if (model !== "2") {
@@ -403,7 +442,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     // Empty-scope guarantee (old ensureTerminal): a selected directory with
     // zero sessions gets one. Only the in-flight-slot holder reaches here.
     if (!(terminalTabsByDirectory.value[dirId] ?? []).length && dirId === selectedDirectoryId.value)
-      void newSession(dirId).catch(() => {});
+      void ensureSessionForEmptyDir(dirId);
   }
 
   // A tab becoming active means the user is looking at it — clear the "done"
@@ -876,14 +915,18 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   function selectDirectory(dir: WorkingDirectory | null) {
     selectedDirectoryId.value = dir?.id || null;
     // Empty-scope guarantee for the select path: tabs already loaded + empty →
-    // spawn one. An in-flight ensureLayoutModel2 owns that job instead.
+    // spawn one. An in-flight ensureLayoutModel2 owns that job instead. Routes
+    // through ensureSessionForEmptyDir (not newSession directly) so this can't
+    // stack a duplicate against the ensureLayoutModel2 tail's own auto-create —
+    // the sidebar calls selectDirectory() before loadTabsForDirectory(), so no
+    // ensureLayoutModel2 run is in flight yet when this guard first fires.
     if (
       dir &&
       terminalTabsByDirectory.value[dir.id] &&
       !terminalTabsByDirectory.value[dir.id].length &&
       !ensureLayoutInFlight.has(dir.id)
     )
-      void newSession(dir.id).catch(() => {});
+      void ensureSessionForEmptyDir(dir.id);
   }
 
   return {
