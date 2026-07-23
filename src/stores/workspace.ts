@@ -52,10 +52,13 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   // tab-updated tick (O(tabs) reactive replacement — see CLAUDE.md guardrail).
   const tabRuntime = shallowRef<Map<string, TabUpdatedEvent>>(new Map());
 
-  function applyTabUpdate(payload: TabUpdatedEvent) {
+  function applyTabUpdate(
+    payload: TabUpdatedEvent,
+    { hydrating = false }: { hydrating?: boolean } = {},
+  ) {
     const prev = tabRuntime.value.get(payload.tabId);
     if (!shouldApplyAgentRevision(prev?.revision, payload.revision)) return;
-    if ((prev?.agentType ?? null) !== (payload.agentType ?? null))
+    if (!hydrating && (prev?.agentType ?? null) !== (payload.agentType ?? null))
       stampActivity(payload.tabId, payload.lastOutputAt ?? payload.changedAt ?? Date.now());
     const selected = selectedDirectoryId.value;
     const isActive =
@@ -533,17 +536,20 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     try {
       const states = await useRpc().request.getAgentStates();
       for (const s of states) {
-        applyTabUpdate({
-          tabId: s.tabId,
-          agentState: s.agentState as import("@/types").AgentState,
-          agentType: s.agentType,
-          revision: s.revision,
-          source: s.source,
-          changedAt: s.changedAt,
-          lastOutputAt: s.lastOutputAt,
-          lastAgentSessionId: s.lastAgentSessionId ?? undefined,
-          displayTitle: s.displayTitle ?? undefined,
-        });
+        applyTabUpdate(
+          {
+            tabId: s.tabId,
+            agentState: s.agentState as import("@/types").AgentState,
+            agentType: s.agentType,
+            revision: s.revision,
+            source: s.source,
+            changedAt: s.changedAt,
+            lastOutputAt: s.lastOutputAt,
+            lastAgentSessionId: s.lastAgentSessionId ?? undefined,
+            displayTitle: s.displayTitle ?? undefined,
+          },
+          { hydrating: true },
+        );
         if (!sessionActivityAt.value.has(s.tabId))
           stampActivity(s.tabId, s.lastOutputAt ?? s.changedAt ?? 0);
         if (s.title) applyTabTitle({ tabId: s.tabId, title: s.title });

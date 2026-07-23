@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 
 vi.mock("@/platform", () => ({
@@ -37,6 +37,7 @@ const {
   setFailArrangementGets,
   takeArrangementGetFailure,
   tabsListByDir,
+  agentStates,
 } = vi.hoisted(() => {
   let liveTabIds: string[] = [];
   let deferred: { promise: Promise<string[]>; resolve: (ids: string[]) => void } | null = null;
@@ -59,10 +60,12 @@ const {
   // Mutable app_state + tabs_list fixtures + injectable arrangement-get failures.
   const appState = new Map<string, string>();
   const tabsListByDir: Record<string, unknown[]> = {};
+  const agentStates: unknown[] = [];
   let failArrangementGets = 0;
   return {
     appState,
     tabsListByDir,
+    agentStates,
     setFailArrangementGets: (n: number) => {
       failArrangementGets = n;
     },
@@ -125,7 +128,7 @@ vi.mock("@/composables/useRpc", () => ({
       tabsList: vi.fn(async (p: { directoryId?: string }) =>
         p.directoryId ? tabsListByDir[p.directoryId] ?? [] : Object.values(tabsListByDir).flat(),
       ),
-      getAgentStates: vi.fn(async () => []),
+      getAgentStates: vi.fn(async () => agentStates),
       deleteDirectory: vi.fn(async () => true),
       worktreeRemove: vi.fn(async () => true),
       tabsCreate: vi.fn(async (opts: { directoryId: string; label?: string; cwd?: string }) => {
@@ -667,7 +670,72 @@ describe("dead-scope sweep (M9)", () => {
 });
 
 describe("sessionActivityAt snapshot", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    setActivePinia(createPinia());
+    setAppStateCalls.length = 0;
+    nextId = 0;
+    setLiveTabIds([]);
+    appState.clear();
+    agentStates.length = 0;
+    for (const k of Object.keys(tabsListByDir)) delete tabsListByDir[k];
+    setFailArrangementGets(0);
+    vi.useRealTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("hydrates only missing activity with lastOutputAt, changedAt, then zero", async () => {
+    agentStates.push(
+      {
+        tabId: "output",
+        agentType: "claude",
+        agentState: "idle",
+        revision: 1,
+        lastOutputAt: 30,
+        changedAt: 20,
+      },
+      { tabId: "changed", agentType: "claude", agentState: "idle", revision: 1, changedAt: 20 },
+      { tabId: "never", agentType: "claude", agentState: "idle", revision: 1 },
+    );
+
+    const store = useWorkspaceStore();
+    await store.loadAllTabs();
+
+    await vi.waitFor(() => {
+      expect(store.sessionActivityAt.get("output")).toBe(30);
+      expect(store.sessionActivityAt.get("changed")).toBe(20);
+      expect(store.sessionActivityAt.get("never")).toBe(0);
+    });
+  });
+
+  it("hydration never overwrites existing activity", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(100);
+    const store = useWorkspaceStore();
+    const tab = await store.newSession("dir-1");
+    expect(store.sessionActivityAt.get(tab.id)).toBe(100);
+    agentStates.push({
+      tabId: tab.id,
+      agentType: "claude",
+      agentState: "idle",
+      revision: 1,
+    });
+
+    vi.setSystemTime(999);
+    await store.loadAllTabs();
+
+    await vi.waitFor(() => {
+      expect(store.tabRuntime.get(tab.id)?.agentType).toBe("claude");
+      expect(store.sessionActivityAt.get(tab.id)).toBe(100);
+    });
+  });
+
   it("stamps on creation and selection, not on plain status updates", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(100);
     const store = useWorkspaceStore();
     store.directories = [dir("dir-1")];
     const tab = await store.newSession("dir-1");
@@ -683,8 +751,9 @@ describe("sessionActivityAt snapshot", () => {
     expect(store.sessionActivityAt.get(tab.id)).toBe(12345);
 
     // selection re-stamps
+    vi.setSystemTime(200);
     store.selectSession(tab.id);
-    expect(store.sessionActivityAt.get(tab.id)).toBeGreaterThanOrEqual(created!);
+    expect(store.sessionActivityAt.get(tab.id)).toBe(200);
   });
 
   it("clears on close", async () => {

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 
 vi.mock("@/platform", () => ({
@@ -75,6 +75,29 @@ describe("applyScopeChange", () => {
     appState.clear();
     toastMock.mockClear();
     for (const k of Object.keys(tabsListByDir)) delete tabsListByDir[k];
+    vi.useRealTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("stamps activity when a session moves scope", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(100);
+    const store = useWorkspaceStore();
+    const tab = await store.newSession("dir-1");
+    expect(store.sessionActivityAt.get(tab.id)).toBe(100);
+
+    vi.setSystemTime(200);
+    store.applyScopeChange({
+      tabId: tab.id,
+      fromDirectoryId: "dir-1",
+      toDirectoryId: "dir-2",
+      cwd: "/dir-2",
+    });
+
+    expect(store.sessionActivityAt.get(tab.id)).toBe(200);
   });
 
   it("echo no-op: tab already in destination bucket, no toast, no writes", async () => {
