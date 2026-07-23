@@ -192,6 +192,63 @@ fn procargs2_argv(buf: &[u8]) -> Option<Vec<String>> {
     Some(argv)
 }
 
+/// Current working directory of `pid` via `PROC_PIDVNODEPATHINFO`
+/// (`proc_vnodepathinfo.pvi_cdir.vip_path`). macOS-only; `None` elsewhere or
+/// on any lookup failure (dead pid, permission denied).
+#[cfg(target_os = "macos")]
+pub fn process_cwd(pid: u32) -> Option<std::path::PathBuf> {
+    let mut info: libc::proc_vnodepathinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_vnodepathinfo>() as libc::c_int;
+    let ret = unsafe {
+        libc::proc_pidinfo(
+            pid as libc::c_int,
+            libc::PROC_PIDVNODEPATHINFO,
+            0,
+            &mut info as *mut _ as *mut libc::c_void,
+            size,
+        )
+    };
+    if ret != size {
+        return None;
+    }
+    // vip_path is declared `[[c_char; 32]; 32]` (nested, not flat) to dodge a
+    // rustc const-generic limitation in libc; the memory is still contiguous
+    // MAXPATHLEN bytes, so read it via size_of_val rather than trusting a
+    // single-dimension `.len()`.
+    let path = &info.pvi_cdir.vip_path;
+    let bytes = unsafe {
+        std::slice::from_raw_parts(path.as_ptr() as *const u8, std::mem::size_of_val(path))
+    };
+    let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+    if end == 0 {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&bytes[..end]).into_owned();
+    if s.is_empty() { None } else { Some(std::path::PathBuf::from(s)) }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn process_cwd(_pid: u32) -> Option<std::path::PathBuf> {
+    None
+}
+
+#[cfg(test)]
+mod cwd_tests {
+    use super::*;
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn own_process_cwd_matches_env() {
+        let cwd = process_cwd(std::process::id()).expect("cwd readable for self");
+        assert_eq!(cwd, std::env::current_dir().unwrap());
+    }
+
+    #[test]
+    fn dead_pid_returns_none() {
+        assert_eq!(process_cwd(u32::MAX - 1), None);
+    }
+}
+
 #[cfg(target_os = "macos")]
 fn kern_procargs2(pid: u32) -> Option<Vec<u8>> {
     unsafe {
