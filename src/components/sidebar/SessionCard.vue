@@ -82,7 +82,9 @@ const paneTotal = computed(() => {
 const iconSrc = computed(() => (props.row.agentType ? getAgentIcon(props.row.agentType) : null));
 const projectIcon = computed(() => projectIcons.value[props.rootDirId] || "");
 const lastActivity = computed(() => {
-  const at = store.tabRuntime.get(id.value)?.lastOutputAt ?? store.sessionActivityAt.get(id.value);
+  const lastOutputAt = store.tabRuntime.get(id.value)?.lastOutputAt;
+  const at = (lastOutputAt && lastOutputAt > 0 ? lastOutputAt : undefined)
+    ?? store.sessionActivityAt.get(id.value);
   return at ? relativeTime(at, props.now) : "";
 });
 

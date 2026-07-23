@@ -85,9 +85,11 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   // Recency snapshot for card sorting (spec: re-rank on discrete events only —
   // selection/creation/close/agent-type change/scope move; never status ticks).
   const sessionActivityAt = shallowRef<Map<string, number>>(new Map());
+  const activityVersion = ref(0);
   function stampActivity(tabId: string, at = Date.now()) {
     sessionActivityAt.value.set(tabId, at);
     triggerRef(sessionActivityAt);
+    activityVersion.value += 1;
   }
 
   // Each in-flight hydrate gets its own set; live events fan out to all of
@@ -620,8 +622,9 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     triggerRef(oscTitleByTab);
     sessionLifecycle.value.delete(id);
     triggerRef(sessionLifecycle);
-    sessionActivityAt.value.delete(id);
+    const deletedActivity = sessionActivityAt.value.delete(id);
     triggerRef(sessionActivityAt);
+    if (deletedActivity) activityVersion.value += 1;
     for (const hist of Object.values(tabActivationHistory)) {
       const hi = hist.indexOf(id);
       if (hi !== -1) hist.splice(hi, 1);
@@ -1090,6 +1093,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     applyTabUpdate,
     sessionLifecycle,
     sessionActivityAt,
+    activityVersion,
     markSessionExited,
     markSessionRunning,
     hydrateSessionLifecycle,

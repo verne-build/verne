@@ -34,6 +34,12 @@ const { icons: projectIcons } = useProjectIcons();
 
 // top/bottom content fades against the fixed header
 const { bodyEl, atStart, atEnd, update } = useScrollFades();
+const {
+  bodyEl: chipRailEl,
+  atStart: chipRailAtStart,
+  atEnd: chipRailAtEnd,
+  update: updateChipRail,
+} = useScrollFades("horizontal");
 
 const rootDirs = computed(() =>
   store.directories.filter((d) => !d.parentDirectoryId),
@@ -88,7 +94,7 @@ function recomputeCards() {
 
 watch(
   [
-    () => store.sessionActivityAt,
+    () => store.activityVersion,
     () => store.directories,
     () => store.terminalTabsByDirectory,
     query,
@@ -193,9 +199,13 @@ watch(() => store.directories.map((d) => d.id).join(","), () => {
     activeChip.value = "all";
   refreshAll();
   nextTick(update);
+  nextTick(updateChipRail);
 });
 // row count changes (new/closed sessions, filter) move the scroll extents
-watch(() => [store.sessionsList("all").length, query.value] as const, () => nextTick(update));
+const sessionCount = computed(() =>
+  Object.values(store.terminalTabsByDirectory).reduce((count, tabs) => count + tabs.length, 0),
+);
+watch([sessionCount, query], () => nextTick(update));
 
 function select(d: WorkingDirectory) {
   store.selectDirectory(d);
@@ -337,7 +347,12 @@ async function onRemoveDirectory(dirId: string) {
     </Empty>
     <template v-else>
     <!-- Chip rail -->
-    <div class="flex items-center gap-1.5 overflow-x-auto px-2 py-1.5 shrink-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+    <div class="relative shrink-0">
+    <div
+      ref="chipRailEl"
+      class="flex items-center gap-1.5 overflow-x-auto px-2 py-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      @scroll="updateChipRail"
+    >
       <Badge as="button" type="button" :variant="activeChip === 'all' ? 'default' : 'outline'"
         class="cursor-pointer select-none shrink-0" @click="activeChip = 'all'">All</Badge>
       <ContextMenu v-for="d in rootDirs" :key="d.id">
@@ -371,12 +386,22 @@ async function onRemoveDirectory(dirId: string) {
         <Plus class="size-3" />
       </Badge>
     </div>
+    <div
+      class="pointer-events-none absolute inset-y-0 left-0 z-10 w-4 bg-linear-to-r from-sidebar to-transparent transition-opacity"
+      :class="chipRailAtStart ? 'opacity-0' : 'opacity-100'"
+    />
+    <div
+      class="pointer-events-none absolute inset-y-0 right-0 z-10 w-4 bg-linear-to-l from-sidebar to-transparent transition-opacity"
+      :class="chipRailAtEnd ? 'opacity-0' : 'opacity-100'"
+    />
+    </div>
 
     <div v-if="renamingId" class="px-3 py-1.5 border-b flex items-center gap-2">
       <span class="text-xs text-muted-foreground shrink-0">Rename worktree:</span>
       <input :ref="onRenameInputMounted" class="h-6 flex-1 rounded border bg-transparent px-1.5 text-xs"
         :value="store.directories.find((d) => d.id === renamingId)?.name"
         @keydown.enter="finishRenameWorktree(renamingId!, ($event.target as HTMLInputElement).value)"
+        @blur="renamingId && finishRenameWorktree(renamingId, ($event.target as HTMLInputElement).value)"
         @keydown.escape="cancelRenameWorktree" />
     </div>
 
@@ -392,7 +417,7 @@ async function onRemoveDirectory(dirId: string) {
           :now="now" />
       </TransitionGroup>
       <div v-if="cards.length === 0 && rootDirs.length" class="flex h-24 items-center justify-center px-4 text-center text-xs text-muted-foreground">
-        No sessions — right-click a chip or press ⌘T
+        No sessions — right-click the chip or press ⌘T
       </div>
     </div>
     </template>

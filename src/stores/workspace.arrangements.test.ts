@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
+import { watch } from "vue";
 
 vi.mock("@/platform", () => ({
   invoke: vi.fn(async () => null),
@@ -685,6 +686,29 @@ describe("sessionActivityAt snapshot", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("notifies reactive consumers on activity stamps and deletion", async () => {
+    const store = useWorkspaceStore();
+    const seen: number[] = [];
+    const stop = watch(() => store.activityVersion, (version) => seen.push(version), { flush: "sync" });
+
+    const tab = await store.newSession("dir-1");
+    expect(seen.length).toBeGreaterThan(0);
+    const afterCreate = seen.at(-1)!;
+
+    store.applyTabUpdate({
+      tabId: tab.id,
+      agentType: "claude",
+      agentState: "working",
+      revision: 1,
+      changedAt: 123,
+    } as never);
+    expect(seen.at(-1)).toBe(afterCreate + 1);
+
+    await store.closeSession(tab.id);
+    expect(seen.at(-1)).toBe(afterCreate + 2);
+    stop();
   });
 
   it("hydrates only missing activity with lastOutputAt, changedAt, then zero", async () => {
