@@ -3,28 +3,52 @@
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
+use crate::daemon::cwd_settle::CwdSettle;
 use crate::services::agent_status::{AgentDetection, AgentObservation, EffectiveAgentStatus};
 use crate::services::session_manager::SessionManager;
 use crate::state::EventBus;
 
 const POLL_MS: u64 = 1_000;
+const SETTLE_TICKS: u32 = 3;
 
 pub fn start(sessions: Arc<Mutex<SessionManager>>, event_bus: Arc<EventBus>) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_millis(POLL_MS));
+        let mut cwd_settle = CwdSettle::new(SETTLE_TICKS);
+        let mut known_tabs: std::collections::HashSet<String> = Default::default();
         loop {
             interval.tick().await;
-            let changes = observe_all(&sessions);
-            for (tab_id, status, foreground_command) in changes {
-                publish(&event_bus, &tab_id, &status, foreground_command.as_deref());
+            let samples = observe_all(&sessions);
+            let mut live_tabs: std::collections::HashSet<String> = Default::default();
+            for (tab_id, change, foreground_command, leader_cwd) in samples {
+                live_tabs.insert(tab_id.clone());
+                if let Some(status) = change {
+                    publish(&event_bus, &tab_id, &status, foreground_command.as_deref());
+                }
+                if let Some(cwd) = cwd_settle.observe(&tab_id, leader_cwd.as_deref()) {
+                    event_bus.emit(
+                        "session-cwd",
+                        serde_json::json!({ "tabId": tab_id, "cwd": cwd }),
+                    );
+                }
             }
+            for gone in known_tabs.difference(&live_tabs) {
+                cwd_settle.forget(gone);
+            }
+            known_tabs = live_tabs;
         }
     });
 }
 
+#[allow(clippy::type_complexity)]
 fn observe_all(
     sessions: &Arc<Mutex<SessionManager>>,
-) -> Vec<(String, EffectiveAgentStatus, Option<String>)> {
+) -> Vec<(
+    String,
+    Option<EffectiveAgentStatus>,
+    Option<String>,
+    Option<String>,
+)> {
     let Ok(manager) = sessions.lock() else {
         return vec![];
     };
@@ -42,6 +66,11 @@ fn observe_all(
         let processes = fg_pgrp
             .map(crate::services::pgrp::foreground_processes)
             .unwrap_or_default();
+        // Effective cwd = foreground pgrp leader's cwd (spec: scope re-pinning).
+        let leader_cwd = processes
+            .first()
+            .and_then(|p| crate::services::pgrp::process_cwd(p.pid))
+            .map(|p| p.to_string_lossy().into_owned());
         let process_agent_type = processes.iter().find_map(|p| {
             identify_process(
                 &p.name,
@@ -94,14 +123,13 @@ fn observe_all(
             .lock()
             .ok()
             .and_then(|mut engine| engine.observe(observation));
-        if let Some(status) = change {
-            let foreground = if status.agent_type.is_none() {
+        let foreground = match &change {
+            Some(status) if status.agent_type.is_none() => {
                 foreground_command(fg_pgrp, &processes)
-            } else {
-                None
-            };
-            changes.push((tab_id, status, foreground));
-        }
+            }
+            _ => None,
+        };
+        changes.push((tab_id, change, foreground, leader_cwd));
     }
     changes
 }

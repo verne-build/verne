@@ -12,6 +12,7 @@ pub mod tabs; // sidecar tab row logic
 pub mod tab_pty; // daemon PTY spawn/kill
 pub mod hook_receiver; // daemon hook HTTP listener
 pub mod agent_status; // daemon-owned identity/state engine
+pub mod cwd_settle; // settle-debounce tracker for foreground cwd samples
 
 /// Run the lean daemon: WS terminal bridge, hooks, status, and PTY RPC.
 /// It stays DB-free; Electron persists presentation snapshots only.
