@@ -76,20 +76,24 @@ const followingAgent = computed(() => !props.row.tab.scopePinnedByUser);
 
 function moveToScope(directoryId: string) {
   const tabId = id.value;
-  void rpc.request.tabMoveToDirectory({ id: tabId, directoryId }).then(() => {
-    // Manual move pins server-side; tab_set_scope_pinned/tabMoveToDirectory
-    // emit no event, so mirror it locally or the checkbox goes stale.
-    store.setTabScopePinnedLocal(tabId, true);
-  });
+  void rpc.request.tabMoveToDirectory({ id: tabId, directoryId })
+    .then(() => {
+      // Manual move pins server-side; tab_set_scope_pinned/tabMoveToDirectory
+      // emit no event, so mirror it locally or the checkbox goes stale.
+      store.setTabScopePinnedLocal(tabId, true);
+    })
+    .catch(() => {});
 }
 
 function toggleFollowAgent(checked: boolean) {
   // checked here means "Follow Agent" is now on → pinned = false.
   const tabId = id.value;
   const pinned = !checked;
-  void rpc.request.tabSetScopePinned({ id: tabId, pinned }).then(() => {
-    store.setTabScopePinnedLocal(tabId, pinned);
-  });
+  void rpc.request.tabSetScopePinned({ id: tabId, pinned })
+    .then(() => {
+      store.setTabScopePinnedLocal(tabId, pinned);
+    })
+    .catch(() => {});
 }
 
 function stateWord(s: DisplayState): string {

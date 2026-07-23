@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb } from "./db/connection";
 import { insertDirectory, getDirectory, getDirectories } from "./db/directories";
-import { insertTab, getTab, setTabScopePinned } from "./db/tabs";
+import { insertTab, getTab, setTabScopePinned, moveTabToDirectory } from "./db/tabs";
 import { resolveScopeChange, handleSessionCwd, type PathClassification } from "./scope-repin";
 import type { Tab, WorkingDirectory } from "../../src/types/shared";
 
@@ -193,5 +193,33 @@ describe("handleSessionCwd", () => {
     });
     await handleSessionCwd({ tabId: "t1", cwd: join(wtNew, "src") }, d);
     expect(broadcasts).toEqual([]);
+  });
+
+  it("aborts without broadcasting if the tab got pinned mid-classify (manual move race)", async () => {
+    const { db, wtNew, repo, broadcasts, deps } = setup();
+    const d = deps({ workdir: wtNew, commonWorkdir: repo, isLinkedWorktree: true, isBare: false });
+    d.sidecarRequest.mockImplementation(async () => {
+      // Simulate a manual "Move to Scope…" landing while classify_path is in
+      // flight — it pins the tab server-side.
+      setTabScopePinned(db, "t1", true);
+      return { workdir: wtNew, commonWorkdir: repo, isLinkedWorktree: true, isBare: false } as never;
+    });
+    await handleSessionCwd({ tabId: "t1", cwd: join(wtNew, "src") }, d);
+    expect(broadcasts).toEqual([]);
+    expect(getTab(db, "t1")!.directoryId).toBe("d1"); // untouched by the auto re-pin
+  });
+
+  it("broadcast fromDirectoryId reflects the fresh row when a move races the classify await", async () => {
+    const { db, wtPerf, wtNew, repo, broadcasts, deps } = setup();
+    const d = deps({ workdir: wtNew, commonWorkdir: repo, isLinkedWorktree: true, isBare: false });
+    d.sidecarRequest.mockImplementation(async () => {
+      // Simulate a manual move landing mid-await: t1 hops from d1 to d2
+      // before this handler resumes.
+      moveTabToDirectory(db, "t1", "d2", wtPerf);
+      return { workdir: wtNew, commonWorkdir: repo, isLinkedWorktree: true, isBare: false } as never;
+    });
+    await handleSessionCwd({ tabId: "t1", cwd: join(wtNew, "src") }, d);
+    const scopeChanged = broadcasts.find(([n]) => n === "session-scope-changed")!;
+    expect(scopeChanged[1]).toMatchObject({ tabId: "t1", fromDirectoryId: "d2" });
   });
 });

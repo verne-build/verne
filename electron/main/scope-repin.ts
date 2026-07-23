@@ -78,7 +78,7 @@ export async function handleSessionCwd(
   if (ev.tabId && inFlight.has(ev.tabId)) return;
   if (ev.tabId) inFlight.add(ev.tabId);
   try {
-    const tab = getTab(db, ev.tabId);
+    let tab = getTab(db, ev.tabId);
     if (!tab || getTabScopePinned(db, ev.tabId)) return;
     let canonical: string;
     try {
@@ -95,15 +95,27 @@ export async function handleSessionCwd(
         path: await fs.promises.realpath(d.path).catch(() => d.path),
       })),
     );
+    let cls: PathClassification | null = null;
     let change = resolveScopeChange(dirs, tab, canonical, null);
     if (change.action === "ignore") {
-      const cls = await sidecarRequest<PathClassification | null>("classify_path", {
+      cls = await sidecarRequest<PathClassification | null>("classify_path", {
         path: canonical,
       }).catch(() => null);
       change = resolveScopeChange(dirs, tab, canonical, cls);
     }
     if (change.action === "ignore") return;
-    if (!getTab(db, ev.tabId)) return; // tab closed while we awaited above
+    // Re-read after the awaits above (realpath + classify_path RPC can race
+    // with a manual move/pin landing mid-flight). Abort if the tab is gone
+    // or just got pinned; otherwise recompute against the FRESH row so the
+    // resolver's current-scope check and the broadcast's fromDirectoryId
+    // aren't stale.
+    const freshTab = getTab(db, ev.tabId);
+    if (!freshTab || getTabScopePinned(db, ev.tabId)) return;
+    if (freshTab.directoryId !== tab.directoryId) {
+      change = resolveScopeChange(dirs, freshTab, canonical, cls);
+      if (change.action === "ignore") return;
+    }
+    tab = freshTab;
 
     let toDirectoryId: string;
     let addedDirectory: WorkingDirectory | undefined;

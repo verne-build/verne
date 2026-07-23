@@ -685,17 +685,30 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     }
     // Destination arrangement untouched — session enters it on selection (spec).
     const toName = directories.value.find((d) => d.id === ev.toDirectoryId)?.name ?? "scope";
+    // The source scope may have just been deleted (worktree_remove orphan
+    // re-pin) — only offer Undo if it still exists; re-check at click time
+    // too since directories can change between toast and click.
+    const fromExistsAtToastTime = directories.value.some((d) => d.id === ev.fromDirectoryId);
     toast(`${label} moved to ${toName}`, {
-      action: {
-        label: "Undo",
-        onClick: () => {
-          void useRpc()
-            .request.tabMoveToDirectory({ id: ev.tabId, directoryId: ev.fromDirectoryId })
-            .then(() => setTabScopePinnedLocal(ev.tabId, true));
-          // Manual move pins server-side; the resulting session-scope-changed
-          // round-trip is what actually applies the undo in the UI.
-        },
-      },
+      ...(fromExistsAtToastTime
+        ? {
+            action: {
+              label: "Undo",
+              onClick: () => {
+                if (!directories.value.some((d) => d.id === ev.fromDirectoryId)) {
+                  toast.error("Original scope no longer exists");
+                  return;
+                }
+                void useRpc()
+                  .request.tabMoveToDirectory({ id: ev.tabId, directoryId: ev.fromDirectoryId })
+                  .then(() => setTabScopePinnedLocal(ev.tabId, true))
+                  .catch(() => {});
+                // Manual move pins server-side; the resulting session-scope-changed
+                // round-trip is what actually applies the undo in the UI.
+              },
+            },
+          }
+        : {}),
       duration: 8000,
     });
     // Spec: if the moved session was the focused session of the active
