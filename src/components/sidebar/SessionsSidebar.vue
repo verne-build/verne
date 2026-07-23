@@ -1,12 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, onUnmounted, ref, watch } from "vue";
-import { ChevronRight, Folder, FolderOpen, GitBranch, Pencil, Plus, Trash2 } from "@lucide/vue";
-import { DragDropProvider } from "@dnd-kit/vue";
+import { FolderOpen, Plus } from "@lucide/vue";
 import { ask } from "@/platform";
-import SortableItem from "@/components/dnd/SortableItem.vue";
-import SessionRow from "@/components/sidebar/SessionRow.vue";
 import StatusIndicator from "@/components/StatusIndicator.vue";
-import { sortableSensors } from "@/components/dnd/sensors";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useRpc } from "@/composables/useRpc";
 import { useProjectIcons } from "@/composables/useProjectIcons";
@@ -14,13 +10,19 @@ import { listen, type UnlistenFn } from "@/platform";
 import { aggregateGroupState, resolveDisplayState, stripSpinner } from "@/lib/agentStatus";
 import type { DisplayState } from "@/lib/agentStatus";
 import type { SessionRow as SessionRowModel } from "@/lib/sessionsView";
+import { sortSessionCards, type CardSortInputs } from "@/lib/sessionSort";
+import SessionCard from "./SessionCard.vue";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyContent, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { useScrollFades } from "@/composables/useScrollFades";
@@ -46,12 +48,6 @@ const worktreesByParent = computed(() => {
   }
   return map;
 });
-const workspaceGroups = computed(() =>
-  rootDirs.value.map((directory) => ({
-    directory,
-    children: worktreesByParent.value.get(directory.id) ?? [],
-  })),
-);
 
 // -- filter --
 const query = ref("");
@@ -64,62 +60,62 @@ function matches(r: SessionRowModel): boolean {
   );
 }
 
-const sessionsByDir = computed(() => {
-  const map = new Map<string, SessionRowModel[]>();
+const activeChip = ref<string>("all"); // dirId of a ROOT, or "all"; resets every launch (not persisted)
+
+const rootOf = (d: WorkingDirectory): WorkingDirectory =>
+  d.parentDirectoryId ? (store.directories.find((x) => x.id === d.parentDirectoryId) ?? d) : d;
+
+const sortInputs = computed<CardSortInputs>(() => ({
+  rootNameOf: (dirId) => {
+    const d = store.directories.find((x) => x.id === dirId);
+    return d ? rootOf(d).name : "";
+  },
+  worktreeNameOf: (dirId) => {
+    const d = store.directories.find((x) => x.id === dirId);
+    return d?.parentDirectoryId ? d.name : null;
+  },
+  activityAt: (tabId) => store.sessionActivityAt.get(tabId) ?? 0,
+}));
+
+const cards = computed(() => {
+  let rows = store.sessionsList("all");
+  if (activeChip.value !== "all")
+    rows = rows.filter((r) => rootOf(r.directory).id === activeChip.value);
+  if (query.value) rows = rows.filter(matches); // existing matches()
+  return sortSessionCards(rows, sortInputs.value);
+});
+
+// Chip aggregate dot: any blocked/working session under the root INCLUDING worktrees.
+const chipStates = computed(() => {
+  const byRoot = new Map<string, ReturnType<typeof resolveDisplayState>[]>();
   for (const r of store.sessionsList("all")) {
-    if (query.value && !matches(r)) continue;
-    const list = map.get(r.directory.id) ?? [];
-    list.push(r);
-    map.set(r.directory.id, list);
+    const rid = rootOf(r.directory).id;
+    const rt = store.tabRuntime.get(r.tab.id);
+    const s = resolveDisplayState({
+      needsAcknowledgement: rt?.needsAcknowledgement,
+      agentType: r.agentType,
+      agentState: rt?.agentState ?? r.tab.lastAgentState,
+      requireAgentType: true,
+    });
+    (byRoot.get(rid) ?? byRoot.set(rid, []).get(rid)!).push(s);
   }
-  return map;
+  const out = new Map<string, DisplayState | null>();
+  for (const [rid, states] of byRoot) {
+    const agg = aggregateGroupState(states);
+    out.set(rid, agg === "blocked" || agg === "working" ? agg : null);
+  }
+  return out;
 });
 
-function rowsFor(dirId: string): SessionRowModel[] {
-  return sessionsByDir.value.get(dirId) ?? [];
+// 30s relative-time tick, paused while the document is hidden (perf guardrail).
+const now = ref(Date.now());
+let nowTimer: ReturnType<typeof setInterval> | undefined;
+function startNowTimer() {
+  stopNowTimer();
+  nowTimer = setInterval(() => { if (!document.hidden) now.value = Date.now(); }, 30_000);
 }
-
-// Scope headers stay visible while any child (own sessions or a worktree's)
-// matches; no filter → everything shows.
-function scopeVisible(group: { directory: WorkingDirectory; children: WorkingDirectory[] }): boolean {
-  if (!query.value) return true;
-  return rowsFor(group.directory.id).length > 0 || group.children.some((c) => rowsFor(c.id).length > 0);
-}
-function worktreeVisible(dirId: string): boolean {
-  return !query.value || rowsFor(dirId).length > 0;
-}
-
-// -- collapse (session-local; collapsed scopes show count + aggregate dot) --
-const collapsedIds = ref<Set<string>>(new Set());
-function isCollapsed(id: string): boolean {
-  return collapsedIds.value.has(id);
-}
-function toggleCollapsed(id: string) {
-  const next = new Set(collapsedIds.value);
-  if (next.has(id)) next.delete(id);
-  else next.add(id);
-  collapsedIds.value = next;
-}
-
-function scopeState(dirId: string): DisplayState | null {
-  return aggregateGroupState(
-    rowsFor(dirId).map((r) => {
-      const rt = store.tabRuntime.get(r.tab.id);
-      return resolveDisplayState({
-        needsAcknowledgement: rt?.needsAcknowledgement,
-        agentType: r.agentType,
-        agentState: rt?.agentState ?? r.tab.lastAgentState,
-        requireAgentType: true,
-      });
-    }),
-  );
-}
-
-const scopeStates = computed(() => {
-  const m = new Map<string, DisplayState | null>();
-  for (const d of store.directories) m.set(d.id, scopeState(d.id));
-  return m;
-});
+function stopNowTimer() { if (nowTimer) { clearInterval(nowTimer); nowTimer = undefined; } }
+function onVisibility() { if (!document.hidden) now.value = Date.now(); }
 
 // -- branch captions --
 const branches = ref(new Map<string, string>());
@@ -140,26 +136,25 @@ async function fetchBranch(d: WorkingDirectory) {
   branches.value = new Map(branches.value);
 }
 
-// Only root workspaces show a branch caption; worktree rows label by folder
-// name. So watch + fetch branch for roots only — no RPCs/watchers for worktree
-// ids whose branch is never displayed.
 // Track which we've already watched + branch-fetched so a change to the
 // directory list only processes the delta, not all N every time.
 const watched = new Set<string>();
 async function refreshAll() {
-  await Promise.all(rootDirs.value.map(async (d) => {
+  await Promise.all(store.directories.map(async (d) => {
     if (watched.has(d.id)) return;
     watched.add(d.id);
     try { await request.gitWatch({ path: d.path }); } catch {}
     await fetchBranch(d);
   }));
-  // Prune entries for removed roots so a later re-add re-watches.
-  const live = new Set(rootDirs.value.map((d) => d.id));
+  // Prune entries for removed directories so a later re-add re-watches.
+  const live = new Set(store.directories.map((d) => d.id));
   for (const id of [...watched]) if (!live.has(id)) watched.delete(id);
 }
 
 let unlistenGit: UnlistenFn | null = null;
 onMounted(async () => {
+  startNowTimer();
+  document.addEventListener("visibilitychange", onVisibility);
   await refreshAll();
   unlistenGit = await listen<string>("git-status-changed", (ev) => {
     const id = pathToId.value.get(ev.payload);
@@ -168,9 +163,18 @@ onMounted(async () => {
     if (d) fetchBranch(d);
   });
 });
-onUnmounted(() => { unlistenGit?.(); });
+onUnmounted(() => {
+  stopNowTimer();
+  document.removeEventListener("visibilitychange", onVisibility);
+  unlistenGit?.();
+});
 
-watch(() => store.directories.map((d) => d.id).join(","), () => { refreshAll(); nextTick(update); });
+watch(() => store.directories.map((d) => d.id).join(","), () => {
+  if (activeChip.value !== "all" && !store.directories.some((d) => d.id === activeChip.value))
+    activeChip.value = "all";
+  refreshAll();
+  nextTick(update);
+});
 // row count changes (new/closed sessions, filter) move the scroll extents
 watch(() => [store.sessionsList("all").length, query.value] as const, () => nextTick(update));
 
@@ -234,8 +238,8 @@ function cancelRenameWorktree() {
   renameInputEl.value = null;
 }
 
-function onRenameInputMounted(el: HTMLInputElement | null) {
-  if (!el) return;
+function onRenameInputMounted(el: unknown) {
+  if (!(el instanceof HTMLInputElement)) return;
   renameInputEl.value = el;
   requestAnimationFrame(() => {
     if (renameInputEl.value !== el) return;
@@ -277,43 +281,6 @@ async function onRemoveDirectory(dirId: string) {
     window.alert(`Failed to remove workspace: ${e}`);
   }
 }
-
-interface DragEndPayload {
-  operation: { source: { id?: string; initialIndex?: number; index?: number; group?: string } | null; canceled?: boolean };
-  canceled: boolean;
-}
-function onDragEnd(e: DragEndPayload) {
-  if (e.canceled) return;
-  // Filter active → rendered indices don't match model order; dnd is disabled
-  // on the items too, this is belt-and-braces.
-  if (query.value) return;
-  const src = e.operation.source;
-  if (!src) return;
-  const group = src.group;
-  const from = src.initialIndex ?? -1;
-  const to = src.index ?? -1;
-  if (!group || from < 0 || to < 0 || from === to) return;
-  if (group === "workspaces-root") {
-    const ids = rootDirs.value.map(d => d.id);
-    const [moved] = ids.splice(from, 1);
-    ids.splice(to, 0, moved);
-    store.reorderRootDirectories(ids);
-  } else if (group.startsWith("worktrees-")) {
-    const parentId = group.slice("worktrees-".length);
-    const ids = worktreesByParent.value.get(parentId)?.map(c => c.id) ?? [];
-    if (from >= ids.length || to >= ids.length) return;
-    const [moved] = ids.splice(from, 1);
-    ids.splice(to, 0, moved);
-    store.reorderWorktrees(parentId, ids);
-  } else if (group.startsWith("sessions-")) {
-    const dirId = group.slice("sessions-".length);
-    const ids = rowsFor(dirId).map(r => r.tab.id);
-    if (from >= ids.length || to >= ids.length) return;
-    const [moved] = ids.splice(from, 1);
-    ids.splice(to, 0, moved);
-    store.reorderTabsInDirectory(dirId, ids);
-  }
-}
 </script>
 
 <template>
@@ -326,24 +293,6 @@ function onDragEnd(e: DragEndPayload) {
         placeholder="Filter"
         class="h-5 min-w-0 flex-1 rounded-sm bg-transparent px-1.5 text-[11px] text-foreground outline-none placeholder:text-muted-foreground/50 focus:bg-input/30"
       />
-      <TooltipProvider :delay-duration="200">
-        <Tooltip>
-          <TooltipTrigger as-child>
-            <Button
-              type="button"
-              size="icon-xs"
-              variant="ghost"
-              class="text-muted-foreground"
-              :disabled="store.picking"
-              aria-label="Add Workspace"
-              @click="store.openAndSelectWorkspace()"
-            >
-              <Plus class="size-3.5" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="right">Add Workspace</TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
     </div>
     <div
       class="pointer-events-none absolute inset-x-0 top-7 z-10 h-4 bg-linear-to-b from-sidebar to-transparent transition-opacity"
@@ -353,7 +302,6 @@ function onDragEnd(e: DragEndPayload) {
       class="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-4 bg-linear-to-t from-sidebar to-transparent transition-opacity"
       :class="atEnd ? 'opacity-0' : 'opacity-100'"
     />
-    <div ref="bodyEl" class="app-scrollbar min-h-0 flex-1 overflow-y-auto pb-3" @scroll="update">
     <Empty v-if="rootDirs.length === 0" class="mx-2 my-3 gap-3 border border-dashed py-6">
       <EmptyHeader>
         <EmptyMedia variant="icon">
@@ -368,197 +316,70 @@ function onDragEnd(e: DragEndPayload) {
         </Button>
       </EmptyContent>
     </Empty>
-    <DragDropProvider :sensors="sortableSensors" @drag-end="onDragEnd">
-    <div class="flex flex-col gap-0.5">
-    <template v-for="(group, i) in workspaceGroups" :key="group.directory.id">
-    <SortableItem
-      v-if="scopeVisible(group)"
-      :id="group.directory.id"
-      :index="i"
-      group="workspaces-root"
-      :disabled="!!query"
-      class="flex flex-col gap-0.5 data-[dragging=true]:opacity-50"
-    >
-      <ContextMenu>
+    <template v-else>
+    <!-- Chip rail -->
+    <div class="flex items-center gap-1.5 overflow-x-auto px-2 py-1.5 shrink-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <Badge :variant="activeChip === 'all' ? 'default' : 'outline'"
+        class="cursor-pointer select-none shrink-0" @click="activeChip = 'all'">All</Badge>
+      <ContextMenu v-for="d in rootDirs" :key="d.id">
         <ContextMenuTrigger as-child>
-          <Button
-            :as="'div'"
-            :variant="store.selectedDirectoryId === group.directory.id ? 'secondary' : 'ghost'"
-            size="sm"
-            class="group cursor-pointer mx-1.5 h-auto min-h-10 w-[calc(100%-0.75rem)] flex-col items-start justify-center gap-0.5 whitespace-normal px-2 py-1.5 text-xs font-normal"
-            @click="select(group.directory)"
-          >
-            <div class="flex h-4 w-full min-w-0 items-center gap-1 leading-none">
-              <ChevronRight
-                class="size-3 shrink-0 cursor-pointer text-muted-foreground transition-transform"
-                :class="isCollapsed(group.directory.id) ? '' : 'rotate-90'"
-                data-no-drag
-                @click.stop="toggleCollapsed(group.directory.id)"
-              />
-              <img v-if="projectIcons[group.directory.id]" :src="projectIcons[group.directory.id]" class="size-3.5 shrink-0" />
-              <Folder v-else class="size-3.5 shrink-0 text-muted-foreground" />
-              <span class="min-w-0 truncate text-left text-foreground">{{ group.directory.name }}</span>
-              <span class="ml-auto flex shrink-0 items-center gap-1">
-                <template v-if="isCollapsed(group.directory.id)">
-                  <span class="text-[10px] leading-none text-muted-foreground">{{ rowsFor(group.directory.id).length }}</span>
-                  <span v-if="scopeStates.get(group.directory.id)" class="status-indicator-slot">
-                    <StatusIndicator :state="scopeStates.get(group.directory.id)!" class="size-3" />
-                  </span>
-                </template>
-                <Button
-                  type="button"
-                  size="icon-xs"
-                  variant="ghost"
-                  class="size-4 text-muted-foreground opacity-0 group-hover:opacity-100"
-                  aria-label="New Session"
-                  data-no-drag
-                  @click.stop="onNewSession(group.directory)"
-                >
-                  <Plus class="size-3" />
-                </Button>
-              </span>
-            </div>
-            <div
-              v-if="branches.get(group.directory.id)"
-              class="flex h-4 w-full min-w-0 items-center pl-[2.125rem] text-xs leading-none text-muted-foreground"
-            >
-              <span class="min-w-0 truncate text-left">{{ branches.get(group.directory.id) }}</span>
-            </div>
-          </Button>
+          <Badge :variant="activeChip === d.id ? 'default' : 'outline'"
+            class="cursor-pointer select-none shrink-0 gap-1" @click="activeChip = d.id">
+            <img v-if="projectIcons[d.id]" :src="projectIcons[d.id]" class="size-3 rounded-sm" alt="" />
+            {{ d.name }}
+            <StatusIndicator v-if="chipStates.get(d.id)" :state="chipStates.get(d.id)!" class="size-2.5" />
+          </Badge>
         </ContextMenuTrigger>
-        <ContextMenuContent>
-          <ContextMenuItem @select="onNewSession(group.directory)">
-            <Plus />
-            New Session
-          </ContextMenuItem>
-          <ContextMenuItem @select="onCreateWorktree(group.directory.id)">
-            <GitBranch />
-            New Worktree
-          </ContextMenuItem>
-          <ContextMenuItem variant="destructive" @select="onRemoveDirectory(group.directory.id)">
-            <Trash2 />
-            Remove Workspace
-          </ContextMenuItem>
+        <ContextMenuContent @close-auto-focus="onWorktreeMenuCloseAutoFocus">
+          <ContextMenuItem @select="onNewSession(d)">New Session</ContextMenuItem>
+          <ContextMenuItem @select="onCreateWorktree(d.id)">New Worktree</ContextMenuItem>
+          <ContextMenuSub v-if="(worktreesByParent.get(d.id) ?? []).length">
+            <ContextMenuSubTrigger>Worktrees</ContextMenuSubTrigger>
+            <ContextMenuSubContent>
+              <template v-for="wt in worktreesByParent.get(d.id)" :key="wt.id">
+                <ContextMenuItem @select="startRenameWorktree(wt.id)">Rename {{ wt.name }}…</ContextMenuItem>
+                <ContextMenuItem variant="destructive" @select="onRemoveWorktree(wt.id)">Delete {{ wt.name }}</ContextMenuItem>
+              </template>
+            </ContextMenuSubContent>
+          </ContextMenuSub>
+          <ContextMenuSeparator />
+          <ContextMenuItem variant="destructive" @select="onRemoveDirectory(d.id)">Remove Workspace</ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
-      <TransitionGroup v-if="!isCollapsed(group.directory.id)" name="session-move">
-        <SessionRow
-          v-for="(r, ri) in rowsFor(group.directory.id)"
-          :key="r.tab.id"
-          :row="r"
-          :index="ri"
-          :group="`sessions-${group.directory.id}`"
-          :dnd-disabled="!!query"
-        />
+      <Badge variant="outline" class="cursor-pointer select-none shrink-0"
+        :class="store.picking && 'opacity-50 pointer-events-none'" @click="store.openAndSelectWorkspace()">
+        <Plus class="size-3" />
+      </Badge>
+    </div>
+
+    <div v-if="renamingId" class="px-3 py-1.5 border-b flex items-center gap-2">
+      <span class="text-xs text-muted-foreground shrink-0">Rename worktree:</span>
+      <input :ref="onRenameInputMounted" class="h-6 flex-1 rounded border bg-transparent px-1.5 text-xs"
+        :value="store.directories.find((d) => d.id === renamingId)?.name"
+        @keydown.enter="finishRenameWorktree(renamingId!, ($event.target as HTMLInputElement).value)"
+        @keydown.escape="cancelRenameWorktree" />
+    </div>
+
+    <!-- Card list -->
+    <div ref="bodyEl" class="app-scrollbar min-h-0 flex-1 overflow-y-auto pb-3 pt-1" @scroll="update">
+      <TransitionGroup name="session-move">
+        <SessionCard v-for="row in cards" :key="row.tab.id"
+          :row="row"
+          :branch="branches.get(row.directory.id)"
+          :root-name="rootOf(row.directory).name"
+          :root-dir-id="rootOf(row.directory).id"
+          :is-worktree="!!row.directory.parentDirectoryId"
+          :now="now" />
       </TransitionGroup>
-        <template v-for="(c, ci) in group.children" :key="c.id">
-        <SortableItem
-          v-if="worktreeVisible(c.id)"
-          :id="c.id"
-          :index="ci"
-          :group="`worktrees-${group.directory.id}`"
-          :disabled="!!query"
-          class="flex flex-col gap-0.5"
-        >
-        <ContextMenu>
-          <ContextMenuTrigger as-child>
-            <Button
-              :as="'div'"
-              :variant="store.selectedDirectoryId === c.id ? 'secondary' : 'ghost'"
-              size="sm"
-              class="group cursor-pointer ml-[1.625rem] mr-1.5 h-7 w-[calc(100%-2rem)] items-center justify-start gap-1 px-2 py-1 text-xs font-normal data-[dragging=true]:opacity-50"
-              @click="select(c)"
-              @dblclick="startRenameWorktree(c.id)"
-            >
-              <ChevronRight
-                class="size-3 shrink-0 cursor-pointer text-muted-foreground transition-transform"
-                :class="isCollapsed(c.id) ? '' : 'rotate-90'"
-                data-no-drag
-                @click.stop="toggleCollapsed(c.id)"
-                @dblclick.stop
-              />
-              <GitBranch class="size-3.5 shrink-0 text-muted-foreground" />
-              <input
-                v-if="renamingId === c.id"
-                type="text"
-                class="flex-1 min-w-0 bg-transparent text-xs text-foreground outline-none border-b border-primary"
-                :value="c.name"
-                @click.stop
-                @keydown.enter="finishRenameWorktree(c.id, ($event.target as HTMLInputElement).value)"
-                @keydown.escape="cancelRenameWorktree()"
-                @blur="finishRenameWorktree(c.id, ($event.target as HTMLInputElement).value)"
-                @vue:mounted="({ el }: any) => onRenameInputMounted(el)"
-              />
-              <span v-else class="min-w-0 truncate text-left text-foreground">{{ c.name }}</span>
-              <span class="ml-auto flex shrink-0 items-center gap-1">
-                <template v-if="isCollapsed(c.id)">
-                  <span class="text-[10px] leading-none text-muted-foreground">{{ rowsFor(c.id).length }}</span>
-                  <span v-if="scopeStates.get(c.id)" class="status-indicator-slot">
-                    <StatusIndicator :state="scopeStates.get(c.id)!" class="size-3" />
-                  </span>
-                </template>
-                <Button
-                  type="button"
-                  size="icon-xs"
-                  variant="ghost"
-                  class="size-4 text-muted-foreground opacity-0 group-hover:opacity-100"
-                  aria-label="New Session"
-                  data-no-drag
-                  @click.stop="onNewSession(c)"
-                >
-                  <Plus class="size-3" />
-                </Button>
-              </span>
-            </Button>
-          </ContextMenuTrigger>
-          <ContextMenuContent @close-auto-focus="onWorktreeMenuCloseAutoFocus">
-            <ContextMenuItem @select="onNewSession(c)">
-              <Plus />
-              New Session
-            </ContextMenuItem>
-            <ContextMenuItem @select="startRenameWorktree(c.id)">
-              <Pencil />
-              Rename Worktree
-            </ContextMenuItem>
-            <ContextMenuItem variant="destructive" @select="onRemoveWorktree(c.id)">
-              <Trash2 />
-              Delete Worktree
-            </ContextMenuItem>
-          </ContextMenuContent>
-        </ContextMenu>
-        <TransitionGroup v-if="!isCollapsed(c.id)" name="session-move">
-          <SessionRow
-            v-for="(r, ri) in rowsFor(c.id)"
-            :key="r.tab.id"
-            :row="r"
-            :index="ri"
-            :group="`sessions-${c.id}`"
-            nested
-            :dnd-disabled="!!query"
-          />
-        </TransitionGroup>
-        </SortableItem>
-        </template>
-    </SortableItem>
+      <div v-if="cards.length === 0 && rootDirs.length" class="flex h-24 items-center justify-center px-4 text-center text-xs text-muted-foreground">
+        No sessions — right-click a chip or press ⌘T
+      </div>
+    </div>
     </template>
-    </div>
-    </DragDropProvider>
-    </div>
   </div>
 </template>
 
 <style scoped>
-.status-indicator-slot {
-  display: inline-flex;
-  width: 0.75rem;
-  height: 0.75rem;
-  flex: 0 0 0.75rem;
-  align-items: center;
-  justify-content: center;
-  line-height: 0;
-  vertical-align: middle;
-}
-
 .session-move-move {
   transition: transform 240ms ease;
 }
