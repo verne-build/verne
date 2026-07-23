@@ -34,6 +34,13 @@ import {
 } from "../db/browser";
 import { getSidebarTabs, saveSidebarTabs, getSidebarState } from "../db/sidebar";
 import { getGroups } from "../db/groups";
+import {
+  getTab,
+  getTabs,
+  moveTabToDirectory,
+  moveTabInsideOpenTxn,
+  setTabScopePinned,
+} from "../db/tabs";
 
 function broadcast(win: BrowserWindow, name: string, payload: unknown): void {
   win.webContents.send("daemon-event", name, payload);
@@ -116,6 +123,27 @@ export function registerDbCommands(
       dirPath: dir.path,
       force: p.force ?? false,
     });
+    // Re-pin orphan sessions to the parent BEFORE the delete — the FK cascade
+    // on directories would otherwise erase their tab rows.
+    const orphans = getTabs(db, p.id);
+    if (orphans.length > 0) {
+      db.exec("BEGIN");
+      try {
+        for (const t of orphans) moveTabInsideOpenTxn(db, t.id, parent.id, parent.path);
+        db.exec("COMMIT");
+      } catch (e) {
+        db.exec("ROLLBACK");
+        throw e;
+      }
+      for (const t of orphans) {
+        broadcast(win, "session-scope-changed", {
+          tabId: t.id,
+          fromDirectoryId: p.id,
+          toDirectoryId: parent.id,
+          cwd: parent.path,
+        });
+      }
+    }
     deleteDirectory(db, p.id);
     broadcast(win, "directory-deleted", { id: p.id });
     getSidecar()!.request("evict_directory_resources", { id: p.id, allDirs }).catch(() => {});
@@ -137,6 +165,28 @@ export function registerDbCommands(
     const updated = renameDirectory(db, p.id, res.branch);
     if (updated) broadcast(win, "directory-updated", { directory: updated });
     return updated;
+  });
+
+  // ---- session scope (manual move + pin) ----
+  registerNative("tab_move_to_directory", (p: { id: string; directoryId: string }, win) => {
+    const db = getDb();
+    const dir = getDirectory(db, p.directoryId);
+    const tab = getTab(db, p.id);
+    if (!dir || !tab) throw new Error("unknown tab or directory");
+    moveTabToDirectory(db, p.id, p.directoryId, dir.path);
+    setTabScopePinned(db, p.id, true); // manual move pins (spec)
+    broadcast(win, "session-scope-changed", {
+      tabId: p.id,
+      fromDirectoryId: tab.directoryId,
+      toDirectoryId: p.directoryId,
+      cwd: dir.path,
+    });
+    return true;
+  });
+
+  registerNative("tab_set_scope_pinned", (p: { id: string; pinned: boolean }) => {
+    setTabScopePinned(getDb(), p.id, !!p.pinned);
+    return true;
   });
 
   registerNative("set_active_directory", (p: { directoryId?: string }) => {

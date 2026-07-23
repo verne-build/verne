@@ -3,6 +3,7 @@ import type { DaemonClient } from "./daemon-client";
 import { handleTabUpdate } from "./native/notifications";
 import { getDb } from "./db/connection";
 import { updateTabPresentationSnapshot } from "./db/tabs";
+import { handleSessionCwd } from "./scope-repin";
 
 type Handler = (params: any, win: BrowserWindow) => Promise<unknown> | unknown;
 
@@ -55,7 +56,7 @@ export function installRouter(
   });
 
   // Forward events from BOTH processes to the renderer as "daemon-event".
-  const forward = makeForward(getWindow);
+  const forward = makeForward(getWindow, sidecar);
   daemon.onEvent(forward);
   sidecar.onEvent(forward);
 }
@@ -63,9 +64,24 @@ export function installRouter(
 // The daemon survives app close and keeps streaming events; on macOS the app
 // outlives a closed window. So forwarding must tolerate "window gone" — send to
 // a destroyed webContents throws "Object has been destroyed" (uncaught → fatal).
-export function makeForward(getWindow: () => BrowserWindow) {
+export function makeForward(getWindow: () => BrowserWindow, sidecar: DaemonClient) {
   return (name: string, payload: unknown) => {
     const update = payload as Record<string, unknown>;
+    // session-cwd is main-internal: resolve a scope re-pin, never forwarded raw.
+    if (name === "session-cwd") {
+      void handleSessionCwd(payload as { tabId: string; cwd: string }, {
+        db: getDb(),
+        sidecarRequest: (method, params) => sidecar.request(method, params),
+        broadcast: (n, p) => {
+          try {
+            const win = getWindow();
+            if (win.isDestroyed() || win.webContents.isDestroyed()) return;
+            win.webContents.send("daemon-event", n, p);
+          } catch { /* window gone */ }
+        },
+      }).catch((e) => console.error("[scope-repin] session-cwd:", e));
+      return;
+    }
     if (name === "tab-updated") {
       try {
         updateTabPresentationSnapshot(getDb(), {
