@@ -23,9 +23,16 @@ const lightSurfaceIcons: Record<string, string> = {
   codex: codexLightIconUrl,
 };
 
-export function getAgentIconForSurface(agentType: string, surface: AgentIconSurface): string {
+export function findAgentIconForSurface(
+  agentType: string,
+  surface: AgentIconSurface,
+): string | undefined {
   const map = surface === "dark" ? darkSurfaceIcons : lightSurfaceIcons;
-  return map[agentType] ?? map.claude;
+  return map[agentType];
+}
+
+export function getAgentIconForSurface(agentType: string, surface: AgentIconSurface): string {
+  return findAgentIconForSurface(agentType, surface) ?? darkSurfaceIcons.claude;
 }
 
 export function agentIconSurfaceForTheme(themeType: "dark" | "light"): AgentIconSurface {
