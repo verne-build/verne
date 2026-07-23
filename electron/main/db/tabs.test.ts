@@ -16,6 +16,9 @@ import {
   updateTabPresentationSnapshot,
   tabDisplayLabels,
   defaultLabel,
+  moveTabToDirectory,
+  setTabScopePinned,
+  getTabScopePinned,
 } from "./tabs";
 import type { Tab } from "../../../src/types/shared";
 
@@ -184,5 +187,33 @@ describe("tabs", () => {
   it("defaultLabel is count+1", () => {
     expect(defaultLabel(0)).toBe("1");
     expect(defaultLabel(3)).toBe("4");
+  });
+
+  it("moveTabToDirectory moves, re-cwds, appends sort order atomically", () => {
+    const db = tmpDb();
+    insertTab(db, mkTab({ id: "t1", directoryId: "d1", sortOrder: 0 }));
+    insertTab(db, mkTab({ id: "t2", directoryId: "d2", sortOrder: 0 }));
+    moveTabToDirectory(db, "t1", "d2", "/wt/perf");
+    const t1 = getTab(db, "t1")!;
+    expect(t1.directoryId).toBe("d2");
+    expect(t1.cwd).toBe("/wt/perf");
+    expect(t1.sortOrder).toBe(1); // appended after t2
+  });
+
+  it("moveTabToDirectory into empty dir gets sort 0", () => {
+    const db = tmpDb();
+    insertTab(db, mkTab({ id: "t1", directoryId: "d1", sortOrder: 3 }));
+    moveTabToDirectory(db, "t1", "d2", "/tmp/d2");
+    expect(getTab(db, "t1")!.sortOrder).toBe(0);
+  });
+
+  it("scope pin round-trips and defaults false", () => {
+    const db = tmpDb();
+    insertTab(db, mkTab());
+    expect(getTabScopePinned(db, "t1")).toBe(false);
+    setTabScopePinned(db, "t1", true);
+    expect(getTabScopePinned(db, "t1")).toBe(true);
+    setTabScopePinned(db, "t1", false);
+    expect(getTabScopePinned(db, "t1")).toBe(false);
   });
 });

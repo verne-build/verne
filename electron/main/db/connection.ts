@@ -167,6 +167,11 @@ CREATE TABLE recent_files (
     db.exec("ALTER TABLE tabs ADD COLUMN user_renamed INTEGER NOT NULL DEFAULT 0;");
   }
 
+  // tabs: scope_pinned_by_user
+  if (!hasColumn("tabs", "scope_pinned_by_user")) {
+    db.exec("ALTER TABLE tabs ADD COLUMN scope_pinned_by_user INTEGER NOT NULL DEFAULT 0;");
+  }
+
   // directories: settings_json
   if (!hasColumn("directories", "settings_json")) {
     db.exec("ALTER TABLE directories ADD COLUMN settings_json TEXT NOT NULL DEFAULT '{}';");

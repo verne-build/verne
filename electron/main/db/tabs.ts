@@ -81,6 +81,48 @@ export function reorderTabs(db: DatabaseSync, ids: string[]): void {
   for (let i = 0; i < ids.length; i++) stmt.run(i, ids[i]);
 }
 
+/** Move UPDATE without txn — for callers composing a larger transaction. */
+export function moveTabInsideOpenTxn(
+  db: DatabaseSync,
+  tabId: string,
+  directoryId: string,
+  cwd: string,
+): void {
+  db.prepare(
+    `UPDATE tabs SET directory_id = ?, cwd = ?,
+       sort_order = (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM tabs WHERE directory_id = ?)
+     WHERE id = ?`,
+  ).run(directoryId, cwd, directoryId, tabId);
+}
+
+/** Re-scope a tab: directory, cwd, append to destination sort order — one txn. */
+export function moveTabToDirectory(
+  db: DatabaseSync,
+  tabId: string,
+  directoryId: string,
+  cwd: string,
+): void {
+  db.exec("BEGIN");
+  try {
+    moveTabInsideOpenTxn(db, tabId, directoryId, cwd);
+    db.exec("COMMIT");
+  } catch (e) {
+    db.exec("ROLLBACK");
+    throw e;
+  }
+}
+
+export function setTabScopePinned(db: DatabaseSync, tabId: string, pinned: boolean): void {
+  db.prepare("UPDATE tabs SET scope_pinned_by_user = ? WHERE id = ?").run(pinned ? 1 : 0, tabId);
+}
+
+export function getTabScopePinned(db: DatabaseSync, tabId: string): boolean {
+  const row = db
+    .prepare("SELECT scope_pinned_by_user AS p FROM tabs WHERE id = ?")
+    .get(tabId) as { p?: number } | undefined;
+  return row?.p === 1;
+}
+
 export function deleteTab(db: DatabaseSync, id: string): void {
   db.prepare("DELETE FROM tabs WHERE id = ?").run(id);
 }
