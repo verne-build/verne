@@ -35,6 +35,7 @@ pub const TABS_HAS_RUNNING_CHILD: &str = "tabs_has_running_child";
 
 // sidecar diagnostics (watcher/cache counters; daemon serves the session half)
 pub const GET_SIDECAR_DIAGNOSTICS: &str = "get_sidecar_diagnostics";
+pub const AGENT_BINS_AVAILABLE: &str = "agent_bins_available";
 
 // git (daemon owns git workers + emits status events)
 pub const GIT_STATUS: &str = "git_status";

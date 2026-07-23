@@ -116,6 +116,41 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
             }
         }
 
+        m if m == crate::protocol::methods::AGENT_BINS_AVAILABLE => {
+            let bins: Vec<String> = req.params
+                .get("bins")
+                .and_then(|value| value.as_array())
+                .map(|items| items.iter().filter_map(|item| item.as_str().map(str::to_owned)).collect())
+                .unwrap_or_default();
+            if bins.iter().any(|bin| !crate::services::agent_bins::valid_bin(bin)) {
+                return Response::err(req.id, "invalid agent binary name");
+            }
+            let missing = {
+                let cache = state.agent_bin_cache.lock().unwrap_or_else(|p| p.into_inner());
+                bins.iter().filter(|bin| !cache.contains_key(*bin)).cloned().collect::<Vec<_>>()
+            };
+            if !missing.is_empty() {
+                let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+                let probed = tokio::task::spawn_blocking(move ||
+                    crate::services::agent_bins::probe_available(&shell, &missing)
+                        .map(|available| (missing, available))
+                ).await;
+                let (checked, available) = match probed {
+                    Ok(Ok(result)) => result,
+                    Ok(Err(error)) => return Response::err(req.id, error),
+                    Err(error) => return Response::err(req.id, error.to_string()),
+                };
+                let available: std::collections::HashSet<String> = available.into_iter().collect();
+                let mut cache = state.agent_bin_cache.lock().unwrap_or_else(|p| p.into_inner());
+                for bin in checked { cache.insert(bin.clone(), available.contains(&bin)); }
+            }
+            let cache = state.agent_bin_cache.lock().unwrap_or_else(|p| p.into_inner());
+            let available = bins.into_iter()
+                .filter(|bin| cache.get(bin).copied().unwrap_or(false))
+                .collect::<Vec<_>>();
+            Response::ok(req.id, serde_json::json!({ "available": available }))
+        }
+
         // Slice 5b: DB-free agent-shadow teardown. Electron deletes the tab row
         // itself on close, then forwards this so the sidecar drops the in-memory
         // git2 repo + on-disk shadow tree (it still owns those resources).

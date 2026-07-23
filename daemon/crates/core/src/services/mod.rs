@@ -1,3 +1,4 @@
+pub mod agent_bins;
 pub mod agent_registry;
 pub mod agent_shadow;
 pub mod agent_status;

@@ -132,6 +132,8 @@ const request = {
     invoke("create_terminal", { workingDir: p.workingDir, cols: p.cols ?? null, rows: p.rows ?? null }),
   killTerminal: (p: { sessionId: string }): Promise<boolean> =>
     invoke("kill_terminal", { sessionId: p.sessionId }),
+  agentBinsAvailable: (p: { bins: string[] }): Promise<{ available: string[] }> =>
+    invoke("agent_bins_available", p),
   // Resize a backgrounded tab's PTY (tabId == agent id) so its size tracks the
   // viewport while its grid WS is closed — avoids a SIGWINCH jump on reactivation.
   tabResize: (p: { tabId: string; cols: number; rows: number }): Promise<boolean> =>
