@@ -757,7 +757,7 @@ describe("sessionActivityAt snapshot", () => {
     });
   });
 
-  it("stamps on creation and selection, not on plain status updates", async () => {
+  it("stamps on creation, not on selection or plain status updates", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(100);
     const store = useWorkspaceStore();
@@ -774,10 +774,10 @@ describe("sessionActivityAt snapshot", () => {
     store.applyTabUpdate({ tabId: tab.id, agentType: "claude", agentState: "working", revision: 6, changedAt: 12345 } as never);
     expect(store.sessionActivityAt.get(tab.id)).toBe(12345);
 
-    // selection re-stamps
+    // selection does NOT re-stamp (cards must not reshuffle on click)
     vi.setSystemTime(200);
     store.selectSession(tab.id);
-    expect(store.sessionActivityAt.get(tab.id)).toBe(200);
+    expect(store.sessionActivityAt.get(tab.id)).toBe(12345);
   });
 
   it("clears on close", async () => {

@@ -82,8 +82,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   // Missing entry = assumed running (hydration fills the truth).
   const sessionLifecycle = shallowRef<Map<string, "running" | "exited">>(new Map());
 
-  // Recency snapshot for card sorting (spec: re-rank on discrete events only —
-  // selection/creation/close/agent-type change/scope move; never status ticks).
+  // Recency snapshot for card sorting (re-rank on discrete events only —
+  // creation/close/agent-type change/scope move; never selection or status ticks).
   const sessionActivityAt = shallowRef<Map<string, number>>(new Map());
   const activityVersion = ref(0);
   function stampActivity(tabId: string, at = Date.now()) {
@@ -504,7 +504,6 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
   function recordTabActivation(dirId: string, tabId: string | undefined) {
     if (!tabId) return;
-    stampActivity(tabId);
     const h = (tabActivationHistory[dirId] ??= []);
     const i = h.indexOf(tabId);
     if (i !== -1) h.splice(i, 1);
