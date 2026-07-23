@@ -1,14 +1,19 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, onUnmounted, ref, watch } from "vue";
-import { Folder, FolderOpen, GitBranch, Pencil, Plus, Trash2 } from "@lucide/vue";
+import { ChevronRight, Folder, FolderOpen, GitBranch, Pencil, Plus, Trash2 } from "@lucide/vue";
 import { DragDropProvider } from "@dnd-kit/vue";
 import { ask } from "@/platform";
 import SortableItem from "@/components/dnd/SortableItem.vue";
+import SessionRow from "@/components/sidebar/SessionRow.vue";
+import StatusIndicator from "@/components/StatusIndicator.vue";
 import { sortableSensors } from "@/components/dnd/sensors";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useRpc } from "@/composables/useRpc";
 import { useProjectIcons } from "@/composables/useProjectIcons";
 import { listen, type UnlistenFn } from "@/platform";
+import { aggregateGroupState, resolveDisplayState, stripSpinner } from "@/lib/agentStatus";
+import type { DisplayState } from "@/lib/agentStatus";
+import type { SessionRow as SessionRowModel } from "@/lib/sessionsView";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyContent, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -48,6 +53,69 @@ const workspaceGroups = computed(() =>
   })),
 );
 
+// -- filter --
+const query = ref("");
+function matches(r: SessionRowModel): boolean {
+  const q = query.value.toLowerCase();
+  return (
+    stripSpinner(store.sessionName(r.tab.id)).toLowerCase().includes(q) ||
+    (r.agentType ?? "").toLowerCase().includes(q) ||
+    r.directory.name.toLowerCase().includes(q)
+  );
+}
+
+const sessionsByDir = computed(() => {
+  const map = new Map<string, SessionRowModel[]>();
+  for (const r of store.sessionsList("all")) {
+    if (query.value && !matches(r)) continue;
+    const list = map.get(r.directory.id) ?? [];
+    list.push(r);
+    map.set(r.directory.id, list);
+  }
+  return map;
+});
+
+function rowsFor(dirId: string): SessionRowModel[] {
+  return sessionsByDir.value.get(dirId) ?? [];
+}
+
+// Scope headers stay visible while any child (own sessions or a worktree's)
+// matches; no filter → everything shows.
+function scopeVisible(group: { directory: WorkingDirectory; children: WorkingDirectory[] }): boolean {
+  if (!query.value) return true;
+  return rowsFor(group.directory.id).length > 0 || group.children.some((c) => rowsFor(c.id).length > 0);
+}
+function worktreeVisible(dirId: string): boolean {
+  return !query.value || rowsFor(dirId).length > 0;
+}
+
+// -- collapse (session-local; collapsed scopes show count + aggregate dot) --
+const collapsedIds = ref<Set<string>>(new Set());
+function isCollapsed(id: string): boolean {
+  return collapsedIds.value.has(id);
+}
+function toggleCollapsed(id: string) {
+  const next = new Set(collapsedIds.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  collapsedIds.value = next;
+}
+
+function scopeState(dirId: string): DisplayState | null {
+  return aggregateGroupState(
+    rowsFor(dirId).map((r) => {
+      const rt = store.tabRuntime.get(r.tab.id);
+      return resolveDisplayState({
+        needsAcknowledgement: rt?.needsAcknowledgement,
+        agentType: r.agentType,
+        agentState: rt?.agentState ?? r.tab.lastAgentState,
+        requireAgentType: true,
+      });
+    }),
+  );
+}
+
+// -- branch captions --
 const branches = ref(new Map<string, string>());
 const pathToId = computed(() => {
   const m = new Map<string, string>();
@@ -97,10 +165,17 @@ onMounted(async () => {
 onUnmounted(() => { unlistenGit?.(); });
 
 watch(() => store.directories.map((d) => d.id).join(","), () => { refreshAll(); nextTick(update); });
+// row count changes (new/closed sessions, filter) move the scroll extents
+watch(() => store.sessionsList("all").length + query.value.length, () => nextTick(update));
 
 function select(d: WorkingDirectory) {
   store.selectDirectory(d);
   void store.loadTabsForDirectory(d.id);
+}
+
+function onNewSession(d: WorkingDirectory) {
+  if (store.selectedDirectoryId !== d.id) select(d);
+  void store.newSession(d.id).catch((e) => window.alert(`Failed to create session: ${e}`));
 }
 
 async function onCreateWorktree(parentDirId: string) {
@@ -203,6 +278,9 @@ interface DragEndPayload {
 }
 function onDragEnd(e: DragEndPayload) {
   if (e.canceled) return;
+  // Filter active → rendered indices don't match model order; dnd is disabled
+  // on the items too, this is belt-and-braces.
+  if (query.value) return;
   const src = e.operation.source;
   if (!src) return;
   const group = src.group;
@@ -221,14 +299,27 @@ function onDragEnd(e: DragEndPayload) {
     const [moved] = ids.splice(from, 1);
     ids.splice(to, 0, moved);
     store.reorderWorktrees(parentId, ids);
+  } else if (group.startsWith("sessions-")) {
+    const dirId = group.slice("sessions-".length);
+    const ids = rowsFor(dirId).map(r => r.tab.id);
+    if (from >= ids.length || to >= ids.length) return;
+    const [moved] = ids.splice(from, 1);
+    ids.splice(to, 0, moved);
+    store.reorderTabsInDirectory(dirId, ids);
   }
 }
 </script>
 
 <template>
   <div class="relative flex h-full min-h-0 flex-col">
-    <div class="flex h-7 shrink-0 items-center justify-between pl-3 pr-1.5">
-      <div class="text-[10px] uppercase tracking-wide text-muted-foreground/70">Workspaces</div>
+    <div class="flex h-7 shrink-0 items-center gap-1.5 pl-3 pr-1.5">
+      <div class="text-[10px] uppercase tracking-wide text-muted-foreground/70">Sessions</div>
+      <input
+        v-model="query"
+        type="text"
+        placeholder="Filter"
+        class="h-5 min-w-0 flex-1 rounded-sm bg-transparent px-1.5 text-[11px] text-foreground outline-none placeholder:text-muted-foreground/50 focus:bg-input/30"
+      />
       <TooltipProvider :delay-duration="200">
         <Tooltip>
           <TooltipTrigger as-child>
@@ -273,12 +364,13 @@ function onDragEnd(e: DragEndPayload) {
     </Empty>
     <DragDropProvider :sensors="sortableSensors" @drag-end="onDragEnd">
     <div class="flex flex-col gap-0.5">
+    <template v-for="(group, i) in workspaceGroups" :key="group.directory.id">
     <SortableItem
-      v-for="(group, i) in workspaceGroups"
+      v-if="scopeVisible(group)"
       :id="group.directory.id"
       :index="i"
       group="workspaces-root"
-      :key="group.directory.id"
+      :disabled="!!query"
       class="flex flex-col gap-0.5 data-[dragging=true]:opacity-50"
     >
       <ContextMenu>
@@ -287,25 +379,54 @@ function onDragEnd(e: DragEndPayload) {
             :as="'div'"
             :variant="store.selectedDirectoryId === group.directory.id ? 'secondary' : 'ghost'"
             size="sm"
-            class="group cursor-pointer mx-1.5 h-auto min-h-10 w-[calc(100%-0.75rem)] flex-col items-start justify-center gap-0.5 whitespace-normal px-2.5 py-1.5 text-xs font-normal"
+            class="group cursor-pointer mx-1.5 h-auto min-h-10 w-[calc(100%-0.75rem)] flex-col items-start justify-center gap-0.5 whitespace-normal px-2 py-1.5 text-xs font-normal"
             @click="select(group.directory)"
           >
-            <div class="flex h-4 w-full min-w-0 items-center gap-1.5 leading-none">
+            <div class="flex h-4 w-full min-w-0 items-center gap-1 leading-none">
+              <ChevronRight
+                class="size-3 shrink-0 cursor-pointer text-muted-foreground transition-transform"
+                :class="isCollapsed(group.directory.id) ? '' : 'rotate-90'"
+                data-no-drag
+                @click.stop="toggleCollapsed(group.directory.id)"
+              />
               <img v-if="projectIcons[group.directory.id]" :src="projectIcons[group.directory.id]" class="size-3.5 shrink-0" />
               <Folder v-else class="size-3.5 shrink-0 text-muted-foreground" />
               <span class="min-w-0 truncate text-left text-foreground">{{ group.directory.name }}</span>
+              <span class="ml-auto flex shrink-0 items-center gap-1">
+                <template v-if="isCollapsed(group.directory.id)">
+                  <span class="text-[10px] leading-none text-muted-foreground">{{ rowsFor(group.directory.id).length }}</span>
+                  <span v-if="scopeState(group.directory.id)" class="status-indicator-slot">
+                    <StatusIndicator :state="scopeState(group.directory.id)!" class="size-3" />
+                  </span>
+                </template>
+                <Button
+                  type="button"
+                  size="icon-xs"
+                  variant="ghost"
+                  class="size-4 text-muted-foreground opacity-0 group-hover:opacity-100"
+                  aria-label="New Session"
+                  data-no-drag
+                  @click.stop="onNewSession(group.directory)"
+                >
+                  <Plus class="size-3" />
+                </Button>
+              </span>
             </div>
             <div
               v-if="branches.get(group.directory.id)"
-              class="flex h-4 w-full min-w-0 items-center pl-[1.25rem] text-xs leading-none text-muted-foreground"
+              class="flex h-4 w-full min-w-0 items-center pl-[2.125rem] text-xs leading-none text-muted-foreground"
             >
               <span class="min-w-0 truncate text-left">{{ branches.get(group.directory.id) }}</span>
             </div>
           </Button>
         </ContextMenuTrigger>
         <ContextMenuContent>
-          <ContextMenuItem @select="onCreateWorktree(group.directory.id)">
+          <ContextMenuItem @select="onNewSession(group.directory)">
             <Plus />
+            New Session
+          </ContextMenuItem>
+          <ContextMenuItem @select="onCreateWorktree(group.directory.id)">
+            <GitBranch />
             New Worktree
           </ContextMenuItem>
           <ContextMenuItem variant="destructive" @select="onRemoveDirectory(group.directory.id)">
@@ -314,53 +435,121 @@ function onDragEnd(e: DragEndPayload) {
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
-      <SortableItem
-        v-for="(c, ci) in group.children"
-        :id="c.id"
-        :index="ci"
-        :group="`worktrees-${group.directory.id}`"
-        :key="c.id"
-      >
-      <ContextMenu>
-        <ContextMenuTrigger as-child>
-          <Button
-            :as="'div'"
-            :variant="store.selectedDirectoryId === c.id ? 'secondary' : 'ghost'"
-            size="sm"
-            class="group cursor-pointer ml-[1.625rem] mr-1.5 h-7 w-[calc(100%-2rem)] items-center justify-start gap-1.5 px-2.5 py-1 text-xs font-normal data-[dragging=true]:opacity-50"
-            @click="select(c)"
-            @dblclick="startRenameWorktree(c.id)"
-          >
-            <GitBranch class="size-3.5 shrink-0 text-muted-foreground" />
-            <input
-              v-if="renamingId === c.id"
-              type="text"
-              class="flex-1 min-w-0 bg-transparent text-xs text-foreground outline-none border-b border-primary"
-              :value="c.name"
-              @click.stop
-              @keydown.enter="finishRenameWorktree(c.id, ($event.target as HTMLInputElement).value)"
-              @keydown.escape="cancelRenameWorktree()"
-              @blur="finishRenameWorktree(c.id, ($event.target as HTMLInputElement).value)"
-              @vue:mounted="({ el }: any) => onRenameInputMounted(el)"
-            />
-            <span v-else class="min-w-0 truncate text-left text-foreground">{{ c.name }}</span>
-          </Button>
-        </ContextMenuTrigger>
-        <ContextMenuContent @close-auto-focus="onWorktreeMenuCloseAutoFocus">
-          <ContextMenuItem @select="startRenameWorktree(c.id)">
-            <Pencil />
-            Rename Worktree
-          </ContextMenuItem>
-          <ContextMenuItem variant="destructive" @select="onRemoveWorktree(c.id)">
-            <Trash2 />
-            Delete Worktree
-          </ContextMenuItem>
-        </ContextMenuContent>
-      </ContextMenu>
-      </SortableItem>
+      <template v-if="!isCollapsed(group.directory.id)">
+        <SessionRow
+          v-for="(r, ri) in rowsFor(group.directory.id)"
+          :key="r.tab.id"
+          :row="r"
+          :index="ri"
+          :group="`sessions-${group.directory.id}`"
+          :dnd-disabled="!!query"
+        />
+        <template v-for="(c, ci) in group.children" :key="c.id">
+        <SortableItem
+          v-if="worktreeVisible(c.id)"
+          :id="c.id"
+          :index="ci"
+          :group="`worktrees-${group.directory.id}`"
+          :disabled="!!query"
+          class="flex flex-col gap-0.5"
+        >
+        <ContextMenu>
+          <ContextMenuTrigger as-child>
+            <Button
+              :as="'div'"
+              :variant="store.selectedDirectoryId === c.id ? 'secondary' : 'ghost'"
+              size="sm"
+              class="group cursor-pointer ml-[1.625rem] mr-1.5 h-7 w-[calc(100%-2rem)] items-center justify-start gap-1 px-2 py-1 text-xs font-normal data-[dragging=true]:opacity-50"
+              @click="select(c)"
+              @dblclick="startRenameWorktree(c.id)"
+            >
+              <ChevronRight
+                class="size-3 shrink-0 cursor-pointer text-muted-foreground transition-transform"
+                :class="isCollapsed(c.id) ? '' : 'rotate-90'"
+                data-no-drag
+                @click.stop="toggleCollapsed(c.id)"
+                @dblclick.stop
+              />
+              <GitBranch class="size-3.5 shrink-0 text-muted-foreground" />
+              <input
+                v-if="renamingId === c.id"
+                type="text"
+                class="flex-1 min-w-0 bg-transparent text-xs text-foreground outline-none border-b border-primary"
+                :value="c.name"
+                @click.stop
+                @keydown.enter="finishRenameWorktree(c.id, ($event.target as HTMLInputElement).value)"
+                @keydown.escape="cancelRenameWorktree()"
+                @blur="finishRenameWorktree(c.id, ($event.target as HTMLInputElement).value)"
+                @vue:mounted="({ el }: any) => onRenameInputMounted(el)"
+              />
+              <span v-else class="min-w-0 truncate text-left text-foreground">{{ c.name }}</span>
+              <span class="ml-auto flex shrink-0 items-center gap-1">
+                <template v-if="isCollapsed(c.id)">
+                  <span class="text-[10px] leading-none text-muted-foreground">{{ rowsFor(c.id).length }}</span>
+                  <span v-if="scopeState(c.id)" class="status-indicator-slot">
+                    <StatusIndicator :state="scopeState(c.id)!" class="size-3" />
+                  </span>
+                </template>
+                <Button
+                  type="button"
+                  size="icon-xs"
+                  variant="ghost"
+                  class="size-4 text-muted-foreground opacity-0 group-hover:opacity-100"
+                  aria-label="New Session"
+                  data-no-drag
+                  @click.stop="onNewSession(c)"
+                >
+                  <Plus class="size-3" />
+                </Button>
+              </span>
+            </Button>
+          </ContextMenuTrigger>
+          <ContextMenuContent @close-auto-focus="onWorktreeMenuCloseAutoFocus">
+            <ContextMenuItem @select="onNewSession(c)">
+              <Plus />
+              New Session
+            </ContextMenuItem>
+            <ContextMenuItem @select="startRenameWorktree(c.id)">
+              <Pencil />
+              Rename Worktree
+            </ContextMenuItem>
+            <ContextMenuItem variant="destructive" @select="onRemoveWorktree(c.id)">
+              <Trash2 />
+              Delete Worktree
+            </ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
+        <template v-if="!isCollapsed(c.id)">
+          <SessionRow
+            v-for="(r, ri) in rowsFor(c.id)"
+            :key="r.tab.id"
+            :row="r"
+            :index="ri"
+            :group="`sessions-${c.id}`"
+            nested
+            :dnd-disabled="!!query"
+          />
+        </template>
+        </SortableItem>
+        </template>
+      </template>
     </SortableItem>
+    </template>
     </div>
     </DragDropProvider>
     </div>
   </div>
 </template>
+
+<style scoped>
+.status-indicator-slot {
+  display: inline-flex;
+  width: 0.75rem;
+  height: 0.75rem;
+  flex: 0 0 0.75rem;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+  vertical-align: middle;
+}
+</style>

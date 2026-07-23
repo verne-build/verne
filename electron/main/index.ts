@@ -5,7 +5,7 @@ import { ensureDaemon, ensureSidecar, killSidecar, restartDaemon } from "./daemo
 import { installRouter, registerNative } from "./ipc-router";
 import { createWindow } from "./window";
 import { showTestNotification, forgetTab as forgetNotificationTab } from "./native/notifications";
-import { buildAppMenu, registerMenuStateCommands } from "./menu";
+import { buildAppMenu } from "./menu";
 import { registerAssetSchemePrivilege, handleAssetProtocol } from "./asset-protocol";
 import { registerWindowCommands } from "./native/window-cmds";
 import { registerDialogCommands } from "./native/dialog-cmds";
@@ -256,7 +256,6 @@ app.whenReady().then(async () => {
   registerReviewCommands();
   registerDbCommands(getWindow, () => sidecar);
   registerLspCommands(join(app.getAppPath(), "resources"));
-  registerMenuStateCommands(getWindow);
   registerExtraNatives();
 
   // Dev-only main-process startup phase timing. Mirrors the renderer's

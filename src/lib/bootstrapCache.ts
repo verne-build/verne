@@ -16,7 +16,7 @@ const KEYS = {
   panelSearchPx: "verne.panel.search.px",
   sidebarLeftCollapsed: "verne.sidebar.left.collapsed",
   sidebarRightCollapsed: "verne.sidebar.right.collapsed",
-  // workspaces panel height as a fraction (0..1) of the left sidebar; absent = auto-fit
+  // legacy split-sidebar workspaces fraction — kept only so reset purges stale values
   panelWorkspacesFrac: "verne.panel.workspacesFrac",
   fileExplorerVisible: "verne.fileExplorer.visible",
   scListVisible: "verne.scList.visible",
@@ -54,18 +54,6 @@ function safeRemove(key: string): void {
   } catch {
     /* ignore */
   }
-}
-
-// null = auto-fit (no manual override stored)
-export function readCachedWorkspacesFrac(): number | null {
-  const n = parseFiniteNumber(safeGet(KEYS.panelWorkspacesFrac));
-  if (n === null) return null;
-  return Math.min(0.95, Math.max(0.05, n));
-}
-
-export function writeCachedWorkspacesFrac(frac: number | null): void {
-  if (frac === null) safeRemove(KEYS.panelWorkspacesFrac);
-  else safeSet(KEYS.panelWorkspacesFrac, String(frac));
 }
 
 export function readCachedSettings(): unknown {

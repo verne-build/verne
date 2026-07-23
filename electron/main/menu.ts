@@ -1,14 +1,8 @@
 import { Menu, BrowserWindow, app } from "electron";
-import { registerNative } from "./ipc-router";
 import { accel } from "./native/shortcuts-cmds";
 
-// Current agent scope, mirrored from the renderer store via the
-// `update_agent_scope_menu` command. Drives the View > Agents checkmarks.
-// "all" is the default (matches Tauri's initial checked state).
-let currentScope = "all";
-
 // Restart-daemon callback supplied by index.ts on first build; retained so menu
-// rebuilds (e.g. agent-scope changes) keep Restart Daemon wired.
+// rebuilds (e.g. updater-phase changes) keep Restart Daemon wired.
 let restartDaemon: (() => void) | undefined;
 
 // Cached getWindow + updater phase so the updater can flip the "Check for
@@ -126,24 +120,6 @@ export function buildAppMenu(getWindow: () => BrowserWindow, onRestartDaemon?: (
         { label: "Focus File Explorer", accelerator: accel("focus-file-explorer"), click: () => send("focusExplorer") },
         { label: "Focus Source Control", accelerator: accel("focus-source-control"), click: () => send("focusSourceControl") },
         { label: "Focus Terminal", accelerator: accel("focus-terminal"), click: () => send("focusTerminal") },
-        { type: "separator" },
-        {
-          label: "Agents",
-          submenu: [
-            {
-              label: "Show All Agents",
-              type: "checkbox",
-              checked: currentScope === "all",
-              click: () => send("setAgentScope", "all"),
-            },
-            {
-              label: "Show Current Workspace",
-              type: "checkbox",
-              checked: currentScope === "current",
-              click: () => send("setAgentScope", "current"),
-            },
-          ],
-        },
       ],
     },
     // Go — Tauri: Command Palette(⌘K), Go to File…(⌘P), Run Action…(⌘⇧P), sep,
@@ -191,16 +167,3 @@ export function buildAppMenu(getWindow: () => BrowserWindow, onRestartDaemon?: (
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-/**
- * Registers the `update_agent_scope_menu` native command. The renderer calls
- * it as invoke("update_agent_scope_menu", { scope }) whenever the agent scope
- * changes (menu click or sidebar toggle, both via the store watch in App.vue),
- * so we record the scope and rebuild the menu to refresh the checkmarks.
- */
-export function registerMenuStateCommands(getWindow: () => BrowserWindow): void {
-  registerNative("update_agent_scope_menu", (p: { scope: string }) => {
-    currentScope = p?.scope === "current" ? "current" : "all";
-    buildAppMenu(getWindow);
-    return true;
-  });
-}

@@ -32,14 +32,9 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     localStorage.getItem("selectedDirectoryId")
   );
   const loading = ref(false);
-  // Agents panel scope filter — shared so the View menu can drive it too.
-  const agentScope = ref<"all" | "current">(
-    localStorage.getItem("agentScope") === "current" ? "current" : "all",
-  );
-  watch(agentScope, (v) => localStorage.setItem("agentScope", v));
   // First-run UI state. directoriesLoaded gates the welcome hero so it never
   // flashes before the initial getDirectories() resolves. welcomeSeen makes the
-  // branded hero one-time (localStorage, same pattern as agentScope above).
+  // branded hero one-time (localStorage).
   const directoriesLoaded = ref(false);
   const welcomeSeen = ref(localStorage.getItem("welcomeSeen") === "true");
   function markWelcomeSeen() {
@@ -780,7 +775,6 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     selectedDirectory,
     activeRoot,
     loading,
-    agentScope,
     expandedDirectoryIds,
     toggleDirectoryExpanded,
     hydrateExpandedDirectoryIds,

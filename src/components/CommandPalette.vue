@@ -228,11 +228,9 @@ function selectCommand(cmd: Command) {
   void cmd.run();
 }
 
-function selectAgent(tabId: string, directoryId: string) {
+function selectAgent(tabId: string) {
   open.value = false;
-  const dir = store.directories.find((d) => d.id === directoryId) ?? null;
-  store.selectDirectory(dir);
-  store.setActiveTab(directoryId, tabId);
+  store.selectSession(tabId);
 }
 
 function timeAgo(ts: number): string {
@@ -332,7 +330,7 @@ const noResults = computed(() => {
             v-for="a in matchingAgents"
             :key="a.tabId"
             :value="`agent:${a.title}`"
-            @select="selectAgent(a.tabId, a.directoryId)"
+            @select="selectAgent(a.tabId)"
           >
             <img :src="agentIcon(a.agentType)" class="mr-2 size-4 shrink-0" aria-hidden="true" />
             <span class="truncate text-sm">{{ a.title }}</span>

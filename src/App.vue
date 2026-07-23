@@ -396,12 +396,6 @@ function handleMenuAction(e: Event) {
     if (showRight.value && !rightCollapsed.value) fileMaximized.value = !fileMaximized.value;
   }
   else if (action === "openThemes") showThemes.value = true;
-  else if (action === "setAgentScope") {
-    store.agentScope = detail.scope === "current" ? "current" : "all";
-    // Re-sync even when scope is unchanged: clicking an already-checked item
-    // makes Tauri auto-toggle it off, but the no-op store write skips the watch.
-    invoke("update_agent_scope_menu", { scope: store.agentScope }).catch(() => {});
-  }
   else if (action === "goToFile") window.dispatchEvent(new CustomEvent("open-file-search"));
   else if (action === "commandPalette") window.dispatchEvent(new CustomEvent("open-command-palette"));
   else if (action === "paletteAll") window.dispatchEvent(new CustomEvent("open-command-palette-all"));
@@ -539,14 +533,6 @@ let unlistenSettings: (() => void) | null = null;
 let unlistenPlaySound: (() => void) | null = null;
 // Reused across notifications; main sends the resolved wav path (dev vs packaged).
 let notifAudio: HTMLAudioElement | null = null;
-
-// Keep View > Agents scope checkmarks in sync with the store (driven by both
-// the menu items and the sidebar toggle).
-watch(
-  () => store.agentScope,
-  (scope) => { invoke("update_agent_scope_menu", { scope }).catch(() => {}); },
-  { immediate: true },
-);
 
 // Open external links in default browser
 function handleLinkClick(e: MouseEvent) {

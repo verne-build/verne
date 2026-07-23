@@ -2,7 +2,7 @@ import type { Component } from "vue";
 import { toast } from "vue-sonner";
 import {
   PanelLeft, PanelRight, Maximize2, Files, Settings, Palette,
-  FolderOpen, SquareTerminal, GitFork, Target, Globe, ArrowRight, ArrowLeft, FilePlusCorner, X,
+  FolderOpen, SquareTerminal, GitFork, ArrowRight, ArrowLeft, FilePlusCorner, X,
   SplitSquareHorizontal, SplitSquareVertical,
   RotateCcw, Save, Hash, MessageSquarePlus, WrapText, Map, ListOrdered, Pin, Eye, Pencil,
   GitCommitVertical, GitBranch, ArrowDownToLine, ArrowUpFromLine, RefreshCw, NotebookText,
@@ -73,8 +73,6 @@ export function useCommands() {
       { id: "ws.splitRight", title: "Split Terminal Right", category: "Workspace", icon: SplitSquareHorizontal, shortcut: "⌘D", when: hasDir, keywords: "pane vertical side", run: () => menu("splitRight") },
       { id: "ws.splitDown", title: "Split Terminal Down", category: "Workspace", icon: SplitSquareVertical, shortcut: "⇧⌘D", when: hasDir, keywords: "pane horizontal stack", run: () => menu("splitDown") },
       { id: "ws.newWorktree", title: "New Worktree…", category: "Workspace", icon: GitFork, when: hasDir, keywords: "git branch", run: () => menu("newWorktree") },
-      { id: "ws.scopeCurrent", title: "Agent Scope: Current Workspace", category: "Workspace", icon: Target, keywords: "filter agents", run: () => menu("setAgentScope", { scope: "current" }) },
-      { id: "ws.scopeAll", title: "Agent Scope: All Workspaces", category: "Workspace", icon: Globe, keywords: "filter agents", run: () => menu("setAgentScope", { scope: "all" }) },
 
       // Tabs
       { id: "tab.next", title: "Next Tab", category: "Tabs", icon: ArrowRight, keywords: "switch cycle", run: () => menu("nextTab") },
