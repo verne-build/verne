@@ -69,7 +69,7 @@ export function useCommands() {
 
       // Workspace
       { id: "ws.open", title: "Open Workspace…", category: "Workspace", icon: FolderOpen, keywords: "add folder directory", run: () => menu("openWorkspace") },
-      { id: "ws.newTerminal", title: "New Terminal", category: "Workspace", icon: SquareTerminal, when: hasDir, keywords: "tab shell", run: () => menu("newTerminal") },
+      { id: "ws.newTerminal", title: "New Terminal", category: "Workspace", icon: SquareTerminal, when: hasDir, keywords: "tab shell agent session", run: () => store.openSessionPicker() },
       { id: "ws.splitRight", title: "Split Terminal Right", category: "Workspace", icon: SplitSquareHorizontal, shortcut: "⌘D", when: hasDir, keywords: "pane vertical side", run: () => menu("splitRight") },
       { id: "ws.splitDown", title: "Split Terminal Down", category: "Workspace", icon: SplitSquareVertical, shortcut: "⇧⌘D", when: hasDir, keywords: "pane horizontal stack", run: () => menu("splitDown") },
       { id: "ws.newWorktree", title: "New Worktree…", category: "Workspace", icon: GitFork, when: hasDir, keywords: "git branch", run: () => menu("newWorktree") },

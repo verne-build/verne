@@ -25,7 +25,12 @@ function freshId(prefix: string) {
 const setAppStateCalls: Array<{ key: string; value: string | null }> = [];
 const tabsClosedIds: string[] = [];
 const tabsSessionIdCalls: string[] = [];
-const tabsCreateCalls: Array<{ directoryId: string }> = [];
+const tabsCreateCalls: Array<{
+  directoryId: string;
+  label?: string;
+  cwd?: string;
+  launchCommand?: string;
+}> = [];
 const {
   getLiveTabIds,
   setLiveTabIds,
@@ -132,8 +137,13 @@ vi.mock("@/composables/useRpc", () => ({
       getAgentStates: vi.fn(async () => agentStates),
       deleteDirectory: vi.fn(async () => true),
       worktreeRemove: vi.fn(async () => true),
-      tabsCreate: vi.fn(async (opts: { directoryId: string; label?: string; cwd?: string }) => {
-        tabsCreateCalls.push({ directoryId: opts.directoryId });
+      tabsCreate: vi.fn(async (opts: {
+        directoryId: string;
+        label?: string;
+        cwd?: string;
+        launchCommand?: string;
+      }) => {
+        tabsCreateCalls.push({ ...opts });
         const deferred = getTabsCreateDeferred();
         if (deferred) await deferred.promise;
         return {
@@ -269,19 +279,6 @@ describe("workspace store arrangement writes (slice 2: arrangements own writes)"
     expect(tabsClosedIds).toEqual([tab2Id]);
     expect(parsedArrangement("dir-1")).toEqual({ version: 1, layout: { pane: tab1.id } });
     expect(store.terminalTabsByDirectory["dir-1"]?.some((t) => t.id === tab2Id)).toBe(false);
-  });
-
-  it("closeSession on the last session in a directory spawns a fresh one when that directory is selected", async () => {
-    const store = useWorkspaceStore();
-    const tab1 = await store.newSession("dir-1");
-    store.selectDirectory({ id: "dir-1", path: "/dir-1", name: "dir-1", createdAt: 0, sortOrder: 0 });
-    setAppStateCalls.length = 0;
-
-    await store.closeSession(tab1.id);
-
-    // A replacement session was created for the now-empty, selected directory.
-    expect(store.terminalTabsByDirectory["dir-1"]?.length).toBe(1);
-    expect(store.terminalTabsByDirectory["dir-1"]?.[0].id).not.toBe(tab1.id);
   });
 
   it("setArrangementSizes writes sizes into the matching internal node", async () => {
@@ -512,86 +509,72 @@ describe("exited-close skip (I4), focus persistence (I5), label threading (I6)",
   });
 });
 
-describe("empty-scope auto-session (C2)", () => {
+describe("new-session picker", () => {
   beforeEach(() => {
     localStorage.clear();
     setActivePinia(createPinia());
-    setAppStateCalls.length = 0;
-    tabsClosedIds.length = 0;
-    tabsSessionIdCalls.length = 0;
     tabsCreateCalls.length = 0;
-    nextId = 0;
-    setLiveTabIds([]);
     appState.clear();
-    for (const k of Object.keys(tabsListByDir)) delete tabsListByDir[k];
-    setFailArrangementGets(0);
+    for (const key of Object.keys(tabsListByDir)) delete tabsListByDir[key];
   });
 
-  it("loadTabsForDirectory auto-creates a session for an empty selected directory", async () => {
+  it("opens and closes for the selected directory without creating a tab", () => {
     const store = useWorkspaceStore();
+    store.directories.push(dir("dir-1"));
+    store.selectDirectory(dir("dir-1"));
+    store.openSessionPicker();
+    expect(store.pendingPicker).toEqual({ dirId: "dir-1" });
+    expect(tabsCreateCalls).toEqual([]);
+    store.closeSessionPicker();
+    expect(store.pendingPicker).toBeNull();
+  });
+
+  it("does nothing when no workspace directory exists", () => {
+    const store = useWorkspaceStore();
+    store.openSessionPicker();
+    expect(store.pendingPicker).toBeNull();
+  });
+
+  it("loading an empty selected directory opens the picker without a tab", async () => {
+    const store = useWorkspaceStore();
+    store.directories.push(dir("dir-1"));
     store.selectDirectory(dir("dir-1"));
     await store.loadTabsForDirectory("dir-1");
-    await vi.waitFor(() => {
-      expect(store.terminalTabsByDirectory["dir-1"]?.length).toBe(1);
-    });
-    expect(parsedArrangement("dir-1")).toEqual({
-      version: 1,
-      layout: { pane: store.terminalTabsByDirectory["dir-1"][0].id },
-    });
+    expect(store.pendingPicker).toEqual({ dirId: "dir-1" });
+    expect(store.terminalTabsByDirectory["dir-1"]).toEqual([]);
+    expect(tabsCreateCalls).toEqual([]);
   });
 
-  it("does not auto-create for a non-selected directory", async () => {
+  it("closing the last selected session opens the picker", async () => {
     const store = useWorkspaceStore();
-    await store.loadTabsForDirectory("dir-1");
-    await new Promise((r) => setTimeout(r, 0));
+    store.directories.push(dir("dir-1"));
+    const tab = await store.newSession("dir-1");
+    store.selectDirectory(dir("dir-1"));
+    store.closeSessionPicker();
+    await store.closeSession(tab.id);
+    expect(store.pendingPicker).toEqual({ dirId: "dir-1" });
     expect(store.terminalTabsByDirectory["dir-1"]).toEqual([]);
   });
 
-  it("selectDirectory auto-creates when tabs are already loaded and empty", async () => {
+  it("retargets on scope selection and dismisses on session selection", async () => {
     const store = useWorkspaceStore();
-    await store.loadTabsForDirectory("dir-1"); // not selected → stays empty
+    store.directories.push(dir("dir-1"), dir("dir-2"));
+    const tab = await store.newSession("dir-2");
     store.selectDirectory(dir("dir-1"));
-    await vi.waitFor(() => {
-      expect(store.terminalTabsByDirectory["dir-1"]?.length).toBe(1);
-    });
+    store.openSessionPicker();
+    store.selectDirectory(dir("dir-2"));
+    expect(store.pendingPicker).toEqual({ dirId: "dir-2" });
+    store.selectSession(tab.id);
+    expect(store.pendingPicker).toBeNull();
   });
 
-  it("concurrent loads create exactly one session (in-flight de-dupe)", async () => {
+  it("threads launchCommand through createTab", async () => {
     const store = useWorkspaceStore();
-    store.selectDirectory(dir("dir-1"));
-    await Promise.all([
-      store.loadTabsForDirectory("dir-1"),
-      store.loadTabsForDirectory("dir-1"),
-    ]);
-    await vi.waitFor(() => {
-      expect(store.terminalTabsByDirectory["dir-1"]?.length).toBe(1);
+    await store.createTab({ directoryId: "dir-1", launchCommand: "codex" });
+    expect(tabsCreateCalls.at(-1)).toMatchObject({
+      directoryId: "dir-1",
+      launchCommand: "codex",
     });
-    await new Promise((r) => setTimeout(r, 0));
-    expect(store.terminalTabsByDirectory["dir-1"]?.length).toBe(1);
-  });
-
-  it("concurrent selectDirectory + load-tail auto-create produce exactly one tabsCreate call", async () => {
-    const store = useWorkspaceStore();
-    // Populate the bucket as empty first (not selected), so selectDirectory's
-    // guard can fire directly (mirrors "tabs already loaded and empty" above).
-    await store.loadTabsForDirectory("dir-1");
-    expect(tabsCreateCalls.length).toBe(0);
-
-    const deferred = queueTabsCreateDeferred();
-    // selectDirectory fires the guard synchronously -> newSession -> tabsCreate
-    // (pending on `deferred`). Before it resolves, a second load's
-    // ensureLayoutModel2 tail re-checks the still-empty bucket and would fire
-    // its own auto-create if it weren't single-flighted with the first.
-    store.selectDirectory(dir("dir-1"));
-    await store.loadTabsForDirectory("dir-1");
-    deferred.resolve();
-
-    await vi.waitFor(() => {
-      expect(store.terminalTabsByDirectory["dir-1"]?.length).toBe(1);
-    });
-    await new Promise((r) => setTimeout(r, 0));
-    expect(tabsCreateCalls.length).toBe(1);
-    expect(store.terminalTabsByDirectory["dir-1"]?.length).toBe(1);
   });
 });
 

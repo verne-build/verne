@@ -33,6 +33,17 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   const selectedDirectoryId = ref<string | null>(
     localStorage.getItem("selectedDirectoryId")
   );
+  const pendingPicker = ref<{ dirId: string } | null>(null);
+
+  function openSessionPicker(dirId = selectedDirectoryId.value ?? undefined): void {
+    if (!dirId || !directories.value.some((dir) => dir.id === dirId)) return;
+    pendingPicker.value = { dirId };
+  }
+
+  function closeSessionPicker(): void {
+    pendingPicker.value = null;
+  }
+
   const loading = ref(false);
   // First-run UI state. directoriesLoaded gates the welcome hero so it never
   // flashes before the initial getDirectories() resolves. welcomeSeen makes the
@@ -259,12 +270,16 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     terminalTabsByDirectory.value = { ...terminalTabsByDirectory.value, [dirId]: next };
   }
 
-  async function newSession(directoryId: string, opts: { cwd?: string; label?: string } = {}): Promise<Tab> {
+  async function newSession(
+    directoryId: string,
+    opts: { cwd?: string; label?: string; launchCommand?: string } = {},
+  ): Promise<Tab> {
     const existing = terminalTabsByDirectory.value[directoryId] ?? [];
     const tab = await useRpc().request.tabsCreate({
       directoryId,
       cwd: opts.cwd,
       label: opts.label ?? String(existing.length + 1),
+      launchCommand: opts.launchCommand,
     });
     // Re-read post-await — a concurrent newSession in this directory may have
     // already appended its own tab; spreading the stale pre-await snapshot
@@ -282,7 +297,11 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
   // Compat alias — App.vue/menu callers use the old CreateTabOpts shape.
   const createTab = (opts: CreateTabOpts): Promise<Tab> =>
-    newSession(opts.directoryId, { cwd: opts.cwd, label: opts.label });
+    newSession(opts.directoryId, {
+      cwd: opts.cwd,
+      label: opts.label,
+      launchCommand: opts.launchCommand,
+    });
 
   async function splitSessionWithNew(sessionId: string, direction: SplitDir, before = false): Promise<void> {
     const dirId = tabDirId(sessionId);
@@ -397,26 +416,11 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   // partially-converted install can't leave some directories stuck on the
   // old model). After conversion (or if already converted), prune the
   // arrangement against currently-live tabs and backfill if empty.
-  // Per-dir in-flight de-dupe: concurrent loads share one run (and only that
-  // run may fire the empty-scope auto-session below).
+  // Per-dir in-flight de-dupe: concurrent loads share one run.
   const ensureLayoutInFlight = new Map<string, Promise<void>>();
-  // Single-flight memo for AUTO-creates only (not the user's explicit "+").
-  // Both auto-create call sites (selectDirectory's guard and the
-  // ensureLayoutModel2 tail below) route through this so a still-pending
-  // tabsCreate from one site blocks the other from spawning a duplicate —
-  // the empty-bucket check alone can't do that since tabsCreate is async.
-  const autoSessionInFlight = new Map<string, Promise<void>>();
-  function ensureSessionForEmptyDir(dirId: string): Promise<void> {
-    const existing = autoSessionInFlight.get(dirId);
-    if (existing) return existing;
-    const run = (async () => {
-      // Re-check: an explicit newSession (the "+" button) may have landed
-      // first while this call was queued behind the memo.
-      if ((terminalTabsByDirectory.value[dirId] ?? []).length) return;
-      await newSession(dirId).catch(() => {});
-    })().finally(() => autoSessionInFlight.delete(dirId));
-    autoSessionInFlight.set(dirId, run);
-    return run;
+  function ensureSessionForEmptyDir(dirId: string): void {
+    if ((terminalTabsByDirectory.value[dirId] ?? []).length) return;
+    if (dirId === selectedDirectoryId.value) openSessionPicker(dirId);
   }
 
   function ensureLayoutModel2(dirId: string, tabs: Tab[]): Promise<void> {
@@ -485,10 +489,9 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       if (!arrangementFor(dirId) && tabs.length)
         writeArrangement(dirId, { version: 1, layout: { pane: tabs[tabs.length - 1].id } });
     }
-    // Empty-scope guarantee (old ensureTerminal): a selected directory with
-    // zero sessions gets one. Only the in-flight-slot holder reaches here.
+    // Empty selected scopes route to the picker without creating a session.
     if (!(terminalTabsByDirectory.value[dirId] ?? []).length && dirId === selectedDirectoryId.value)
-      void ensureSessionForEmptyDir(dirId);
+      ensureSessionForEmptyDir(dirId);
   }
 
   // A tab becoming active means the user is looking at it — clear the "done"
@@ -653,7 +656,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       // Only refocus when the closed session actually held focus — a
       // background/non-focused pane closing shouldn't steal focus.
       if (arr && wasFocused) focusSession(firstLeaf(arr.layout));
-      if (!remaining.length && dirId === selectedDirectoryId.value) void newSession(dirId).catch(() => {}); // ensureTerminal equivalent
+      if (!remaining.length && dirId === selectedDirectoryId.value)
+        openSessionPicker(dirId);
     }
   }
 
@@ -922,6 +926,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       const tabs = terminalTabsByDirectory.value[dir.id] ?? [];
       if (!tabs.some((t) => t.id === sessionId)) continue;
       if (dir.id !== selectedDirectoryId.value) selectDirectory(dir);
+      closeSessionPicker();
       const arr = arrangementFor(dir.id);
       const member = collectPaneIds(arr?.layout ?? { pane: "" }).includes(sessionId);
       if (!member) writeArrangement(dir.id, { version: 1, layout: { pane: sessionId } });
@@ -1060,24 +1065,24 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
   function selectDirectory(dir: WorkingDirectory | null) {
     selectedDirectoryId.value = dir?.id || null;
-    // Empty-scope guarantee for the select path: tabs already loaded + empty →
-    // spawn one. An in-flight ensureLayoutModel2 owns that job instead. Routes
-    // through ensureSessionForEmptyDir (not newSession directly) so this can't
-    // stack a duplicate against the ensureLayoutModel2 tail's own auto-create —
-    // the sidebar calls selectDirectory() before loadTabsForDirectory(), so no
-    // ensureLayoutModel2 run is in flight yet when this guard first fires.
+    if (dir && pendingPicker.value) pendingPicker.value = { dirId: dir.id };
+    // Already-loaded empty scopes can route immediately. Otherwise the guarded
+    // load tail opens the picker only if this scope is still selected.
     if (
       dir &&
       terminalTabsByDirectory.value[dir.id] &&
       !terminalTabsByDirectory.value[dir.id].length &&
       !ensureLayoutInFlight.has(dir.id)
     )
-      void ensureSessionForEmptyDir(dir.id);
+      ensureSessionForEmptyDir(dir.id);
   }
 
   return {
     directories,
     selectedDirectoryId,
+    pendingPicker,
+    openSessionPicker,
+    closeSessionPicker,
     selectedDirectory,
     activeRoot,
     loading,

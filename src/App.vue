@@ -301,14 +301,8 @@ async function openWorkspace() {
   await store.openAndSelectWorkspace();
 }
 
-async function newTerminal() {
-  const dirId = store.selectedDirectoryId;
-  if (!dirId) return;
-  try {
-    await store.createTab({ directoryId: dirId });
-  } catch (e) {
-    console.error("[App] newTerminal failed:", e);
-  }
+function newTerminal() {
+  store.openSessionPicker();
 }
 
 async function newWorktree() {
@@ -319,7 +313,7 @@ async function newWorktree() {
   try {
     const wt = await store.createWorktree(parentId, "");
     store.selectDirectory(wt);
-    try { await store.createTab({ directoryId: wt.id }); } catch {}
+    store.openSessionPicker(wt.id);
   } catch (e) {
     window.alert(`Failed to create worktree: ${e}`);
   }

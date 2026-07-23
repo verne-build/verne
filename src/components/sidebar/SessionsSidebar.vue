@@ -214,14 +214,14 @@ function select(d: WorkingDirectory) {
 
 function onNewSession(d: WorkingDirectory) {
   if (store.selectedDirectoryId !== d.id) select(d);
-  void store.newSession(d.id).catch((e) => window.alert(`Failed to create session: ${e}`));
+  store.openSessionPicker(d.id);
 }
 
 async function onCreateWorktree(parentDirId: string) {
   try {
     const dir = await store.createWorktree(parentDirId, "");
     store.selectDirectory(dir);
-    try { await store.createTab({ directoryId: dir.id }); } catch {}
+    store.openSessionPicker(dir.id);
     void store.loadTabsForDirectory(dir.id);
   } catch (e) {
     window.alert(`Failed to create worktree: ${e}`);
