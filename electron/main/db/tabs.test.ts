@@ -59,6 +59,7 @@ describe("tabs", () => {
       lastAgentSessionId: "s1",
       lastAgentState: "idle",
       userRenamed: false,
+      scopePinnedByUser: false,
     });
   });
 

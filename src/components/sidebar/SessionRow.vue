@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, onBeforeUnmount, ref, type Ref } from "vue";
-import { Columns2, Pencil, RotateCcw, SquareTerminal, Trash2 } from "@lucide/vue";
+import { Columns2, FolderInput, Pencil, RotateCcw, SquareTerminal, Trash2 } from "@lucide/vue";
 import SortableItem from "@/components/dnd/SortableItem.vue";
 import StatusIndicator from "@/components/StatusIndicator.vue";
 import SlotText from "@/components/SlotText.vue";
@@ -15,8 +15,13 @@ import { collectPaneIds, paneCount } from "@/lib/paneLayout";
 import { Button } from "@/components/ui/button";
 import {
   ContextMenu,
+  ContextMenuCheckboxItem,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 
@@ -61,6 +66,22 @@ const composed = computed(() => {
   return paneCount(arr.layout) > 1 && collectPaneIds(arr.layout).includes(id.value);
 });
 const iconSrc = computed(() => (props.row.agentType ? getAgentIcon(props.row.agentType) : null));
+
+// -- Move to Scope… / Follow Agent --
+const otherScopes = computed(() =>
+  store.directories.filter((d) => d.id !== props.row.directory.id),
+);
+// Follow Agent = NOT pinned (auto re-pin follows the agent's cwd around).
+const followingAgent = computed(() => !props.row.tab.scopePinnedByUser);
+
+function moveToScope(directoryId: string) {
+  void rpc.request.tabMoveToDirectory({ id: id.value, directoryId });
+}
+
+function toggleFollowAgent(checked: boolean) {
+  // checked here means "Follow Agent" is now on → pinned = false.
+  void rpc.request.tabSetScopePinned({ id: id.value, pinned: !checked });
+}
 
 function stateWord(s: DisplayState): string {
   switch (s) {
@@ -236,6 +257,28 @@ async function closeSession() {
           <RotateCcw />
           Restart
         </ContextMenuItem>
+        <ContextMenuSub v-if="otherScopes.length">
+          <ContextMenuSubTrigger>
+            <FolderInput />
+            Move to Scope…
+          </ContextMenuSubTrigger>
+          <ContextMenuSubContent>
+            <ContextMenuItem
+              v-for="scope in otherScopes"
+              :key="scope.id"
+              @select="moveToScope(scope.id)"
+            >
+              {{ scope.name }}
+            </ContextMenuItem>
+          </ContextMenuSubContent>
+        </ContextMenuSub>
+        <ContextMenuCheckboxItem
+          :model-value="followingAgent"
+          @update:model-value="toggleFollowAgent"
+        >
+          Follow Agent
+        </ContextMenuCheckboxItem>
+        <ContextMenuSeparator />
         <ContextMenuItem variant="destructive" @select="closeSession()">
           <Trash2 />
           Close Session

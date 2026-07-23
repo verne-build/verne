@@ -441,7 +441,7 @@ function onDragEnd(e: DragEndPayload) {
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
-      <template v-if="!isCollapsed(group.directory.id)">
+      <TransitionGroup v-if="!isCollapsed(group.directory.id)" name="session-move">
         <SessionRow
           v-for="(r, ri) in rowsFor(group.directory.id)"
           :key="r.tab.id"
@@ -450,7 +450,7 @@ function onDragEnd(e: DragEndPayload) {
           :group="`sessions-${group.directory.id}`"
           :dnd-disabled="!!query"
         />
-      </template>
+      </TransitionGroup>
         <template v-for="(c, ci) in group.children" :key="c.id">
         <SortableItem
           v-if="worktreeVisible(c.id)"
@@ -526,7 +526,7 @@ function onDragEnd(e: DragEndPayload) {
             </ContextMenuItem>
           </ContextMenuContent>
         </ContextMenu>
-        <template v-if="!isCollapsed(c.id)">
+        <TransitionGroup v-if="!isCollapsed(c.id)" name="session-move">
           <SessionRow
             v-for="(r, ri) in rowsFor(c.id)"
             :key="r.tab.id"
@@ -536,7 +536,7 @@ function onDragEnd(e: DragEndPayload) {
             nested
             :dnd-disabled="!!query"
           />
-        </template>
+        </TransitionGroup>
         </SortableItem>
         </template>
     </SortableItem>
@@ -557,5 +557,15 @@ function onDragEnd(e: DragEndPayload) {
   justify-content: center;
   line-height: 0;
   vertical-align: middle;
+}
+
+.session-move-move {
+  transition: transform 240ms ease;
+}
+.session-move-enter-active {
+  transition: opacity 180ms ease;
+}
+.session-move-enter-from {
+  opacity: 0;
 }
 </style>
