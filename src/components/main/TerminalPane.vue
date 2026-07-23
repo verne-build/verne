@@ -140,18 +140,24 @@ const agentIconSrc = computed(() =>
   agentType.value ? getAgentIconForSurface(agentType.value, agentIconSurface.value) : null,
 );
 
-// Other live sessions this pane could split with (excludes panes already in
-// this scope's arrangement).
+// Other sessions in THIS pane's scope it could split with (excludes panes
+// already in the scope's arrangement). Keyed by props.scopeId, not the
+// selected directory — they can differ transiently.
 const otherSessions = computed(() => {
   const arr = store.arrangementFor(props.scopeId);
   const inView = new Set(arr ? collectPaneIds(arr.layout) : []);
-  return store.sessionsList("current").filter((row) => !inView.has(row.tab.id));
+  return store
+    .sessionsList("all")
+    .filter((row) => row.directory.id === props.scopeId && !inView.has(row.tab.id));
 });
 
 // tabsSessionId → ensure_tab_session is idempotent (returns the existing
 // session, or respawns after a daemon restart). Only called on mount.
 let mountGen = 0;
-async function mountActive() {
+async function mountActive(opts: { force?: boolean } = {}) {
+  // Lifecycle-aware: an exited session shows the overlay instead of silently
+  // respawning. Explicit restart (overlay click / restart event) forces.
+  if (!opts.force && store.sessionLifecycle.get(props.paneId) === "exited") return;
   const gen = ++mountGen;
   // Resolve the PTY session id; GridTerminal opens its own grid WS connection
   // (the xterm path is no longer used here).
@@ -160,6 +166,17 @@ async function mountActive() {
   if (!sid) return;
   sessionId.value = sid;
   store.markSessionRunning(props.paneId);
+}
+
+function restart() {
+  void mountActive({ force: true });
+}
+
+// Sidebar Restart for an already-in-view exited session: selectSession only
+// focuses, so the pane must be told to respawn explicitly.
+function onRestartEvent(e: Event) {
+  const detail = (e as CustomEvent<{ tabId: string }>).detail;
+  if (detail?.tabId === props.paneId) restart();
 }
 
 watch(() => props.paneId, () => { void mountActive(); });
@@ -201,10 +218,12 @@ async function closeSession() {
 
 onMounted(() => {
   incrementMountedTerminalViewCount();
+  window.addEventListener("restart-terminal-session", onRestartEvent);
   void mountActive();
 });
 onUnmounted(() => {
   decrementMountedTerminalViewCount();
+  window.removeEventListener("restart-terminal-session", onRestartEvent);
   // GridTerminal tears down its own session/renderer on unmount. The PTY itself
   // lives in the daemon and is only closed by an explicit close
   // (store.closeSession).
@@ -285,6 +304,7 @@ onUnmounted(() => {
             <GridTerminal
               v-if="sessionId"
               ref="gridRef"
+              :key="sessionId"
               :session-id="sessionId"
               :cwd="tab?.cwd"
               @resized="(cols, rows) => store.syncViewportSize(props.paneId, cols, rows)"
@@ -305,7 +325,7 @@ onUnmounted(() => {
             v-if="isExited"
             type="button"
             class="absolute inset-0 z-40 flex items-center justify-center bg-[var(--editor-bg)]/50 opacity-50 hover:opacity-70 transition-opacity cursor-pointer"
-            @click="mountActive"
+            @click="restart"
           >
             <span class="flex items-center gap-1.5 text-xs text-muted-foreground">
               <RotateCw class="size-3.5" />

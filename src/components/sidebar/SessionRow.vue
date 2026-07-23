@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, onBeforeUnmount, ref, type Ref } from "vue";
+import { computed, inject, nextTick, onBeforeUnmount, ref, type Ref } from "vue";
 import { Columns2, Pencil, RotateCcw, SquareTerminal, Trash2 } from "@lucide/vue";
 import SortableItem from "@/components/dnd/SortableItem.vue";
 import StatusIndicator from "@/components/StatusIndicator.vue";
@@ -159,6 +159,18 @@ function runningProcessLabel(): string {
   return runtime?.foregroundCommand ?? "a process";
 }
 
+// Restart an exited session. selectSession only focuses when the pane is
+// already in view, so also tell the mounted TerminalPane to respawn. Dispatch
+// on nextTick so a newly-mounted pane (not-in-view case) has its listener up.
+function restartSession() {
+  store.selectSession(id.value);
+  void nextTick(() =>
+    window.dispatchEvent(
+      new CustomEvent("restart-terminal-session", { detail: { tabId: id.value } }),
+    ),
+  );
+}
+
 async function closeSession() {
   const running = await rpc.request.tabsHasRunningChild({ id: id.value }).catch(() => false);
   if (running) {
@@ -220,7 +232,7 @@ async function closeSession() {
           <Pencil />
           Rename
         </ContextMenuItem>
-        <ContextMenuItem v-if="exited" @select="store.selectSession(row.tab.id)">
+        <ContextMenuItem v-if="exited" @select="restartSession()">
           <RotateCcw />
           Restart
         </ContextMenuItem>
