@@ -243,8 +243,7 @@ async function closeSession() {
       <Button
         :as="'div'"
         :variant="focused ? 'secondary' : 'ghost'"
-        size="sm"
-        class="rounded-md border bg-card px-2.5 py-2 mb-1.5 w-[calc(100%-1rem)] mx-2 flex flex-col gap-0.5 text-left"
+        class="rounded-md border bg-card px-2.5 py-2 mb-1.5 w-[calc(100%-1rem)] mx-2 h-auto flex flex-col items-stretch gap-0.5 text-left"
         :class="exited ? 'opacity-60' : ''"
         @click="focus"
         @dblclick="startRename()"
