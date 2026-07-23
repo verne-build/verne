@@ -216,6 +216,34 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     return undefined;
   }
 
+  /** Clear a scope's focus bookkeeping (no live survivor to fall onto) and
+   *  persist, same write path as focusSession. */
+  function clearFocusForScope(dirId: string) {
+    const nextFocused = { ...focusedByScope.value };
+    delete nextFocused[dirId];
+    focusedByScope.value = nextFocused;
+    const nextActive = { ...activeTabIdByDirectory.value };
+    delete nextActive[dirId];
+    activeTabIdByDirectory.value = nextActive;
+    useRpc()
+      .request.setAppState({ key: "focused_by_scope", value: JSON.stringify(focusedByScope.value) })
+      .catch(() => {});
+  }
+
+  /** Optimistic local mirror of tab_set_scope_pinned (which emits no event) —
+   *  call after the RPC resolves so the Follow Agent checkbox doesn't go
+   *  stale. */
+  function setTabScopePinnedLocal(tabId: string, pinned: boolean) {
+    const dirId = tabDirId(tabId);
+    if (!dirId) return;
+    const list = terminalTabsByDirectory.value[dirId] ?? [];
+    const idx = list.findIndex((t) => t.id === tabId);
+    if (idx === -1 || list[idx].scopePinnedByUser === pinned) return;
+    const next = [...list];
+    next[idx] = { ...next[idx], scopePinnedByUser: pinned };
+    terminalTabsByDirectory.value = { ...terminalTabsByDirectory.value, [dirId]: next };
+  }
+
   async function newSession(directoryId: string, opts: { cwd?: string; label?: string } = {}): Promise<Tab> {
     const existing = terminalTabsByDirectory.value[directoryId] ?? [];
     const tab = await useRpc().request.tabsCreate({
@@ -623,7 +651,18 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       (t) => t.id === ev.tabId,
     );
     if (alreadyMoved) return;
+    // Neither-bucket guard: the tab isn't in the FROM bucket either — a
+    // broadcast racing initial load. Nothing local to reconcile.
+    const inFromBucket = (terminalTabsByDirectory.value[ev.fromDirectoryId] ?? []).some(
+      (t) => t.id === ev.tabId,
+    );
+    if (!inFromBucket) return;
     const label = tabGroupName(ev.tabId);
+    // Capture BEFORE the source-arrangement collapse mutates focus below —
+    // spec: if the moved session was the focused session of the active
+    // scope, the right panel follows it to its new scope.
+    const wasFocusedActiveSession =
+      ev.fromDirectoryId === selectedDirectoryId.value && focusedByScope.value[ev.fromDirectoryId] === ev.tabId;
     terminalTabsByDirectory.value = moveTabBetweenBuckets(
       terminalTabsByDirectory.value,
       ev.tabId,
@@ -633,10 +672,16 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     );
     // Source arrangement: slot collapses; focus falls to the survivor (spec).
     const src = arrangementFor(ev.fromDirectoryId);
+    const wasFocusedSource = focusedByScope.value[ev.fromDirectoryId] === ev.tabId;
     if (src) {
       const next = removeFromArrangement(src, ev.tabId);
       writeArrangement(ev.fromDirectoryId, next);
-      if (next && focusedByScope.value[ev.fromDirectoryId] === ev.tabId) focusSession(firstLeaf(next.layout));
+      if (wasFocusedSource) {
+        if (next) focusSession(firstLeaf(next.layout));
+        else clearFocusForScope(ev.fromDirectoryId);
+      }
+    } else if (wasFocusedSource) {
+      clearFocusForScope(ev.fromDirectoryId);
     }
     // Destination arrangement untouched — session enters it on selection (spec).
     const toName = directories.value.find((d) => d.id === ev.toDirectoryId)?.name ?? "scope";
@@ -644,13 +689,24 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       action: {
         label: "Undo",
         onClick: () => {
-          void useRpc().request.tabMoveToDirectory({ id: ev.tabId, directoryId: ev.fromDirectoryId });
+          void useRpc()
+            .request.tabMoveToDirectory({ id: ev.tabId, directoryId: ev.fromDirectoryId })
+            .then(() => setTabScopePinnedLocal(ev.tabId, true));
           // Manual move pins server-side; the resulting session-scope-changed
           // round-trip is what actually applies the undo in the UI.
         },
       },
       duration: 8000,
     });
+    // Spec: if the moved session was the focused session of the active
+    // scope, the right panel swaps scopes to follow it.
+    if (wasFocusedActiveSession) {
+      const dest = directories.value.find((d) => d.id === ev.toDirectoryId);
+      if (dest) {
+        selectDirectory(dest);
+        selectSession(ev.tabId);
+      }
+    }
   }
 
   async function renameTab(id: string, label: string) {
@@ -1038,5 +1094,6 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     renameWorktree,
     applyDirectoryAdded,
     applyScopeChange,
+    setTabScopePinnedLocal,
   };
 });
