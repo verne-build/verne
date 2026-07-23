@@ -240,96 +240,98 @@ async function closeSession() {
 </script>
 
 <template>
-  <ContextMenu>
-    <ContextMenuTrigger as-child>
-      <Button
-        :as="'div'"
-        :variant="focused ? 'secondary' : 'ghost'"
-        class="rounded-md border bg-card px-2.5 py-2 mb-1.5 w-[calc(100%-1rem)] mx-2 h-auto flex flex-col items-stretch gap-0.5 text-left"
-        :class="exited ? 'opacity-60' : ''"
-        @click="focus"
-        @dblclick="startRename()"
-      >
-        <div class="flex items-center gap-1.5 min-w-0">
-          <img v-if="projectIcon" :src="projectIcon" class="size-3.5 rounded-sm shrink-0" alt="" />
-          <Folder v-else class="size-3.5 shrink-0 text-muted-foreground" />
-          <span class="truncate text-xs font-medium text-muted-foreground">{{ rootName }}</span>
-          <GitBranch v-if="isWorktree" class="size-3 shrink-0 text-muted-foreground/70" />
-          <span class="ml-auto shrink-0 flex items-center gap-1">
-            <template v-if="row.agentType && !exited">
-              <StatusIndicator :state="state" class="size-3" />
-              <SlotText
-                :text="stateWord(state)"
-                :direction="statusRollDirection(state)"
-                :class="['text-[11px]', statusTextClass(state)]"
-              />
-            </template>
-            <span v-else-if="exited" class="text-[11px] text-muted-foreground">exited</span>
-            <span v-else-if="lastActivity" class="text-[11px] tabular-nums text-muted-foreground">{{ lastActivity }}</span>
-          </span>
-        </div>
-        <div class="flex items-center gap-1.5 min-w-0">
-          <input
-            v-if="renaming"
-            type="text"
-            class="flex-1 min-w-0 bg-transparent text-xs text-foreground outline-none border-b border-primary"
-            :value="title"
-            @click.stop
-            @keydown.enter="finishRename(($event.target as HTMLInputElement).value)"
-            @keydown.escape="cancelRename()"
-            @blur="finishRename(($event.target as HTMLInputElement).value)"
-            @vue:mounted="({ el }: any) => onRenameInputMounted(el)"
-          />
-          <span v-else class="truncate text-sm">{{ title }}</span>
-          <span v-if="composed" class="ml-auto shrink-0 flex items-center gap-0.5 text-muted-foreground">
-            <Columns2 class="size-3" />
-            <span class="text-[10px] tabular-nums">{{ paneTotal }}</span>
-          </span>
-        </div>
-        <div class="flex items-center gap-1.5 min-w-0">
-          <span v-if="branch" class="truncate font-mono text-[11px] text-muted-foreground/80">{{ branch }}</span>
-          <span class="ml-auto shrink-0">
-            <img v-if="row.agentType && iconSrc" :src="iconSrc" class="size-3.5" alt="" />
-            <SquareTerminal v-else class="size-3.5 text-muted-foreground/70" />
-          </span>
-        </div>
-      </Button>
-    </ContextMenuTrigger>
-    <ContextMenuContent @close-auto-focus="onMenuCloseAutoFocus">
-      <ContextMenuItem @select="startRename()">
-        <Pencil />
-        Rename
-      </ContextMenuItem>
-      <ContextMenuItem v-if="exited" @select="restartSession()">
-        <RotateCcw />
-        Restart
-      </ContextMenuItem>
-      <ContextMenuSub v-if="otherScopes.length">
-        <ContextMenuSubTrigger>
-          <FolderInput />
-          Move to Scope…
-        </ContextMenuSubTrigger>
-        <ContextMenuSubContent>
-          <ContextMenuItem
-            v-for="scope in otherScopes"
-            :key="scope.id"
-            @select="moveToScope(scope.id)"
-          >
-            {{ scope.name }}
-          </ContextMenuItem>
-        </ContextMenuSubContent>
-      </ContextMenuSub>
-      <ContextMenuCheckboxItem
-        :model-value="followingAgent"
-        @update:model-value="toggleFollowAgent"
-      >
-        Follow Agent
-      </ContextMenuCheckboxItem>
-      <ContextMenuSeparator />
-      <ContextMenuItem variant="destructive" @select="closeSession()">
-        <Trash2 />
-        Close Session
-      </ContextMenuItem>
-    </ContextMenuContent>
-  </ContextMenu>
+  <div class="mb-1.5 mx-2 w-[calc(100%-1rem)]">
+    <ContextMenu>
+      <ContextMenuTrigger as-child>
+        <Button
+          :as="'div'"
+          :variant="focused ? 'secondary' : 'ghost'"
+          class="rounded-md border bg-card px-2.5 py-2 w-full h-auto flex flex-col items-stretch gap-0.5 text-left"
+          :class="exited ? 'opacity-60' : ''"
+          @click="focus"
+          @dblclick="startRename()"
+        >
+          <div class="flex items-center gap-1.5 min-w-0">
+            <img v-if="projectIcon" :src="projectIcon" class="size-3.5 rounded-sm shrink-0" alt="" />
+            <Folder v-else class="size-3.5 shrink-0 text-muted-foreground" />
+            <span class="truncate text-xs font-medium text-muted-foreground">{{ rootName }}</span>
+            <GitBranch v-if="isWorktree" class="size-3 shrink-0 text-muted-foreground/70" />
+            <span class="ml-auto shrink-0 flex items-center gap-1">
+              <template v-if="row.agentType && !exited">
+                <StatusIndicator :state="state" class="size-3" />
+                <SlotText
+                  :text="stateWord(state)"
+                  :direction="statusRollDirection(state)"
+                  :class="['text-[11px]', statusTextClass(state)]"
+                />
+              </template>
+              <span v-else-if="exited" class="text-[11px] text-muted-foreground">exited</span>
+              <span v-else-if="lastActivity" class="text-[11px] tabular-nums text-muted-foreground">{{ lastActivity }}</span>
+            </span>
+          </div>
+          <div class="flex items-center gap-1.5 min-w-0">
+            <input
+              v-if="renaming"
+              type="text"
+              class="flex-1 min-w-0 bg-transparent text-xs text-foreground outline-none border-b border-primary"
+              :value="title"
+              @click.stop
+              @keydown.enter="finishRename(($event.target as HTMLInputElement).value)"
+              @keydown.escape="cancelRename()"
+              @blur="finishRename(($event.target as HTMLInputElement).value)"
+              @vue:mounted="({ el }: any) => onRenameInputMounted(el)"
+            />
+            <span v-else class="truncate text-sm">{{ title }}</span>
+            <span v-if="composed" class="ml-auto shrink-0 flex items-center gap-0.5 text-muted-foreground">
+              <Columns2 class="size-3" />
+              <span class="text-[10px] tabular-nums">{{ paneTotal }}</span>
+            </span>
+          </div>
+          <div class="flex items-center gap-1.5 min-w-0">
+            <span v-if="branch" class="truncate font-mono text-[11px] text-muted-foreground/80">{{ branch }}</span>
+            <span class="ml-auto shrink-0">
+              <img v-if="row.agentType && iconSrc" :src="iconSrc" class="size-3.5" alt="" />
+              <SquareTerminal v-else class="size-3.5 text-muted-foreground/70" />
+            </span>
+          </div>
+        </Button>
+      </ContextMenuTrigger>
+      <ContextMenuContent @close-auto-focus="onMenuCloseAutoFocus">
+        <ContextMenuItem @select="startRename()">
+          <Pencil />
+          Rename
+        </ContextMenuItem>
+        <ContextMenuItem v-if="exited" @select="restartSession()">
+          <RotateCcw />
+          Restart
+        </ContextMenuItem>
+        <ContextMenuSub v-if="otherScopes.length">
+          <ContextMenuSubTrigger>
+            <FolderInput />
+            Move to Scope…
+          </ContextMenuSubTrigger>
+          <ContextMenuSubContent>
+            <ContextMenuItem
+              v-for="scope in otherScopes"
+              :key="scope.id"
+              @select="moveToScope(scope.id)"
+            >
+              {{ scope.name }}
+            </ContextMenuItem>
+          </ContextMenuSubContent>
+        </ContextMenuSub>
+        <ContextMenuCheckboxItem
+          :model-value="followingAgent"
+          @update:model-value="toggleFollowAgent"
+        >
+          Follow Agent
+        </ContextMenuCheckboxItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem variant="destructive" @select="closeSession()">
+          <Trash2 />
+          Close Session
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  </div>
 </template>
