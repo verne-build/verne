@@ -122,6 +122,85 @@ pub fn resolve_repo_root(working_dir: &str) -> Option<String> {
     Some(s.trim_end_matches('/').to_string())
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PathClassification {
+    pub workdir: Option<String>,
+    pub common_workdir: Option<String>,
+    pub is_linked_worktree: bool,
+    pub is_bare: bool,
+}
+
+/// Classify `path` for the daemon's session-layout matching: the repo's
+/// workdir, the MAIN repo's workdir (derived from the common dir — differs
+/// from `workdir` for a linked worktree), and worktree/bare flags.
+pub fn classify_path(path: &str) -> Option<PathClassification> {
+    let repo = Repository::discover(path).ok()?;
+    let is_bare = repo.is_bare();
+    let workdir = repo.workdir().map(|p| p.to_string_lossy().trim_end_matches('/').to_string());
+    let is_linked = repo.is_worktree();
+    // Common dir: <main>/.git for normal repos; resolves the main repo for linked worktrees.
+    let common = repo.commondir().to_path_buf();
+    let common_workdir = if is_linked {
+        common
+            .parent()
+            .and_then(|p| Repository::open(p).ok())
+            .and_then(|main| main.workdir().map(|p| p.to_string_lossy().trim_end_matches('/').to_string()))
+    } else {
+        workdir.clone()
+    };
+    Some(PathClassification { workdir, common_workdir, is_linked_worktree: is_linked, is_bare })
+}
+
+#[cfg(test)]
+mod classify_tests {
+    use super::*;
+
+    fn init_repo(dir: &std::path::Path) -> git2::Repository {
+        let repo = git2::Repository::init(dir).unwrap();
+        // one commit so worktrees can be added
+        {
+            let sig = git2::Signature::now("t", "t@t").unwrap();
+            let tree_id = repo.index().unwrap().write_tree().unwrap();
+            let tree = repo.find_tree(tree_id).unwrap();
+            repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[]).unwrap();
+        }
+        repo
+    }
+
+    #[test]
+    fn subdirectory_of_main_checkout() {
+        let tmp = tempfile::tempdir().unwrap();
+        init_repo(tmp.path());
+        let sub = tmp.path().join("src");
+        std::fs::create_dir(&sub).unwrap();
+        let c = classify_path(sub.to_str().unwrap()).unwrap();
+        assert!(!c.is_linked_worktree);
+        assert_eq!(c.workdir, c.common_workdir);
+    }
+
+    #[test]
+    fn linked_worktree_reports_common_workdir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = init_repo(tmp.path());
+        let wt_path = tmp.path().parent().unwrap().join(format!("wt-{}", std::process::id()));
+        repo.worktree("wt", &wt_path, None).unwrap();
+        let c = classify_path(wt_path.to_str().unwrap()).unwrap();
+        assert!(c.is_linked_worktree);
+        assert_eq!(
+            std::fs::canonicalize(c.common_workdir.unwrap()).unwrap(),
+            std::fs::canonicalize(tmp.path()).unwrap()
+        );
+        let _ = std::fs::remove_dir_all(&wt_path);
+    }
+
+    #[test]
+    fn unrelated_path_is_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(classify_path(tmp.path().to_str().unwrap()).is_none());
+    }
+}
+
 /// Initialize a new git repo at `path`
 pub fn init(path: &str) -> Result<(), String> {
     Repository::init(path).map_err(|e| format!("git init: {e}"))?;

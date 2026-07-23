@@ -1083,6 +1083,17 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
                 serde_json::json!({ "repoRoot": crate::services::git::resolve_repo_root(&working_dir) }),
             )
         }
+        m if m == crate::protocol::methods::CLASSIFY_PATH => {
+            let path = s(req.params.get("path"));
+            let result = tokio::task::spawn_blocking(move || crate::services::git::classify_path(&path))
+                .await
+                .map_err(|e| format!("classify_path task failed: {e}"));
+            match result {
+                Ok(Some(c)) => Response::ok(req.id, serde_json::to_value(c).unwrap()),
+                Ok(None) => Response::ok(req.id, serde_json::Value::Null),
+                Err(e) => Response::err(req.id, e),
+            }
+        }
 
         m if m == crate::protocol::methods::AGENT_SHADOW_ON_HOOK => {
             // Forwarded by Electron from the daemon's `agent-hook-fileops` event.

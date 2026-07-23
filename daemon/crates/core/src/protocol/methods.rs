@@ -171,6 +171,7 @@ pub const MCP_MANUAL_COMMANDS: &str = "mcp_manual_commands";
 pub const GET_WS_PORT: &str = "get_ws_port";
 pub const GET_HOME_PATH: &str = "get_home_path";
 pub const RESOLVE_REPO_ROOT: &str = "resolve_repo_root";
+pub const CLASSIFY_PATH: &str = "classify_path";
 
 // hook config (daemon) + agent state hydration
 pub const GET_HOOK_CONFIG: &str = "__get_hook_config";
