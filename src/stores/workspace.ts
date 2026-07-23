@@ -1,7 +1,9 @@
 import { defineStore } from "pinia";
 import { ref, shallowRef, triggerRef, computed, watch } from "vue";
+import { toast } from "vue-sonner";
 import type { WorkingDirectory, TabUpdatedEvent, Tab, CreateTabOpts, AgentState } from "@/types";
 import { useRpc } from "@/composables/useRpc";
+import { moveTabBetweenBuckets } from "@/lib/scopeMove";
 import { stopClient } from "@/composables/useLanguageClient";
 import { dropFilePanelScope } from "@/composables/useFilePanelTabs";
 import { forgetAgentNotificationTab } from "@/composables/useAgentNotifications";
@@ -602,6 +604,55 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     }
   }
 
+  /** New scope discovered by the backend (e.g. auto re-pin creating/using a
+   *  worktree the renderer hasn't seen yet). Idempotent. */
+  function applyDirectoryAdded(directory: WorkingDirectory) {
+    if (!directories.value.some((d) => d.id === directory.id))
+      directories.value = [...directories.value, directory];
+  }
+
+  /** A session's owning scope changed server-side (manual move, worktree
+   *  removal re-pin, or cwd-driven auto re-pin). Moves the tab between
+   *  buckets, reconciles the source arrangement/focus, and offers an undo. */
+  function applyScopeChange(ev: { tabId: string; fromDirectoryId: string; toDirectoryId: string; cwd: string }) {
+    // Echo guard: if the tab is already in the destination bucket (e.g. a
+    // local optimistic apply already landed), moveTabBetweenBuckets would
+    // no-op on the FROM side too — check membership up front and skip
+    // silently, no duplicate toast.
+    const alreadyMoved = (terminalTabsByDirectory.value[ev.toDirectoryId] ?? []).some(
+      (t) => t.id === ev.tabId,
+    );
+    if (alreadyMoved) return;
+    const label = tabGroupName(ev.tabId);
+    terminalTabsByDirectory.value = moveTabBetweenBuckets(
+      terminalTabsByDirectory.value,
+      ev.tabId,
+      ev.fromDirectoryId,
+      ev.toDirectoryId,
+      ev.cwd,
+    );
+    // Source arrangement: slot collapses; focus falls to the survivor (spec).
+    const src = arrangementFor(ev.fromDirectoryId);
+    if (src) {
+      const next = removeFromArrangement(src, ev.tabId);
+      writeArrangement(ev.fromDirectoryId, next);
+      if (next && focusedByScope.value[ev.fromDirectoryId] === ev.tabId) focusSession(firstLeaf(next.layout));
+    }
+    // Destination arrangement untouched — session enters it on selection (spec).
+    const toName = directories.value.find((d) => d.id === ev.toDirectoryId)?.name ?? "scope";
+    toast(`${label} moved to ${toName}`, {
+      action: {
+        label: "Undo",
+        onClick: () => {
+          void useRpc().request.tabMoveToDirectory({ id: ev.tabId, directoryId: ev.fromDirectoryId });
+          // Manual move pins server-side; the resulting session-scope-changed
+          // round-trip is what actually applies the undo in the UI.
+        },
+      },
+      duration: 8000,
+    });
+  }
+
   async function renameTab(id: string, label: string) {
     const rpc = useRpc();
     const tab = await rpc.request.tabsRename({ id, label });
@@ -985,5 +1036,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     createWorktree,
     removeWorktree,
     renameWorktree,
+    applyDirectoryAdded,
+    applyScopeChange,
   };
 });

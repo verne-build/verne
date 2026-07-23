@@ -455,6 +455,16 @@ function handleTabExited(e: Event) {
   if (detail?.tabId) store.markSessionExited(detail.tabId);
 }
 
+function handleSessionScopeChanged(e: Event) {
+  const detail = (e as CustomEvent).detail;
+  if (detail?.tabId) store.applyScopeChange(detail);
+}
+
+function handleDirectoryAdded(e: Event) {
+  const detail = (e as CustomEvent).detail;
+  if (detail?.directory) store.applyDirectoryAdded(detail.directory);
+}
+
 function handleGlobalKeydown(e: KeyboardEvent) {
   if ((e.metaKey || e.ctrlKey) && e.key === "r") e.preventDefault();
   // ⌘⌃⇧F — hidden FPS meter toggle (debug; deliberately not in the registry).
@@ -568,6 +578,8 @@ onMounted(async () => {
   window.addEventListener("tab-updated", handleTabUpdated as EventListener);
   window.addEventListener("tab-title", handleTabTitle as EventListener);
   window.addEventListener("tab-exited", handleTabExited as EventListener);
+  window.addEventListener("session-scope-changed", handleSessionScopeChanged as EventListener);
+  window.addEventListener("directory-added", handleDirectoryAdded as EventListener);
 
   // Voice dictation: subscribe to speech events / hotkey, and push the current
   // hotkey config to the main process.
@@ -694,6 +706,8 @@ onUnmounted(() => {
   unwireAgentNotifications();
   window.removeEventListener("tab-title", handleTabTitle as EventListener);
   window.removeEventListener("tab-exited", handleTabExited as EventListener);
+  window.removeEventListener("session-scope-changed", handleSessionScopeChanged as EventListener);
+  window.removeEventListener("directory-added", handleDirectoryAdded as EventListener);
   window.removeEventListener("show-bttf", handleShowBttf);
   for (const timer of Object.values(panelSaveTimers)) clearTimeout(timer);
   if (collapseTimer) clearTimeout(collapseTimer);

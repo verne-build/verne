@@ -85,6 +85,13 @@ listen<string>("file-deleted", (e) => {
     listen<{ tabId: string }>("tab-exited", (e) => {
       window.dispatchEvent(new CustomEvent("tab-exited", { detail: e.payload }));
     }),
+    listen<{ tabId: string; fromDirectoryId: string; toDirectoryId: string; cwd: string }>(
+      "session-scope-changed",
+      (e) => window.dispatchEvent(new CustomEvent("session-scope-changed", { detail: e.payload })),
+    ),
+    listen<{ directory: WorkingDirectory }>("directory-added", (e) =>
+      window.dispatchEvent(new CustomEvent("directory-added", { detail: e.payload })),
+    ),
   ]);
   for (const r of results) {
     if (r.status === "fulfilled") unlistenFns.push(r.value);
@@ -129,6 +136,11 @@ const request = {
   // viewport while its grid WS is closed — avoids a SIGWINCH jump on reactivation.
   tabResize: (p: { tabId: string; cols: number; rows: number }): Promise<boolean> =>
     invoke("tab_resize", { tabId: p.tabId, cols: p.cols, rows: p.rows }),
+  // Session scope (manual move + pin)
+  tabMoveToDirectory: (p: { id: string; directoryId: string }): Promise<boolean> =>
+    invoke("tab_move_to_directory", p),
+  tabSetScopePinned: (p: { id: string; pinned: boolean }): Promise<boolean> =>
+    invoke("tab_set_scope_pinned", p),
 
   // Terminal tabs (Phase 2 RPC)
   tabsCreate: (p: CreateTabOpts): Promise<Tab> => invoke("tabs_create", { opts: p }),

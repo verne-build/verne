@@ -379,6 +379,9 @@ export interface Tab {
   lastAgentState?: AgentState;
   /** True once the user manually renamed this tab; locks auto-naming. */
   userRenamed?: boolean;
+  /** True once the session's scope has been manually moved/pinned; suppresses
+   *  auto re-pin on cwd change (Follow Agent unchecked). */
+  scopePinnedByUser?: boolean;
 }
 
 export interface ReviewComment {
