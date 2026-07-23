@@ -33,14 +33,7 @@ import {
   removeHistory,
 } from "../db/browser";
 import { getSidebarTabs, saveSidebarTabs, getSidebarState } from "../db/sidebar";
-import {
-  getGroups,
-  createGroup,
-  updateGroupLayout,
-  setGroupActivePane,
-  reorderGroups,
-  deleteGroup,
-} from "../db/groups";
+import { getGroups } from "../db/groups";
 
 function broadcast(win: BrowserWindow, name: string, payload: unknown): void {
   win.webContents.send("daemon-event", name, payload);
@@ -227,29 +220,6 @@ export function registerDbCommands(
     return getGroups(getDb(), p.directoryId);
   });
 
-  registerNative("group_create", (p: { directoryId: string; layout: string; activePaneId?: string }) => {
-    return createGroup(getDb(), p.directoryId, p.layout, p.activePaneId);
-  });
-
-  registerNative("group_update_layout", (p: { id: string; layout: string; activePaneId?: string }) => {
-    updateGroupLayout(getDb(), p.id, p.layout, p.activePaneId);
-    return true;
-  });
-
-  registerNative("group_set_active_pane", (p: { id: string; paneId: string }) => {
-    setGroupActivePane(getDb(), p.id, p.paneId);
-    return true;
-  });
-
-  registerNative("groups_reorder", (p: { ids: string[] }) => {
-    reorderGroups(getDb(), p.ids);
-    return true;
-  });
-
-  registerNative("group_delete", (p: { id: string }) => {
-    deleteGroup(getDb(), p.id);
-    return true;
-  });
 
   // ---- recent files (frecency now native to FFF in the sidecar) ----
   registerNative("touch_recent_file", (p: { directoryId: string; path: string; scopeType?: string }) => {

@@ -161,16 +161,6 @@ const request = {
   // Tab groups (split layouts)
   groupsList: (p: { directoryId?: string | null }): Promise<TabGroup[]> =>
     invoke("groups_list", { directoryId: p.directoryId ?? null }),
-  groupCreate: (p: { directoryId: string; layout: string; activePaneId?: string | null }): Promise<TabGroup> =>
-    invoke("group_create", { directoryId: p.directoryId, layout: p.layout, activePaneId: p.activePaneId ?? null }),
-  groupUpdateLayout: (p: { id: string; layout: string; activePaneId?: string | null }): Promise<boolean> =>
-    invoke("group_update_layout", { id: p.id, layout: p.layout, activePaneId: p.activePaneId ?? null }),
-  groupSetActivePane: (p: { id: string; paneId: string }): Promise<boolean> =>
-    invoke("group_set_active_pane", { id: p.id, paneId: p.paneId }),
-  groupsReorder: (p: { ids: string[] }): Promise<boolean> =>
-    invoke("groups_reorder", { ids: p.ids }),
-  groupDelete: (p: { id: string }): Promise<boolean> =>
-    invoke("group_delete", { id: p.id }),
 
   // Review comments
   reviewList: (p: { scopeKey: string }): Promise<ReviewComment[]> =>
