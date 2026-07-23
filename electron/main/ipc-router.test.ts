@@ -1,6 +1,15 @@
 import { describe, it, expect, vi } from "vitest";
 import type { BrowserWindow } from "electron";
 import type { DaemonClient } from "./daemon-client";
+
+// makeForward reads the singleton db via getDb() when consuming session-cwd —
+// back it with an in-memory db instead of the real app-data-dir file.
+vi.mock("./db/connection", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./db/connection")>();
+  const memDb = actual.openDb(":memory:");
+  return { ...actual, getDb: () => memDb };
+});
+
 import { makeForward } from "./ipc-router";
 
 const sidecar = { request: vi.fn(async () => null) } as unknown as DaemonClient;
@@ -39,5 +48,15 @@ describe("makeForward", () => {
     const { win, send } = fakeWin({ wcDestroyed: true });
     makeForward(() => win, sidecar)("evt", {});
     expect(send).not.toHaveBeenCalled();
+  });
+
+  // session-cwd is main-internal: it resolves a scope re-pin via handleSessionCwd
+  // and must never be forwarded raw to the renderer as a "daemon-event".
+  it("consumes session-cwd instead of forwarding it", async () => {
+    const { win, send } = fakeWin({});
+    makeForward(() => win, sidecar)("session-cwd", { tabId: "unknown-tab", cwd: "/tmp" });
+    // handleSessionCwd runs fire-and-forget (void ...catch) — flush microtasks.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(send).not.toHaveBeenCalledWith("daemon-event", "session-cwd", expect.anything());
   });
 });

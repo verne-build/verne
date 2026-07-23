@@ -65,70 +65,89 @@ export interface SessionCwdDeps {
   broadcast: (name: string, payload: unknown) => void;
 }
 
+// Per-tab in-flight guard: session-cwd events can arrive faster than one
+// handleSessionCwd run completes; a duplicate for the same tab is a no-op.
+const inFlight = new Set<string>();
+
 /** Orchestrate one session-cwd event: resolve, persist (one txn), reset shadow, broadcast. */
 export async function handleSessionCwd(
   ev: { tabId: string; cwd: string },
   deps: SessionCwdDeps,
 ): Promise<void> {
   const { db, sidecarRequest, broadcast } = deps;
-  const tab = getTab(db, ev.tabId);
-  if (!tab || getTabScopePinned(db, ev.tabId)) return;
-  let canonical: string;
+  if (ev.tabId && inFlight.has(ev.tabId)) return;
+  if (ev.tabId) inFlight.add(ev.tabId);
   try {
-    canonical = await fs.promises.realpath(ev.cwd); // symlinks resolved (spec)
-  } catch {
-    return; // cwd vanished
-  }
-  const dirs = getDirectories(db);
-  let change = resolveScopeChange(dirs, tab, canonical, null);
-  if (change.action === "ignore") {
-    const cls = await sidecarRequest<PathClassification | null>("classify_path", {
-      path: canonical,
-    }).catch(() => null);
-    change = resolveScopeChange(dirs, tab, canonical, cls);
-  }
-  if (change.action === "ignore") return;
-
-  let toDirectoryId: string;
-  let addedDirectory: WorkingDirectory | undefined;
-  if (change.action === "register-and-move") {
-    // Attach-only registration (no `git worktree add`) + move, one transaction.
-    const parent = dirs.find((d) => d.id === change.parentDirectoryId)!;
-    addedDirectory = {
-      id: randomUUID(),
-      path: change.workdir,
-      name: path.basename(change.workdir),
-      repoRoot: change.repoRoot,
-      createdAt: Date.now(),
-      sortOrder: parent.sortOrder + 1,
-      parentDirectoryId: parent.id,
-    };
-    db.exec("BEGIN");
+    const tab = getTab(db, ev.tabId);
+    if (!tab || getTabScopePinned(db, ev.tabId)) return;
+    let canonical: string;
     try {
-      insertDirectory(db, addedDirectory);
-      // repo_root backfill on the parent while we know it (spec)
-      if (!parent.repoRoot)
-        db.prepare("UPDATE directories SET repo_root = ? WHERE id = ?").run(change.repoRoot, parent.id);
-      moveTabInsideOpenTxn(db, ev.tabId, addedDirectory.id, canonical);
-      db.exec("COMMIT");
-    } catch (e) {
-      db.exec("ROLLBACK");
-      throw e;
+      canonical = await fs.promises.realpath(ev.cwd); // symlinks resolved (spec)
+    } catch {
+      return; // cwd vanished
     }
-    toDirectoryId = addedDirectory.id;
-  } else {
-    toDirectoryId = change.toDirectoryId;
-    moveTabToDirectory(db, ev.tabId, toDirectoryId, canonical);
+    // Match against canonicalized dir paths (best-effort) so a registered dir
+    // reached via a symlink (e.g. /tmp vs /private/tmp on macOS) still matches —
+    // matching only; rows we insert below keep the classify-derived workdir.
+    const dirs = await Promise.all(
+      getDirectories(db).map(async (d) => ({
+        ...d,
+        path: await fs.promises.realpath(d.path).catch(() => d.path),
+      })),
+    );
+    let change = resolveScopeChange(dirs, tab, canonical, null);
+    if (change.action === "ignore") {
+      const cls = await sidecarRequest<PathClassification | null>("classify_path", {
+        path: canonical,
+      }).catch(() => null);
+      change = resolveScopeChange(dirs, tab, canonical, cls);
+    }
+    if (change.action === "ignore") return;
+    if (!getTab(db, ev.tabId)) return; // tab closed while we awaited above
+
+    let toDirectoryId: string;
+    let addedDirectory: WorkingDirectory | undefined;
+    if (change.action === "register-and-move") {
+      // Attach-only registration (no `git worktree add`) + move, one transaction.
+      const parent = dirs.find((d) => d.id === change.parentDirectoryId)!;
+      addedDirectory = {
+        id: randomUUID(),
+        path: change.workdir,
+        name: path.basename(change.workdir),
+        repoRoot: change.repoRoot,
+        createdAt: Date.now(),
+        sortOrder: parent.sortOrder + 1,
+        parentDirectoryId: parent.id,
+      };
+      db.exec("BEGIN");
+      try {
+        insertDirectory(db, addedDirectory);
+        // repo_root backfill on the parent while we know it (spec)
+        if (!parent.repoRoot)
+          db.prepare("UPDATE directories SET repo_root = ? WHERE id = ?").run(change.repoRoot, parent.id);
+        moveTabInsideOpenTxn(db, ev.tabId, addedDirectory.id, canonical);
+        db.exec("COMMIT");
+      } catch (e) {
+        db.exec("ROLLBACK");
+        throw e;
+      }
+      toDirectoryId = addedDirectory.id;
+    } else {
+      toDirectoryId = change.toDirectoryId;
+      moveTabToDirectory(db, ev.tabId, toDirectoryId, canonical);
+    }
+
+    // Shadow reset: relative-path baselines collide across worktrees (spec).
+    void sidecarRequest("agent_shadow_cleanup", { tabId: ev.tabId }).catch(() => {});
+
+    if (addedDirectory) broadcast("directory-added", { directory: addedDirectory }); // order fixed by spec
+    broadcast("session-scope-changed", {
+      tabId: ev.tabId,
+      fromDirectoryId: tab.directoryId,
+      toDirectoryId,
+      cwd: canonical,
+    });
+  } finally {
+    if (ev.tabId) inFlight.delete(ev.tabId);
   }
-
-  // Shadow reset: relative-path baselines collide across worktrees (spec).
-  void sidecarRequest("agent_shadow_cleanup", { tabId: ev.tabId }).catch(() => {});
-
-  if (addedDirectory) broadcast("directory-added", { directory: addedDirectory }); // order fixed by spec
-  broadcast("session-scope-changed", {
-    tabId: ev.tabId,
-    fromDirectoryId: tab.directoryId,
-    toDirectoryId,
-    cwd: canonical,
-  });
 }

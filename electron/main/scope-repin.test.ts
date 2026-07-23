@@ -1,9 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
-import { mkdtempSync, mkdirSync, realpathSync } from "node:fs";
+import { mkdtempSync, mkdirSync, realpathSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb } from "./db/connection";
-import { insertDirectory, getDirectory } from "./db/directories";
+import { insertDirectory, getDirectory, getDirectories } from "./db/directories";
 import { insertTab, getTab, setTabScopePinned } from "./db/tabs";
 import { resolveScopeChange, handleSessionCwd, type PathClassification } from "./scope-repin";
 import type { Tab, WorkingDirectory } from "../../src/types/shared";
@@ -85,7 +85,7 @@ function setup() {
     }),
     broadcast: (n: string, p: unknown) => broadcasts.push([n, p]),
   });
-  return { db, repo, wtPerf, wtNew, broadcasts, deps };
+  return { db, base, repo, wtPerf, wtNew, broadcasts, deps };
 }
 
 describe("handleSessionCwd", () => {
@@ -145,5 +145,53 @@ describe("handleSessionCwd", () => {
     await handleSessionCwd({ tabId: "t1", cwd: wtNew }, d);
     expect(broadcasts).toEqual([]);
     expect(getTab(db, "t1")!.directoryId).toBe("d1");
+  });
+
+  it("registered dir at a symlinked path still matches → moves, no duplicate registration", async () => {
+    const { db, base, repo, broadcasts, deps } = setup();
+    const linkedWt = join(base, "wts", "linked");
+    const realWt = join(base, "wts", "linked-real");
+    mkdirSync(join(realWt, "src"), { recursive: true });
+    symlinkSync(realWt, linkedWt);
+    // Register the SYMLINK path (raw, un-canonicalized) — mirrors how a dir can
+    // get added before/without realpath normalization.
+    insertDirectory(db, { id: "d3", path: linkedWt, name: "linked", repoRoot: repo, createdAt: 0, sortOrder: 2, parentDirectoryId: "d1" });
+    const before = getDirectories(db).length;
+
+    // cwd reported via the REAL (canonicalized) path, as realpath(ev.cwd) would resolve it.
+    await handleSessionCwd({ tabId: "t1", cwd: join(realWt, "src") }, deps());
+
+    const t1 = getTab(db, "t1")!;
+    expect(t1.directoryId).toBe("d3");
+    expect(getDirectories(db).length).toBe(before); // no duplicate registration
+    expect(getDirectory(db, "d3")!.path).toBe(linkedWt); // row itself untouched
+    expect(broadcasts.map(([n]) => n)).toEqual(["session-scope-changed"]);
+  });
+
+  it("per-tab in-flight guard: concurrent events for same tab, second is a no-op", async () => {
+    const { wtPerf, broadcasts, deps } = setup();
+    const d = deps();
+    // Both fire before either has a chance to await past its first tick — the
+    // guard is set synchronously on entry, so the second call returns immediately.
+    const [first, second] = await Promise.allSettled([
+      handleSessionCwd({ tabId: "t1", cwd: join(wtPerf, "src") }, d),
+      handleSessionCwd({ tabId: "t1", cwd: join(wtPerf, "src") }, d),
+    ]);
+    expect(first.status).toBe("fulfilled");
+    expect(second.status).toBe("fulfilled");
+    // Only one run actually applied the move/broadcast.
+    expect(broadcasts.length).toBe(1);
+  });
+
+  it("aborts without broadcasting if the tab was closed mid-resolve", async () => {
+    const { db, wtNew, repo, broadcasts, deps } = setup();
+    const d = deps({ workdir: wtNew, commonWorkdir: repo, isLinkedWorktree: true, isBare: false });
+    d.sidecarRequest.mockImplementation(async () => {
+      // Simulate the tab closing while classify_path is in flight.
+      db.exec("DELETE FROM tabs WHERE id = 't1'");
+      return { workdir: wtNew, commonWorkdir: repo, isLinkedWorktree: true, isBare: false } as never;
+    });
+    await handleSessionCwd({ tabId: "t1", cwd: join(wtNew, "src") }, d);
+    expect(broadcasts).toEqual([]);
   });
 });

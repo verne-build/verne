@@ -136,6 +136,10 @@ export function registerDbCommands(
         throw e;
       }
       for (const t of orphans) {
+        // Shadow reset on ANY move (spec) — evict_directory_resources below only
+        // tears down the daemon's dir-keyed watchers/shadow-trees, not per-tab
+        // agent shadows, so each orphan needs its own cleanup call.
+        getSidecar()?.request("agent_shadow_cleanup", { tabId: t.id }).catch(() => {});
         broadcast(win, "session-scope-changed", {
           tabId: t.id,
           fromDirectoryId: p.id,
@@ -173,8 +177,12 @@ export function registerDbCommands(
     const dir = getDirectory(db, p.directoryId);
     const tab = getTab(db, p.id);
     if (!dir || !tab) throw new Error("unknown tab or directory");
+    if (tab.directoryId === p.directoryId) return true; // already there — no re-append/broadcast
     moveTabToDirectory(db, p.id, p.directoryId, dir.path);
     setTabScopePinned(db, p.id, true); // manual move pins (spec)
+    // Shadow reset on ANY move, manual included (spec) — relative-path baselines
+    // collide across worktrees.
+    getSidecar()?.request("agent_shadow_cleanup", { tabId: p.id }).catch(() => {});
     broadcast(win, "session-scope-changed", {
       tabId: p.id,
       fromDirectoryId: tab.directoryId,
