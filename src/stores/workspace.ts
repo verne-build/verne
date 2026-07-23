@@ -170,14 +170,42 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   }
 
   const focusedByScope = ref<Record<string, string | undefined>>({});
+  let focusedHydrated: Promise<void> | null = null;
+
+  function hydrateFocusedByScope(): Promise<void> {
+    focusedHydrated ??= useRpc()
+      .request.getAppState({ key: "focused_by_scope" })
+      .then((raw) => {
+        if (!raw) return;
+        try {
+          const stored = JSON.parse(raw) as Record<string, string | undefined>;
+          focusedByScope.value = { ...stored, ...focusedByScope.value };
+          // focusedSessionId reads activeTabIdByDirectory — mirror hydrated
+          // focus into it without clobbering focus set this session.
+          const active = { ...activeTabIdByDirectory.value };
+          for (const [dirId, sid] of Object.entries(stored))
+            if (sid && active[dirId] === undefined) active[dirId] = sid;
+          activeTabIdByDirectory.value = active;
+        } catch {}
+      })
+      .catch(() => {
+        focusedHydrated = null; // retry on next load
+      });
+    return focusedHydrated;
+  }
 
   function focusSession(sessionId: string) {
     const dirId = tabDirId(sessionId);
     if (!dirId) return;
+    const changed = focusedByScope.value[dirId] !== sessionId;
     focusedByScope.value = { ...focusedByScope.value, [dirId]: sessionId };
     activeTabIdByDirectory.value = { ...activeTabIdByDirectory.value, [dirId]: sessionId };
     acknowledgeTab(sessionId);
     recordTabActivation(dirId, sessionId);
+    if (changed)
+      useRpc()
+        .request.setAppState({ key: "focused_by_scope", value: JSON.stringify(focusedByScope.value) })
+        .catch(() => {});
   }
 
   function tabDirId(sessionId: string): string | undefined {
@@ -186,12 +214,12 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     return undefined;
   }
 
-  async function newSession(directoryId: string, opts: { cwd?: string } = {}): Promise<Tab> {
+  async function newSession(directoryId: string, opts: { cwd?: string; label?: string } = {}): Promise<Tab> {
     const existing = terminalTabsByDirectory.value[directoryId] ?? [];
     const tab = await useRpc().request.tabsCreate({
       directoryId,
       cwd: opts.cwd,
-      label: String(existing.length + 1),
+      label: opts.label ?? String(existing.length + 1),
     });
     // Re-read post-await — a concurrent newSession in this directory may have
     // already appended its own tab; spreading the stale pre-await snapshot
@@ -207,7 +235,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   }
 
   // Compat alias — App.vue/menu callers use the old CreateTabOpts shape.
-  const createTab = (opts: CreateTabOpts): Promise<Tab> => newSession(opts.directoryId, { cwd: opts.cwd });
+  const createTab = (opts: CreateTabOpts): Promise<Tab> =>
+    newSession(opts.directoryId, { cwd: opts.cwd, label: opts.label });
 
   async function splitSessionWithNew(sessionId: string, direction: SplitDir, before = false): Promise<void> {
     const dirId = tabDirId(sessionId);
@@ -334,7 +363,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   }
 
   async function doEnsureLayoutModel2(dirId: string, tabs: Tab[]) {
-    await hydrateArrangements();
+    await Promise.all([hydrateArrangements(), hydrateFocusedByScope()]);
     const flagKey = `layout_model:${dirId}`;
     const model = await useRpc().request.getAppState({ key: flagKey });
     if (model !== "2") {
@@ -479,6 +508,13 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   // id BEFORE closing — tabsSessionId/ensure_tab_session would otherwise respawn
   // a fresh PTY after the close.
   async function destroyPane(id: string) {
+    // Exited session: no PTY to resolve — tabsSessionId would pointlessly
+    // respawn a shell just to kill it. Straight to tabsClose.
+    if (sessionLifecycle.value.get(id) === "exited") {
+      await useRpc().request.tabsClose({ id }).catch(() => {});
+      return;
+    }
+    // Live session: this ordering is sacred (resolve BEFORE close, dispose after).
     let sid: string | null = null;
     try { sid = await useRpc().request.tabsSessionId({ id }); } catch {}
     await useRpc().request.tabsClose({ id }).catch(() => {});

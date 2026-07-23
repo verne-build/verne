@@ -307,6 +307,7 @@ onUnmounted(() => {
               :key="sessionId"
               :session-id="sessionId"
               :cwd="tab?.cwd"
+              :auto-focus="!multi || focusedSessionId === paneId"
               @resized="(cols, rows) => store.syncViewportSize(props.paneId, cols, rows)"
             />
           </div>

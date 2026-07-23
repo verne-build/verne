@@ -22,7 +22,9 @@ import { registerGridSession, unregisterGridSession } from '../../composables/us
 import type { FontMetrics, TerminalRenderer } from '../../lib/terminal/renderer';
 
 // `cwd` resolves repo-relative file links (e.g. electron/main/window.ts).
-const props = defineProps<{ sessionId: string; cwd?: string }>();
+// `autoFocus` (default true): grab keyboard focus on mount. Multi-pane mounts
+// gate this to the focused pane so last-mount-wins can't steal focus.
+const props = defineProps<{ sessionId: string; cwd?: string; autoFocus?: boolean }>();
 // Emitted after each applySize with the pane's grid size, so the workspace can
 // keep backgrounded single-pane tabs sized to the viewport (no reactivation jump).
 const emit = defineEmits<{ resized: [cols: number, rows: number] }>();
@@ -371,9 +373,11 @@ onMounted(async () => {
   window.addEventListener('keyup', onModifierChange);
 
   // Focus the hidden input so keystrokes flow immediately (and again on the next
-  // tick, after the canvas has laid out).
-  focusInput();
-  requestAnimationFrame(() => focusInput());
+  // tick, after the canvas has laid out). Gated so only the focused pane grabs it.
+  if (props.autoFocus !== false) {
+    focusInput();
+    requestAnimationFrame(() => focusInput());
+  }
   startBlink();
 });
 

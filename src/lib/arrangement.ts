@@ -24,7 +24,9 @@ function isValidLayout(n: unknown): n is LayoutNode {
     Array.isArray(o.children) &&
     o.children.length > 0 &&
     o.children.every(isValidLayout) &&
-    Array.isArray(o.sizes)
+    Array.isArray(o.sizes) &&
+    o.sizes.length === o.children.length &&
+    o.sizes.every((n) => typeof n === "number" && Number.isFinite(n))
   );
 }
 

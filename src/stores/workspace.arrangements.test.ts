@@ -416,6 +416,82 @@ describe("workspace store session lifecycle", () => {
 
 const dir = (id: string) => ({ id, path: `/${id}`, name: id, createdAt: 0, sortOrder: 0 });
 
+describe("exited-close skip (I4), focus persistence (I5), label threading (I6)", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    setActivePinia(createPinia());
+    setAppStateCalls.length = 0;
+    tabsClosedIds.length = 0;
+    tabsSessionIdCalls.length = 0;
+    nextId = 0;
+    setLiveTabIds([]);
+    appState.clear();
+    for (const k of Object.keys(tabsListByDir)) delete tabsListByDir[k];
+    setFailArrangementGets(0);
+  });
+
+  it("closeSession of an exited session skips tabsSessionId (no pointless respawn)", async () => {
+    const store = useWorkspaceStore();
+    const tab = await store.newSession("dir-1");
+    store.markSessionExited(tab.id);
+
+    await store.closeSession(tab.id);
+
+    expect(tabsSessionIdCalls).not.toContain(tab.id);
+    expect(tabsClosedIds).toEqual([tab.id]);
+  });
+
+  it("closeSession of a live session still resolves tabsSessionId before tabsClose", async () => {
+    const store = useWorkspaceStore();
+    const tab = await store.newSession("dir-1");
+
+    await store.closeSession(tab.id);
+
+    expect(tabsSessionIdCalls).toContain(tab.id);
+    expect(tabsClosedIds).toEqual([tab.id]);
+  });
+
+  it("focusSession persists focused_by_scope, short-circuiting same-value writes", async () => {
+    const store = useWorkspaceStore();
+    const tab = await store.newSession("dir-1"); // focuses internally
+    const writes = () => setAppStateCalls.filter((c) => c.key === "focused_by_scope");
+    expect(JSON.parse(writes().at(-1)!.value!)).toEqual({ "dir-1": tab.id });
+    const count = writes().length;
+
+    store.focusSession(tab.id); // same value → no new write
+
+    expect(writes().length).toBe(count);
+  });
+
+  it("hydrates focused_by_scope so focus survives relaunch", async () => {
+    appState.set("focused_by_scope", JSON.stringify({ "dir-1": "tab-a" }));
+    appState.set(
+      "arrangement_by_scope",
+      JSON.stringify({ "dir-1": { version: 1, layout: { direction: "h", children: [{ pane: "tab-a" }, { pane: "tab-b" }], sizes: [50, 50] } } }),
+    );
+    appState.set("layout_model:dir-1", "2");
+    tabsListByDir["dir-1"] = [
+      { id: "tab-a", directoryId: "dir-1", label: "1", cwd: null },
+      { id: "tab-b", directoryId: "dir-1", label: "2", cwd: null },
+    ];
+
+    const store = useWorkspaceStore();
+    store.selectDirectory(dir("dir-1"));
+    await store.loadTabsForDirectory("dir-1");
+
+    expect(store.focusedSessionId).toBe("tab-a");
+  });
+
+  it("createTab threads an explicit label through newSession", async () => {
+    const store = useWorkspaceStore();
+    const tab = await store.createTab({ directoryId: "dir-1", label: "Suggested changes" });
+    expect(tab.label).toBe("Suggested changes");
+    // Default stays the numbered fallback.
+    const tab2 = await store.newSession("dir-1");
+    expect(tab2.label).toBe("2");
+  });
+});
+
 describe("empty-scope auto-session (C2)", () => {
   beforeEach(() => {
     localStorage.clear();

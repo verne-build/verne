@@ -61,6 +61,19 @@ describe("parse/serializeArrangementMap", () => {
     });
     expect(parseArrangementMap(raw)).toEqual({ good: { version: 1, layout: { pane: "t1" } } });
   });
+  it("drops splits with malformed sizes (wrong arity / non-finite / non-number)", () => {
+    const splitWithSizes = (sizes: unknown) => ({
+      version: 1,
+      layout: { direction: "h", children: [leaf("a"), leaf("b")], sizes },
+    });
+    const raw = JSON.stringify({
+      short: splitWithSizes([50]),
+      nan: splitWithSizes([50, Number.NaN]),
+      str: splitWithSizes(["50", "50"]),
+      ok: splitWithSizes([30, 70]),
+    });
+    expect(Object.keys(parseArrangementMap(raw))).toEqual(["ok"]);
+  });
 });
 
 describe("insertIntoArrangement", () => {
