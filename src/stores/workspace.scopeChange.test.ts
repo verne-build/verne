@@ -132,7 +132,8 @@ describe("applyScopeChange", () => {
     const tab1 = await store.newSession("dir-1");
     await store.splitSessionWithNew(tab1.id, "h");
     const arr = store.arrangementByScope["dir-1"];
-    const tab2Id = arr.layout.children.find((c: { pane: string }) => c.pane !== tab1.id).pane;
+    const layout = arr.layout as { children: { pane: string }[] };
+    const tab2Id = layout.children.find((c) => c.pane !== tab1.id)!.pane;
     store.focusSession(tab2Id);
     setAppStateCalls.length = 0;
 
