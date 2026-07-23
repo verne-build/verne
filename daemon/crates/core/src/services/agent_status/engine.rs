@@ -153,6 +153,7 @@ impl AgentStatusEngine {
     }
 
     pub fn observe(&mut self, observation: AgentObservation) -> Option<EffectiveAgentStatus> {
+        self.effective.last_output_at = observation.last_output_at;
         if observation.foreign_in_foreground {
             self.hook_identity = None;
             self.hook_authority = HookAuthority::IdentityOnly;

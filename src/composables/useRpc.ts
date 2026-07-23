@@ -164,6 +164,7 @@ const request = {
     revision: number;
     source: string;
     changedAt: number;
+    lastOutputAt: number;
     lastAgentSessionId?: string | null;
     displayTitle?: string | null;
     title?: string | null;

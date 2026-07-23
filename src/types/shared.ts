@@ -457,6 +457,7 @@ export interface TabUpdatedEvent {
   revision?: number;
   source?: string;
   changedAt?: number;
+  lastOutputAt?: number;
   /** Renderer acknowledgement state: completed while this pane was backgrounded. */
   needsAcknowledgement?: boolean;
   lastAgentSessionId?: string;

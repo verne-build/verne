@@ -528,6 +528,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
           revision: s.revision,
           source: s.source,
           changedAt: s.changedAt,
+          lastOutputAt: s.lastOutputAt,
           lastAgentSessionId: s.lastAgentSessionId ?? undefined,
           displayTitle: s.displayTitle ?? undefined,
         });

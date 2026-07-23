@@ -90,6 +90,7 @@ pub struct EffectiveAgentStatus {
     pub session_id: Option<String>,
     pub display_title: Option<String>,
     pub changed_at: i64,
+    pub last_output_at: i64,
     pub visible_blocker: bool,
     pub visible_working: bool,
 }
@@ -106,6 +107,7 @@ impl Default for EffectiveAgentStatus {
             session_id: None,
             display_title: None,
             changed_at: 0,
+            last_output_at: 0,
             visible_blocker: false,
             visible_working: false,
         }

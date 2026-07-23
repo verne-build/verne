@@ -149,6 +149,7 @@ pub fn publish(
             "revision": status.revision,
             "source": status.source,
             "changedAt": status.changed_at,
+            "lastOutputAt": status.last_output_at,
             "lastAgentSessionId": status.session_id,
             "displayTitle": status.display_title,
             "foregroundCommand": foreground_command,
