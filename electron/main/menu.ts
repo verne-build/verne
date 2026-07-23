@@ -110,7 +110,7 @@ export function buildAppMenu(getWindow: () => BrowserWindow, onRestartDaemon?: (
       ],
     },
     // View — Tauri: Toggle Left(⌘B)/Right(⌘⌥B) panels, sep, Focus Explorer(⌘⇧E)/
-    // Source Control(⌃⇧G)/Terminal(⌃`), sep, Agents submenu (scope checkboxes).
+    // Source Control(⌃⇧G)/Terminal(⌃`).
     {
       label: "View",
       submenu: [

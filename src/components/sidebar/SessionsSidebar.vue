@@ -115,6 +115,12 @@ function scopeState(dirId: string): DisplayState | null {
   );
 }
 
+const scopeStates = computed(() => {
+  const m = new Map<string, DisplayState | null>();
+  for (const d of store.directories) m.set(d.id, scopeState(d.id));
+  return m;
+});
+
 // -- branch captions --
 const branches = ref(new Map<string, string>());
 const pathToId = computed(() => {
@@ -166,7 +172,7 @@ onUnmounted(() => { unlistenGit?.(); });
 
 watch(() => store.directories.map((d) => d.id).join(","), () => { refreshAll(); nextTick(update); });
 // row count changes (new/closed sessions, filter) move the scroll extents
-watch(() => store.sessionsList("all").length + query.value.length, () => nextTick(update));
+watch(() => [store.sessionsList("all").length, query.value] as const, () => nextTick(update));
 
 function select(d: WorkingDirectory) {
   store.selectDirectory(d);
@@ -395,8 +401,8 @@ function onDragEnd(e: DragEndPayload) {
               <span class="ml-auto flex shrink-0 items-center gap-1">
                 <template v-if="isCollapsed(group.directory.id)">
                   <span class="text-[10px] leading-none text-muted-foreground">{{ rowsFor(group.directory.id).length }}</span>
-                  <span v-if="scopeState(group.directory.id)" class="status-indicator-slot">
-                    <StatusIndicator :state="scopeState(group.directory.id)!" class="size-3" />
+                  <span v-if="scopeStates.get(group.directory.id)" class="status-indicator-slot">
+                    <StatusIndicator :state="scopeStates.get(group.directory.id)!" class="size-3" />
                   </span>
                 </template>
                 <Button
@@ -444,6 +450,7 @@ function onDragEnd(e: DragEndPayload) {
           :group="`sessions-${group.directory.id}`"
           :dnd-disabled="!!query"
         />
+      </template>
         <template v-for="(c, ci) in group.children" :key="c.id">
         <SortableItem
           v-if="worktreeVisible(c.id)"
@@ -486,8 +493,8 @@ function onDragEnd(e: DragEndPayload) {
               <span class="ml-auto flex shrink-0 items-center gap-1">
                 <template v-if="isCollapsed(c.id)">
                   <span class="text-[10px] leading-none text-muted-foreground">{{ rowsFor(c.id).length }}</span>
-                  <span v-if="scopeState(c.id)" class="status-indicator-slot">
-                    <StatusIndicator :state="scopeState(c.id)!" class="size-3" />
+                  <span v-if="scopeStates.get(c.id)" class="status-indicator-slot">
+                    <StatusIndicator :state="scopeStates.get(c.id)!" class="size-3" />
                   </span>
                 </template>
                 <Button
@@ -532,7 +539,6 @@ function onDragEnd(e: DragEndPayload) {
         </template>
         </SortableItem>
         </template>
-      </template>
     </SortableItem>
     </template>
     </div>
