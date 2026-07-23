@@ -118,8 +118,9 @@ onUnmounted(() => {
         :focused-session-id="store.focusedSessionId"
         :multi="paneCount(arrangement.layout) > 1"
       />
-      <!-- Transient state while the last-closed terminal is being recreated:
-           keep the chrome from flashing/collapsing. -->
+      <!-- Transient: the scope has no arrangement yet — the empty-scope
+           auto-session (ensureLayoutModel2 / selectDirectory / closeSession)
+           is creating one. Blank frame keeps the chrome from flashing. -->
       <div v-else class="flex-1 min-h-0 bg-[var(--editor-bg)]" />
     </div>
   </div>

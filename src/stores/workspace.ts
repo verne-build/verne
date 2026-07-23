@@ -136,14 +136,22 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   // read-only, kept only for the one-time migration.
   const arrangementByScope = ref<Record<string, Arrangement>>({});
   let arrangementsHydrated: Promise<void> | null = null;
+  // Until a hydrate has succeeded once, ensureLayoutModel2 must not persist
+  // prune/backfill writes — a transient boot failure would otherwise persist a
+  // map missing every other scope's arrangement.
+  let arrangementsHydratedOk = false;
 
   function hydrateArrangements(): Promise<void> {
     arrangementsHydrated ??= useRpc()
       .request.getAppState({ key: "arrangement_by_scope" })
       .then((raw) => {
         arrangementByScope.value = { ...parseArrangementMap(raw), ...arrangementByScope.value };
+        arrangementsHydratedOk = true;
       })
-      .catch(() => {});
+      .catch(() => {
+        // Clear the memo so the next load retries instead of staying stale.
+        arrangementsHydrated = null;
+      });
     return arrangementsHydrated;
   }
 
@@ -314,7 +322,18 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   // partially-converted install can't leave some directories stuck on the
   // old model). After conversion (or if already converted), prune the
   // arrangement against currently-live tabs and backfill if empty.
-  async function ensureLayoutModel2(dirId: string, tabs: Tab[]) {
+  // Per-dir in-flight de-dupe: concurrent loads share one run (and only that
+  // run may fire the empty-scope auto-session below).
+  const ensureLayoutInFlight = new Map<string, Promise<void>>();
+  function ensureLayoutModel2(dirId: string, tabs: Tab[]): Promise<void> {
+    const existing = ensureLayoutInFlight.get(dirId);
+    if (existing) return existing;
+    const run = doEnsureLayoutModel2(dirId, tabs).finally(() => ensureLayoutInFlight.delete(dirId));
+    ensureLayoutInFlight.set(dirId, run);
+    return run;
+  }
+
+  async function doEnsureLayoutModel2(dirId: string, tabs: Tab[]) {
     await hydrateArrangements();
     const flagKey = `layout_model:${dirId}`;
     const model = await useRpc().request.getAppState({ key: flagKey });
@@ -325,17 +344,37 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         { [dirId]: persistedActiveGroupByDir.value[dirId] },
       );
       if (arrangements[dirId]) writeArrangement(dirId, arrangements[dirId]);
-      if (orderByDir[dirId]?.length) await useRpc().request.tabsReorder({ ids: orderByDir[dirId] }).catch(() => {});
+      const order = orderByDir[dirId];
+      if (order?.length) {
+        await useRpc().request.tabsReorder({ ids: order }).catch(() => {});
+        // Mirror the persisted order in memory so the sidebar matches now,
+        // not on the next load.
+        const current = terminalTabsByDirectory.value[dirId] ?? [];
+        const byId = new Map(current.map((t) => [t.id, t]));
+        const orderSet = new Set(order);
+        const reordered = [
+          ...order.map((id) => byId.get(id)).filter((t): t is Tab => !!t),
+          ...current.filter((t) => !orderSet.has(t.id)),
+        ];
+        terminalTabsByDirectory.value = { ...terminalTabsByDirectory.value, [dirId]: reordered };
+      }
       if (focusedByDir[dirId]) focusSession(focusedByDir[dirId]!);
       await useRpc().request.setAppState({ key: flagKey, value: "2" });
     }
-    // Prune arrangements against live tabs (dead sessions dropped).
-    const live = new Set(tabs.map((t) => t.id));
-    const arr = arrangementFor(dirId);
-    const pruned = arr ? pruneArrangement(arr, live) : null;
-    if (JSON.stringify(pruned) !== JSON.stringify(arr)) writeArrangement(dirId, pruned);
-    if (!arrangementFor(dirId) && tabs.length)
-      writeArrangement(dirId, { version: 1, layout: { pane: tabs[tabs.length - 1].id } });
+    // Prune/backfill only once hydration has succeeded (see hydrate guard).
+    if (arrangementsHydratedOk) {
+      // Prune arrangements against live tabs (dead sessions dropped).
+      const live = new Set(tabs.map((t) => t.id));
+      const arr = arrangementFor(dirId);
+      const pruned = arr ? pruneArrangement(arr, live) : null;
+      if (JSON.stringify(pruned) !== JSON.stringify(arr)) writeArrangement(dirId, pruned);
+      if (!arrangementFor(dirId) && tabs.length)
+        writeArrangement(dirId, { version: 1, layout: { pane: tabs[tabs.length - 1].id } });
+    }
+    // Empty-scope guarantee (old ensureTerminal): a selected directory with
+    // zero sessions gets one. Only the in-flight-slot holder reaches here.
+    if (!(terminalTabsByDirectory.value[dirId] ?? []).length && dirId === selectedDirectoryId.value)
+      void newSession(dirId).catch(() => {});
   }
 
   // A tab becoming active means the user is looking at it — clear the "done"
@@ -571,6 +610,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     const subtree = collectSubtreeIds(id);
     await useRpc().request.worktreeRemove({ id });
     for (const sid of subtree) dropFilePanelScope(sid);
+    sweepRemovedScopes(subtree);
     directories.value = directories.value.filter((d) => d.id !== id);
     if (selectedDirectoryId.value === id) selectedDirectoryId.value = null;
   }
@@ -698,6 +738,37 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     return dir;
   }
 
+  /** Dead-scope sweep: removed directories must not leak tab buckets,
+   *  lifecycle entries, or persisted arrangements. */
+  function sweepRemovedScopes(scopeIds: string[]) {
+    const tabsMap = { ...terminalTabsByDirectory.value };
+    const arrMap = { ...arrangementByScope.value };
+    let tabsChanged = false;
+    let lifecycleChanged = false;
+    let arrChanged = false;
+    for (const sid of scopeIds) {
+      const bucket = tabsMap[sid];
+      if (bucket) {
+        for (const t of bucket)
+          if (sessionLifecycle.value.delete(t.id)) lifecycleChanged = true;
+        delete tabsMap[sid];
+        tabsChanged = true;
+      }
+      if (arrMap[sid]) {
+        delete arrMap[sid];
+        arrChanged = true;
+      }
+    }
+    if (tabsChanged) terminalTabsByDirectory.value = tabsMap;
+    if (lifecycleChanged) triggerRef(sessionLifecycle);
+    if (arrChanged) {
+      arrangementByScope.value = arrMap;
+      useRpc()
+        .request.setAppState({ key: "arrangement_by_scope", value: serializeArrangementMap(arrMap) })
+        .catch(() => {});
+    }
+  }
+
   // The directory plus any worktree descendants (cascade-removed on the backend).
   function collectSubtreeIds(rootId: string): string[] {
     const ids = new Set<string>([rootId]);
@@ -724,6 +795,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     }
     // Drop file-panel scope state for the removed subtree so it doesn't leak.
     for (const sid of subtree) dropFilePanelScope(sid);
+    sweepRemovedScopes(subtree);
     directories.value = directories.value.filter(d => d.id !== id);
     if (expandedDirectoryIds.value.has(id)) {
       const next = new Set(expandedDirectoryIds.value);
@@ -767,6 +839,15 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
   function selectDirectory(dir: WorkingDirectory | null) {
     selectedDirectoryId.value = dir?.id || null;
+    // Empty-scope guarantee for the select path: tabs already loaded + empty →
+    // spawn one. An in-flight ensureLayoutModel2 owns that job instead.
+    if (
+      dir &&
+      terminalTabsByDirectory.value[dir.id] &&
+      !terminalTabsByDirectory.value[dir.id].length &&
+      !ensureLayoutInFlight.has(dir.id)
+    )
+      void newSession(dir.id).catch(() => {});
   }
 
   return {

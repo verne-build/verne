@@ -23,6 +23,7 @@ function freshId(prefix: string) {
 
 const setAppStateCalls: Array<{ key: string; value: string | null }> = [];
 const tabsClosedIds: string[] = [];
+const tabsSessionIdCalls: string[] = [];
 const {
   getLiveTabIds,
   setLiveTabIds,
@@ -31,6 +32,10 @@ const {
   queueLiveTabIdsDeferred,
   getTabsCreateDeferred,
   queueTabsCreateDeferred,
+  appState,
+  setFailArrangementGets,
+  takeArrangementGetFailure,
+  tabsListByDir,
 } = vi.hoisted(() => {
   let liveTabIds: string[] = [];
   let deferred: { promise: Promise<string[]>; resolve: (ids: string[]) => void } | null = null;
@@ -50,7 +55,21 @@ const {
     });
     return { promise, resolve };
   }
+  // Mutable app_state + tabs_list fixtures + injectable arrangement-get failures.
+  const appState = new Map<string, string>();
+  const tabsListByDir: Record<string, unknown[]> = {};
+  let failArrangementGets = 0;
   return {
+    appState,
+    tabsListByDir,
+    setFailArrangementGets: (n: number) => {
+      failArrangementGets = n;
+    },
+    takeArrangementGetFailure: () => {
+      if (failArrangementGets <= 0) return false;
+      failArrangementGets -= 1;
+      return true;
+    },
     getLiveTabIds: () => {
       if (queue.length > 0) return queue.shift()!.promise;
       return deferred?.promise ?? liveTabIds;
@@ -90,12 +109,24 @@ vi.mock("@/composables/useLanguageClient", () => ({
 vi.mock("@/composables/useRpc", () => ({
   useRpc: () => ({
     request: {
-      getAppState: vi.fn(async () => null),
+      getAppState: vi.fn(async (p: { key: string }) => {
+        if (p.key === "arrangement_by_scope" && takeArrangementGetFailure())
+          throw new Error("boot flake");
+        return appState.get(p.key) ?? null;
+      }),
       setAppState: vi.fn(async (p: { key: string; value: string | null }) => {
         setAppStateCalls.push(p);
+        if (p.value === null) appState.delete(p.key);
+        else appState.set(p.key, p.value);
         return true;
       }),
       groupsList: vi.fn(async () => []),
+      tabsList: vi.fn(async (p: { directoryId?: string }) =>
+        p.directoryId ? tabsListByDir[p.directoryId] ?? [] : Object.values(tabsListByDir).flat(),
+      ),
+      getAgentStates: vi.fn(async () => []),
+      deleteDirectory: vi.fn(async () => true),
+      worktreeRemove: vi.fn(async () => true),
       tabsCreate: vi.fn(async (opts: { directoryId: string; label?: string; cwd?: string }) => {
         const deferred = getTabsCreateDeferred();
         if (deferred) await deferred.promise;
@@ -110,7 +141,10 @@ vi.mock("@/composables/useRpc", () => ({
         tabsClosedIds.push(p.id);
         return true;
       }),
-      tabsSessionId: vi.fn(async () => null),
+      tabsSessionId: vi.fn(async (p: { id: string }) => {
+        tabsSessionIdCalls.push(p.id);
+        return null;
+      }),
       tabsReorder: vi.fn(async () => true),
       listLiveTabIds: vi.fn(async () => getLiveTabIds()),
       setActiveDirectory: vi.fn(async () => true),
@@ -136,11 +170,16 @@ function parsedArrangement(dirId: string) {
 
 describe("workspace store arrangement writes (slice 2: arrangements own writes)", () => {
   beforeEach(() => {
+    localStorage.clear();
     setActivePinia(createPinia());
     setAppStateCalls.length = 0;
     tabsClosedIds.length = 0;
+    tabsSessionIdCalls.length = 0;
     nextId = 0;
     setLiveTabIds([]);
+    appState.clear();
+    for (const k of Object.keys(tabsListByDir)) delete tabsListByDir[k];
+    setFailArrangementGets(0);
   });
 
   it("newSession writes a solo layout for the new tab", async () => {
@@ -294,11 +333,16 @@ describe("workspace store arrangement writes (slice 2: arrangements own writes)"
 
 describe("workspace store session lifecycle", () => {
   beforeEach(() => {
+    localStorage.clear();
     setActivePinia(createPinia());
     setAppStateCalls.length = 0;
     tabsClosedIds.length = 0;
+    tabsSessionIdCalls.length = 0;
     nextId = 0;
     setLiveTabIds([]);
+    appState.clear();
+    for (const k of Object.keys(tabsListByDir)) delete tabsListByDir[k];
+    setFailArrangementGets(0);
   });
 
   it("hydrateSessionLifecycle marks live ids running and others exited", async () => {
@@ -367,5 +411,140 @@ describe("workspace store session lifecycle", () => {
     // snapshot disagreed about tab1 (one said live, one didn't mention it).
     expect(store.sessionLifecycle.get(tab1.id)).toBe("exited");
     expect(store.sessionLifecycle.get(tab2.id)).toBe("running");
+  });
+});
+
+const dir = (id: string) => ({ id, path: `/${id}`, name: id, createdAt: 0, sortOrder: 0 });
+
+describe("empty-scope auto-session (C2)", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    setActivePinia(createPinia());
+    setAppStateCalls.length = 0;
+    tabsClosedIds.length = 0;
+    tabsSessionIdCalls.length = 0;
+    nextId = 0;
+    setLiveTabIds([]);
+    appState.clear();
+    for (const k of Object.keys(tabsListByDir)) delete tabsListByDir[k];
+    setFailArrangementGets(0);
+  });
+
+  it("loadTabsForDirectory auto-creates a session for an empty selected directory", async () => {
+    const store = useWorkspaceStore();
+    store.selectDirectory(dir("dir-1"));
+    await store.loadTabsForDirectory("dir-1");
+    await vi.waitFor(() => {
+      expect(store.terminalTabsByDirectory["dir-1"]?.length).toBe(1);
+    });
+    expect(parsedArrangement("dir-1")).toEqual({
+      version: 1,
+      layout: { pane: store.terminalTabsByDirectory["dir-1"][0].id },
+    });
+  });
+
+  it("does not auto-create for a non-selected directory", async () => {
+    const store = useWorkspaceStore();
+    await store.loadTabsForDirectory("dir-1");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(store.terminalTabsByDirectory["dir-1"]).toEqual([]);
+  });
+
+  it("selectDirectory auto-creates when tabs are already loaded and empty", async () => {
+    const store = useWorkspaceStore();
+    await store.loadTabsForDirectory("dir-1"); // not selected → stays empty
+    store.selectDirectory(dir("dir-1"));
+    await vi.waitFor(() => {
+      expect(store.terminalTabsByDirectory["dir-1"]?.length).toBe(1);
+    });
+  });
+
+  it("concurrent loads create exactly one session (in-flight de-dupe)", async () => {
+    const store = useWorkspaceStore();
+    store.selectDirectory(dir("dir-1"));
+    await Promise.all([
+      store.loadTabsForDirectory("dir-1"),
+      store.loadTabsForDirectory("dir-1"),
+    ]);
+    await vi.waitFor(() => {
+      expect(store.terminalTabsByDirectory["dir-1"]?.length).toBe(1);
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(store.terminalTabsByDirectory["dir-1"]?.length).toBe(1);
+  });
+});
+
+describe("hydrate-failure guard", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    setActivePinia(createPinia());
+    setAppStateCalls.length = 0;
+    nextId = 0;
+    setLiveTabIds([]);
+    appState.clear();
+    for (const k of Object.keys(tabsListByDir)) delete tabsListByDir[k];
+    setFailArrangementGets(0);
+  });
+
+  it("skips prune/backfill writes until hydration succeeds, then retries", async () => {
+    appState.set("layout_model:dir-1", "2");
+    tabsListByDir["dir-1"] = [
+      { id: "tab-a", directoryId: "dir-1", label: "1", cwd: null },
+    ];
+    setFailArrangementGets(1);
+
+    const store = useWorkspaceStore();
+    await store.loadTabsForDirectory("dir-1");
+    // Hydration failed → no arrangement write may be persisted (a partial map
+    // would clobber other scopes' arrangements).
+    expect(lastArrangementWrite()).toBeUndefined();
+
+    // Next load retries hydration (memo cleared) and backfills.
+    await store.loadTabsForDirectory("dir-1");
+    expect(parsedArrangement("dir-1")).toEqual({ version: 1, layout: { pane: "tab-a" } });
+  });
+});
+
+describe("dead-scope sweep (M9)", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    setActivePinia(createPinia());
+    setAppStateCalls.length = 0;
+    nextId = 0;
+    setLiveTabIds([]);
+    appState.clear();
+    for (const k of Object.keys(tabsListByDir)) delete tabsListByDir[k];
+    setFailArrangementGets(0);
+  });
+
+  it("deleteDirectory clears the tab bucket, lifecycle entries, and persisted arrangement", async () => {
+    const store = useWorkspaceStore();
+    const keep = await store.newSession("dir-keep");
+    const tab = await store.newSession("dir-1");
+    store.markSessionRunning(tab.id);
+    setAppStateCalls.length = 0;
+
+    await store.deleteDirectory("dir-1");
+
+    expect(store.terminalTabsByDirectory["dir-1"]).toBeUndefined();
+    expect(store.sessionLifecycle.get(tab.id)).toBeUndefined();
+    const write = lastArrangementWrite();
+    expect(write).toBeTruthy();
+    const map = JSON.parse(write!.value!);
+    expect(map["dir-1"]).toBeUndefined();
+    expect(map["dir-keep"]).toEqual({ version: 1, layout: { pane: keep.id } });
+  });
+
+  it("removeWorktree sweeps the removed subtree's scopes", async () => {
+    const store = useWorkspaceStore();
+    const tab = await store.newSession("wt-1");
+    store.markSessionRunning(tab.id);
+    setAppStateCalls.length = 0;
+
+    await store.removeWorktree("wt-1");
+
+    expect(store.terminalTabsByDirectory["wt-1"]).toBeUndefined();
+    expect(store.sessionLifecycle.get(tab.id)).toBeUndefined();
+    expect(JSON.parse(lastArrangementWrite()!.value!)["wt-1"]).toBeUndefined();
   });
 });
