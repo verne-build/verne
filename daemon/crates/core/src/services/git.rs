@@ -142,9 +142,8 @@ pub fn classify_path(path: &str) -> Option<PathClassification> {
     // Common dir: <main>/.git for normal repos; resolves the main repo for linked worktrees.
     let common = repo.commondir().to_path_buf();
     let common_workdir = if is_linked {
-        common
-            .parent()
-            .and_then(|p| Repository::open(p).ok())
+        Repository::open(&common)
+            .ok()
             .and_then(|main| main.workdir().map(|p| p.to_string_lossy().trim_end_matches('/').to_string()))
     } else {
         workdir.clone()
@@ -186,12 +185,12 @@ mod classify_tests {
         let wt_path = tmp.path().parent().unwrap().join(format!("wt-{}", std::process::id()));
         repo.worktree("wt", &wt_path, None).unwrap();
         let c = classify_path(wt_path.to_str().unwrap()).unwrap();
-        assert!(c.is_linked_worktree);
-        assert_eq!(
-            std::fs::canonicalize(c.common_workdir.unwrap()).unwrap(),
-            std::fs::canonicalize(tmp.path()).unwrap()
-        );
+        let is_linked = c.is_linked_worktree;
+        let common_workdir_canonical = c.common_workdir.as_ref().map(|p| std::fs::canonicalize(p).unwrap());
+        let tmp_canonical = std::fs::canonicalize(tmp.path()).unwrap();
         let _ = std::fs::remove_dir_all(&wt_path);
+        assert!(is_linked);
+        assert_eq!(common_workdir_canonical, Some(tmp_canonical));
     }
 
     #[test]
