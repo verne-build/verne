@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, onUnmounted, ref, shallowRef, watch } from "vue";
 import { FolderOpen, Plus } from "@lucide/vue";
 import { ask } from "@/platform";
 import StatusIndicator from "@/components/StatusIndicator.vue";
@@ -77,13 +77,26 @@ const sortInputs = computed<CardSortInputs>(() => ({
   activityAt: (tabId) => store.sessionActivityAt.get(tabId) ?? 0,
 }));
 
-const cards = computed(() => {
+const cards = shallowRef<SessionRowModel[]>([]);
+function recomputeCards() {
   let rows = store.sessionsList("all");
   if (activeChip.value !== "all")
     rows = rows.filter((r) => rootOf(r.directory).id === activeChip.value);
   if (query.value) rows = rows.filter(matches); // existing matches()
-  return sortSessionCards(rows, sortInputs.value);
-});
+  cards.value = sortSessionCards(rows, sortInputs.value);
+}
+
+watch(
+  [
+    () => store.sessionActivityAt,
+    () => store.directories,
+    () => store.terminalTabsByDirectory,
+    query,
+    activeChip,
+  ],
+  recomputeCards,
+  { immediate: true },
+);
 
 // Chip aggregate dot: any blocked/working session under the root INCLUDING worktrees.
 const chipStates = computed(() => {
@@ -119,6 +132,7 @@ function onVisibility() { if (!document.hidden) now.value = Date.now(); }
 
 // -- branch captions --
 const branches = ref(new Map<string, string>());
+const branchGenerations = new Map<string, number>();
 const pathToId = computed(() => {
   const m = new Map<string, string>();
   for (const d of store.directories) m.set(d.path, d.id);
@@ -126,13 +140,18 @@ const pathToId = computed(() => {
 });
 
 async function fetchBranch(d: WorkingDirectory) {
+  const generation = (branchGenerations.get(d.id) ?? 0) + 1;
+  branchGenerations.set(d.id, generation);
+  let branch: string | null = null;
   try {
-    const b = await request.gitBranchName({ path: d.path });
-    if (b) branches.value.set(d.id, b);
-    else branches.value.delete(d.id);
-  } catch {
-    branches.value.delete(d.id);
-  }
+    branch = await request.gitBranchName({ path: d.path });
+  } catch {}
+  if (
+    branchGenerations.get(d.id) !== generation
+    || !store.directories.some((current) => current.id === d.id && current.path === d.path)
+  ) return;
+  if (branch) branches.value.set(d.id, branch);
+  else branches.value.delete(d.id);
   branches.value = new Map(branches.value);
 }
 
@@ -319,11 +338,11 @@ async function onRemoveDirectory(dirId: string) {
     <template v-else>
     <!-- Chip rail -->
     <div class="flex items-center gap-1.5 overflow-x-auto px-2 py-1.5 shrink-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-      <Badge :variant="activeChip === 'all' ? 'default' : 'outline'"
+      <Badge as="button" type="button" :variant="activeChip === 'all' ? 'default' : 'outline'"
         class="cursor-pointer select-none shrink-0" @click="activeChip = 'all'">All</Badge>
       <ContextMenu v-for="d in rootDirs" :key="d.id">
         <ContextMenuTrigger as-child>
-          <Badge :variant="activeChip === d.id ? 'default' : 'outline'"
+          <Badge as="button" type="button" :variant="activeChip === d.id ? 'default' : 'outline'"
             class="cursor-pointer select-none shrink-0 gap-1" @click="activeChip = d.id">
             <img v-if="projectIcons[d.id]" :src="projectIcons[d.id]" class="size-3 rounded-sm" alt="" />
             {{ d.name }}
@@ -346,8 +365,9 @@ async function onRemoveDirectory(dirId: string) {
           <ContextMenuItem variant="destructive" @select="onRemoveDirectory(d.id)">Remove Workspace</ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
-      <Badge variant="outline" class="cursor-pointer select-none shrink-0"
-        :class="store.picking && 'opacity-50 pointer-events-none'" @click="store.openAndSelectWorkspace()">
+      <Badge as="button" type="button" variant="outline" aria-label="Add Workspace"
+        class="cursor-pointer select-none shrink-0 disabled:pointer-events-none disabled:opacity-50"
+        :disabled="store.picking" @click="store.openAndSelectWorkspace()">
         <Plus class="size-3" />
       </Badge>
     </div>
