@@ -665,3 +665,32 @@ describe("dead-scope sweep (M9)", () => {
     expect(JSON.parse(lastArrangementWrite()!.value!)["wt-1"]).toBeUndefined();
   });
 });
+
+describe("sessionActivityAt snapshot", () => {
+  it("stamps on creation and selection, not on plain status updates", async () => {
+    const store = useWorkspaceStore();
+    store.directories = [dir("dir-1")];
+    const tab = await store.newSession("dir-1");
+    const created = store.sessionActivityAt.get(tab.id);
+    expect(created).toBeTypeOf("number");
+
+    // plain status flicker: same agentType (none), state change only
+    store.applyTabUpdate({ tabId: tab.id, agentState: "working", revision: 5 } as never);
+    expect(store.sessionActivityAt.get(tab.id)).toBe(created);
+
+    // agent-type change IS a discrete event
+    store.applyTabUpdate({ tabId: tab.id, agentType: "claude", agentState: "working", revision: 6, changedAt: 12345 } as never);
+    expect(store.sessionActivityAt.get(tab.id)).toBe(12345);
+
+    // selection re-stamps
+    store.selectSession(tab.id);
+    expect(store.sessionActivityAt.get(tab.id)).toBeGreaterThanOrEqual(created!);
+  });
+
+  it("clears on close", async () => {
+    const store = useWorkspaceStore();
+    const tab = await store.newSession("dir-1");
+    await store.closeSession(tab.id);
+    expect(store.sessionActivityAt.get(tab.id)).toBeUndefined();
+  });
+});

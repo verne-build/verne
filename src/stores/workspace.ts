@@ -55,6 +55,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   function applyTabUpdate(payload: TabUpdatedEvent) {
     const prev = tabRuntime.value.get(payload.tabId);
     if (!shouldApplyAgentRevision(prev?.revision, payload.revision)) return;
+    if ((prev?.agentType ?? null) !== (payload.agentType ?? null))
+      stampActivity(payload.tabId, payload.lastOutputAt ?? payload.changedAt ?? Date.now());
     const selected = selectedDirectoryId.value;
     const isActive =
       selected != null && activeTabIdByDirectory.value[selected] === payload.tabId;
@@ -76,6 +78,14 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   // Lifecycle is orthogonal to agent state (spec: session rows carry both).
   // Missing entry = assumed running (hydration fills the truth).
   const sessionLifecycle = shallowRef<Map<string, "running" | "exited">>(new Map());
+
+  // Recency snapshot for card sorting (spec: re-rank on discrete events only —
+  // selection/creation/close/agent-type change/scope move; never status ticks).
+  const sessionActivityAt = shallowRef<Map<string, number>>(new Map());
+  function stampActivity(tabId: string, at = Date.now()) {
+    sessionActivityAt.value.set(tabId, at);
+    triggerRef(sessionActivityAt);
+  }
 
   // Each in-flight hydrate gets its own set; live events fan out to all of
   // them, so overlapping hydrates never clobber each other.
@@ -259,6 +269,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       ...terminalTabsByDirectory.value,
       [directoryId]: [...current, tab],
     };
+    stampActivity(tab.id);
     writeArrangement(directoryId, { version: 1, layout: { pane: tab.id } });
     focusSession(tab.id);
     return tab;
@@ -488,6 +499,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
   function recordTabActivation(dirId: string, tabId: string | undefined) {
     if (!tabId) return;
+    stampActivity(tabId);
     const h = (tabActivationHistory[dirId] ??= []);
     const i = h.indexOf(tabId);
     if (i !== -1) h.splice(i, 1);
@@ -532,6 +544,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
           lastAgentSessionId: s.lastAgentSessionId ?? undefined,
           displayTitle: s.displayTitle ?? undefined,
         });
+        if (!sessionActivityAt.value.has(s.tabId))
+          stampActivity(s.tabId, s.lastOutputAt ?? s.changedAt ?? 0);
         if (s.title) applyTabTitle({ tabId: s.tabId, title: s.title });
       }
     } catch (_e) {
@@ -600,6 +614,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     triggerRef(oscTitleByTab);
     sessionLifecycle.value.delete(id);
     triggerRef(sessionLifecycle);
+    sessionActivityAt.value.delete(id);
+    triggerRef(sessionActivityAt);
     for (const hist of Object.values(tabActivationHistory)) {
       const hi = hist.indexOf(id);
       if (hi !== -1) hist.splice(hi, 1);
@@ -671,6 +687,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       ev.toDirectoryId,
       ev.cwd,
     );
+    stampActivity(ev.tabId);
     // Source arrangement: slot collapses; focus falls to the survivor (spec).
     const src = arrangementFor(ev.fromDirectoryId);
     const wasFocusedSource = focusedByScope.value[ev.fromDirectoryId] === ev.tabId;
@@ -1066,6 +1083,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     tabRuntime,
     applyTabUpdate,
     sessionLifecycle,
+    sessionActivityAt,
     markSessionExited,
     markSessionRunning,
     hydrateSessionLifecycle,
