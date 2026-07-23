@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { openDb } from "./connection";
 
 function tmpDb() {
@@ -43,6 +44,22 @@ describe("openDb", () => {
     const path = join(dir, "verne.db");
     openDb(path);
     openDb(path); // second open should not throw
+  });
+
+  it("migrates launch_command onto an existing tabs table", () => {
+    const dir = mkdtempSync(join(tmpdir(), "verne-db-launch-command-"));
+    const path = join(dir, "verne.db");
+    const old = new DatabaseSync(path);
+    old.exec(`CREATE TABLE tabs (
+      id TEXT PRIMARY KEY, directory_id TEXT NOT NULL, label TEXT NOT NULL,
+      cwd TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL,
+      last_agent_type TEXT, last_agent_session_id TEXT, last_agent_state TEXT,
+      user_renamed INTEGER NOT NULL DEFAULT 0, scope_pinned_by_user INTEGER NOT NULL DEFAULT 0
+    )`);
+    old.close();
+    const migrated = openDb(path);
+    const cols = migrated.prepare("SELECT name FROM pragma_table_info('tabs')").all() as { name: string }[];
+    expect(cols.map((col) => col.name)).toContain("launch_command");
   });
 
   it("renames scratchpad app_state keys to notes on first open", () => {

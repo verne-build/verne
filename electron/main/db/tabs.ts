@@ -4,7 +4,7 @@ import { getDirectory } from "./directories";
 
 // Columns in db.rs table order.
 const TAB_COLS =
-  "id, directory_id, label, cwd, sort_order, created_at, last_agent_type, last_agent_session_id, last_agent_state, user_renamed, scope_pinned_by_user";
+  "id, directory_id, label, cwd, sort_order, created_at, last_agent_type, last_agent_session_id, last_agent_state, user_renamed, scope_pinned_by_user, launch_command";
 
 type TabRow = {
   id: string;
@@ -18,6 +18,7 @@ type TabRow = {
   last_agent_state: string | null;
   user_renamed: number;
   scope_pinned_by_user: number;
+  launch_command: string | null;
 };
 
 function rowToTab(row: TabRow): Tab {
@@ -34,12 +35,13 @@ function rowToTab(row: TabRow): Tab {
   if (row.last_agent_type != null) tab.lastAgentType = row.last_agent_type;
   if (row.last_agent_session_id != null) tab.lastAgentSessionId = row.last_agent_session_id;
   if (row.last_agent_state != null) tab.lastAgentState = row.last_agent_state as AgentState;
+  if (row.launch_command != null) tab.launchCommand = row.launch_command;
   return tab;
 }
 
 export function insertTab(db: DatabaseSync, tab: Tab): void {
   db.prepare(
-    `INSERT INTO tabs (${TAB_COLS}) VALUES (?,?,?,?,?,?,?,?,?,?,?)`
+    `INSERT INTO tabs (${TAB_COLS}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
   ).run(
     tab.id,
     tab.directoryId,
@@ -52,6 +54,7 @@ export function insertTab(db: DatabaseSync, tab: Tab): void {
     tab.lastAgentState ?? null,
     tab.userRenamed ? 1 : 0,
     tab.scopePinnedByUser ? 1 : 0,
+    tab.launchCommand ?? null,
   );
 }
 

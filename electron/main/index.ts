@@ -167,6 +167,7 @@ function registerTabOrchestration(d: DaemonClient, s: DaemonClient): void {
       lastAgentSessionId: undefined,
       lastAgentState: undefined,
       userRenamed: false,
+      launchCommand: opts.launchCommand,
     };
     const env: Record<string, string> = { VERNE_TAB_ID: tab.id };
     const root = resolveWorkspaceRoot(db, opts.directoryId);
@@ -181,6 +182,7 @@ function registerTabOrchestration(d: DaemonClient, s: DaemonClient): void {
       agentSessionId: undefined,
       directoryName: labels.directoryName,
       tabLabel: labels.tabLabel,
+      launchCommand: tab.launchCommand,
     };
     try {
       await d.request("tab_spawn", { plan });
@@ -220,6 +222,7 @@ function registerTabOrchestration(d: DaemonClient, s: DaemonClient): void {
       agentSessionId: undefined,
       directoryName: labels.directoryName,
       tabLabel: labels.tabLabel,
+      launchCommand: tab.launchCommand,
     };
     return d.request("tab_spawn", { plan });
   });

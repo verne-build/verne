@@ -732,6 +732,7 @@ impl SessionManager {
 
 pub struct StartSessionOpts {
     pub working_dir: String,
+    pub launch_command: Option<String>,
     pub resume: bool,
     pub agent_session_id: Option<String>,
     pub cols: u16,
@@ -754,6 +755,7 @@ impl StartSessionOpts {
     ) -> Self {
         Self {
             working_dir,
+            launch_command: None,
             resume,
             agent_session_id,
             cols,
@@ -908,6 +910,13 @@ pub fn create_raw_session(
 
 /// Start a PTY session. Returns (session_id, broadcast_rx).
 /// The caller is responsible for storing the session in SessionManager.
+pub fn shell_launch_args(launch_command: Option<&str>) -> Vec<String> {
+    match launch_command {
+        Some(command) => vec!["-ilc".into(), format!("exec {command}")],
+        None => vec!["-l".into()],
+    }
+}
+
 pub fn create_session(
     agent_id: String,
     opts: StartSessionOpts,
@@ -940,6 +949,9 @@ pub fn create_session(
     // process/screen, not from any pre-declared provider.
     let binary = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
     let mut cmd = CommandBuilder::new(&binary);
+    for arg in shell_launch_args(opts.launch_command.as_deref()) {
+        cmd.arg(arg);
+    }
 
     cmd.cwd(&opts.working_dir);
 
@@ -1230,5 +1242,23 @@ mod resize_tests {
         assert_eq!(session.resize_sequence.load(Relaxed), 1);
 
         session.terminate();
+    }
+}
+
+#[cfg(test)]
+mod shell_launch_args_tests {
+    use super::*;
+
+    #[test]
+    fn plain_tabs_start_a_login_shell() {
+        assert_eq!(shell_launch_args(None), vec!["-l"]);
+    }
+
+    #[test]
+    fn agent_tabs_exec_inside_an_interactive_login_shell() {
+        assert_eq!(
+            shell_launch_args(Some("codex")),
+            vec!["-ilc", "exec codex"]
+        );
     }
 }

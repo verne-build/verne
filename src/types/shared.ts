@@ -382,6 +382,7 @@ export interface Tab {
   /** True once the session's scope has been manually moved/pinned; suppresses
    *  auto re-pin on cwd change (Follow Agent unchecked). */
   scopePinnedByUser?: boolean;
+  launchCommand?: string;
 }
 
 export interface ReviewComment {
@@ -441,6 +442,7 @@ export interface CreateTabOpts {
   directoryId: string;
   label?: string;
   cwd?: string;
+  launchCommand?: string;
 }
 
 /** Daemon-canonical agent status sent over the socket. Mirrors the Rust enum

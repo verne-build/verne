@@ -46,7 +46,12 @@ function mkTab(over: Partial<Tab> = {}): Tab {
 describe("tabs", () => {
   it("insertTab + getTab round-trips camelCase shape", () => {
     const db = tmpDb();
-    insertTab(db, mkTab({ lastAgentType: "claude", lastAgentSessionId: "s1", lastAgentState: "idle" }));
+    insertTab(db, mkTab({
+      lastAgentType: "claude",
+      lastAgentSessionId: "s1",
+      lastAgentState: "idle",
+      launchCommand: "codex",
+    }));
     const got = getTab(db, "t1");
     expect(got).toEqual({
       id: "t1",
@@ -60,7 +65,16 @@ describe("tabs", () => {
       lastAgentState: "idle",
       userRenamed: false,
       scopePinnedByUser: false,
+      launchCommand: "codex",
     });
+  });
+
+  it("omits a null launch command", () => {
+    const db = tmpDb();
+    insertTab(db, mkTab());
+    const tab = getTab(db, "t1")!;
+    expect(tab.launchCommand).toBeUndefined();
+    expect("launchCommand" in tab).toBe(false);
   });
 
   it("getTab returns undefined for unknown id", () => {

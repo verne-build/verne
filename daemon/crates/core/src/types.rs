@@ -424,6 +424,8 @@ pub struct TabSpawnPlan {
     pub tab_id: String,
     pub cwd: String,
     #[serde(default)]
+    pub launch_command: Option<String>,
+    #[serde(default)]
     pub env: std::collections::HashMap<String, String>,
     #[serde(default)]
     pub agent_session_id: Option<String>,
@@ -440,4 +442,28 @@ pub struct TabSpawnPlan {
 pub struct TabCreateResult {
     pub tab: Tab,
     pub spawn_plan: TabSpawnPlan,
+}
+
+#[cfg(test)]
+mod tab_spawn_plan_tests {
+    use super::*;
+
+    #[test]
+    fn tab_spawn_plan_launch_command_is_backward_compatible() {
+        let old: TabSpawnPlan = serde_json::from_value(serde_json::json!({
+            "tabId": "t1", "cwd": "/tmp"
+        }))
+        .unwrap();
+        assert_eq!(old.launch_command, None);
+
+        let plan: TabSpawnPlan = serde_json::from_value(serde_json::json!({
+            "tabId": "t1", "cwd": "/tmp", "launchCommand": "codex"
+        }))
+        .unwrap();
+        assert_eq!(plan.launch_command.as_deref(), Some("codex"));
+        assert_eq!(
+            serde_json::to_value(plan).unwrap()["launchCommand"],
+            "codex"
+        );
+    }
 }

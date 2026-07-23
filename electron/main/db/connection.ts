@@ -64,7 +64,8 @@ CREATE TABLE IF NOT EXISTS tabs (
     last_agent_type TEXT,
     last_agent_session_id TEXT,
     last_agent_state TEXT,
-    user_renamed INTEGER NOT NULL DEFAULT 0
+    user_renamed INTEGER NOT NULL DEFAULT 0,
+    launch_command TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_tabs_dir ON tabs(directory_id);
 
@@ -170,6 +171,11 @@ CREATE TABLE recent_files (
   // tabs: scope_pinned_by_user
   if (!hasColumn("tabs", "scope_pinned_by_user")) {
     db.exec("ALTER TABLE tabs ADD COLUMN scope_pinned_by_user INTEGER NOT NULL DEFAULT 0;");
+  }
+
+  // tabs: launch_command
+  if (!hasColumn("tabs", "launch_command")) {
+    db.exec("ALTER TABLE tabs ADD COLUMN launch_command TEXT;");
   }
 
   // directories: settings_json

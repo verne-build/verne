@@ -26,6 +26,7 @@ pub fn spawn_tab_pty(
 
     let start_opts = StartSessionOpts {
         working_dir: plan.cwd.clone(),
+        launch_command: plan.launch_command.clone(),
         resume: false,
         agent_session_id: plan.agent_session_id.clone(),
         cols: 80,
