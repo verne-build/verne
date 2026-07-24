@@ -565,11 +565,20 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
   async function loadTabsForDirectory(directoryId: string) {
     const rpc = useRpc();
-    const tabs = await rpc.request.tabsList({ directoryId });
-    terminalTabsByDirectory.value = {
-      ...terminalTabsByDirectory.value,
-      [directoryId]: tabs,
-    };
+    const bucketAtRequest = terminalTabsByDirectory.value[directoryId];
+    const loadedTabs = await rpc.request.tabsList({ directoryId });
+    // Every store writer replaces a directory's array. If it changed while
+    // this request was pending, that newer local mutation/load wins.
+    const bucketUnchanged = terminalTabsByDirectory.value[directoryId] === bucketAtRequest;
+    const tabs = bucketUnchanged
+      ? loadedTabs
+      : terminalTabsByDirectory.value[directoryId] ?? [];
+    if (bucketUnchanged) {
+      terminalTabsByDirectory.value = {
+        ...terminalTabsByDirectory.value,
+        [directoryId]: tabs,
+      };
+    }
     hydrateTabRuntime(tabs);
     await hydrateActiveGroups();
     await ensureLayoutModel2(directoryId, tabs);
@@ -945,6 +954,15 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     const rpc = useRpc();
     try {
       directories.value = await rpc.request.getDirectories({});
+      const selectedId = selectedDirectoryId.value;
+      const selectedTabs = selectedId
+        ? terminalTabsByDirectory.value[selectedId]
+        : undefined;
+      // A persisted selection's empty tab load can finish before its directory
+      // exists locally, making openSessionPicker reject it. Retry once directory
+      // hydration makes the already-loaded scope valid.
+      if (selectedId && selectedTabs && !selectedTabs.length && !ensureLayoutInFlight.has(selectedId))
+        ensureSessionForEmptyDir(selectedId);
       // A user with existing workspaces is not a first-run user — never show
       // them the branded hero (e.g. if they later remove all workspaces).
       if (directories.value.length > 0) markWelcomeSeen();

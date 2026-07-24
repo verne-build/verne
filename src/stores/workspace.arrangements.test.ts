@@ -37,6 +37,8 @@ const {
   setLiveTabIdsDeferred,
   resolveLiveTabIdsDeferred,
   queueLiveTabIdsDeferred,
+  getTabsListDeferred,
+  queueTabsListDeferred,
   getTabsCreateDeferred,
   queueTabsCreateDeferred,
   appState,
@@ -44,11 +46,17 @@ const {
   takeArrangementGetFailure,
   tabsListByDir,
   agentStates,
+  getDirectoriesResult,
+  setDirectoriesResult,
 } = vi.hoisted(() => {
   let liveTabIds: string[] = [];
   let deferred: { promise: Promise<string[]>; resolve: (ids: string[]) => void } | null = null;
   const queue: Array<{ promise: Promise<string[]>; resolve: (ids: string[]) => void }> = [];
   const tabsCreateQueue: Array<{ promise: Promise<void>; resolve: () => void }> = [];
+  const tabsListQueue: Array<{
+    promise: Promise<unknown[]>;
+    resolve: (tabs: unknown[]) => void;
+  }> = [];
   function makeDeferred() {
     let resolve!: (ids: string[]) => void;
     const promise = new Promise<string[]>((r) => {
@@ -67,11 +75,16 @@ const {
   const appState = new Map<string, string>();
   const tabsListByDir: Record<string, unknown[]> = {};
   const agentStates: unknown[] = [];
+  let directoriesResult: unknown[] = [];
   let failArrangementGets = 0;
   return {
     appState,
     tabsListByDir,
     agentStates,
+    setDirectoriesResult: (directories: unknown[]) => {
+      directoriesResult = directories;
+    },
+    getDirectoriesResult: () => directoriesResult,
     setFailArrangementGets: (n: number) => {
       failArrangementGets = n;
     },
@@ -99,6 +112,16 @@ const {
     queueLiveTabIdsDeferred: () => {
       const d = makeDeferred();
       queue.push(d);
+      return d;
+    },
+    getTabsListDeferred: () => tabsListQueue.shift() ?? null,
+    queueTabsListDeferred: () => {
+      let resolve!: (tabs: unknown[]) => void;
+      const promise = new Promise<unknown[]>((r) => {
+        resolve = r;
+      });
+      const d = { promise, resolve };
+      tabsListQueue.push(d);
       return d;
     },
     // Consumed in tabsCreate call order; letting the test resolve them out
@@ -131,9 +154,12 @@ vi.mock("@/composables/useRpc", () => ({
         return true;
       }),
       groupsList: vi.fn(async () => []),
-      tabsList: vi.fn(async (p: { directoryId?: string }) =>
-        p.directoryId ? tabsListByDir[p.directoryId] ?? [] : Object.values(tabsListByDir).flat(),
-      ),
+      tabsList: vi.fn(async (p: { directoryId?: string }) => {
+        const deferred = getTabsListDeferred();
+        if (deferred) return deferred.promise;
+        return p.directoryId ? tabsListByDir[p.directoryId] ?? [] : Object.values(tabsListByDir).flat();
+      }),
+      getDirectories: vi.fn(async () => getDirectoriesResult()),
       getAgentStates: vi.fn(async () => agentStates),
       deleteDirectory: vi.fn(async () => true),
       worktreeRemove: vi.fn(async () => true),
@@ -515,6 +541,7 @@ describe("new-session picker", () => {
     setActivePinia(createPinia());
     tabsCreateCalls.length = 0;
     appState.clear();
+    setDirectoriesResult([]);
     for (const key of Object.keys(tabsListByDir)) delete tabsListByDir[key];
   });
 
@@ -543,6 +570,34 @@ describe("new-session picker", () => {
     expect(store.pendingPicker).toEqual({ dirId: "dir-1" });
     expect(store.terminalTabsByDirectory["dir-1"]).toEqual([]);
     expect(tabsCreateCalls).toEqual([]);
+  });
+
+  it("preserves a session created while an older empty tabs load is pending", async () => {
+    const store = useWorkspaceStore();
+    store.directories.push(dir("dir-1"));
+    store.selectDirectory(dir("dir-1"));
+    const deferred = queueTabsListDeferred();
+
+    const load = store.loadTabsForDirectory("dir-1");
+    const tab = await store.newSession("dir-1");
+    deferred.resolve([]);
+    await load;
+
+    expect(store.terminalTabsByDirectory["dir-1"]).toEqual([tab]);
+    expect(store.pendingPicker).toBeNull();
+  });
+
+  it("opens the picker when directories hydrate after the selected empty scope", async () => {
+    localStorage.setItem("selectedDirectoryId", "dir-1");
+    setDirectoriesResult([dir("dir-1")]);
+    const store = useWorkspaceStore();
+
+    await store.loadTabsForDirectory("dir-1");
+    expect(store.pendingPicker).toBeNull();
+
+    await store.fetchDirectories();
+
+    expect(store.pendingPicker).toEqual({ dirId: "dir-1" });
   });
 
   it("closing the last selected session opens the picker", async () => {
