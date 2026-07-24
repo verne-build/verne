@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
 import { Bot, ChevronDown, CircleAlert, SquareTerminal } from "@lucide/vue";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useRpc } from "@/composables/useRpc";
@@ -30,12 +30,15 @@ const store = useWorkspaceStore();
 const rpc = useRpc();
 const { getActiveThemeSpec } = useTheme();
 const terminalButton = ref<HTMLButtonElement | null>(null);
+const retryButton = ref<HTMLButtonElement | null>(null);
 const agents = ref<AgentDefinition[]>([]);
-const busy = ref(false);
+const scopeLoading = ref(false);
+const launching = ref(false);
+const busy = computed(() => scopeLoading.value || launching.value);
 
 type RetryAction =
   | { kind: "launch"; launchCommand?: string; label: string }
-  | { kind: "scope"; directory: WorkingDirectory };
+  | { kind: "scope" };
 
 interface PickerError {
   title: string;
@@ -44,6 +47,10 @@ interface PickerError {
 }
 
 const pickerError = ref<PickerError | null>(null);
+let mounted = false;
+let scopeRequestId = 0;
+let launchRequestId = 0;
+let agentRequestId = 0;
 
 const current = computed(() => store.directories.find((dir) => dir.id === props.dirId) ?? null);
 const roots = computed(() => {
@@ -84,69 +91,134 @@ function scopeLabel(dir: WorkingDirectory): string {
   return `${root?.name ?? "Workspace"} / ${dir.name}`;
 }
 
-async function selectScope(dir: WorkingDirectory): Promise<void> {
-  if (busy.value || dir.id === props.dirId) return;
-  const sourceScope = props.dirId;
-  busy.value = true;
-  pickerError.value = null;
+function isCurrentInstance(): boolean {
+  return mounted
+    && store.pendingPicker?.dirId === props.dirId
+    && store.selectedDirectoryId === props.dirId;
+}
+
+function resolveCurrentDirectory(): WorkingDirectory | null {
+  if (!isCurrentInstance()) return null;
+  return store.directories.find((dir) => dir.id === props.dirId) ?? null;
+}
+
+function selectScope(dir: WorkingDirectory): void {
+  if (launching.value) return;
+  const target = store.directories.find((candidate) => candidate.id === dir.id);
+  if (target) store.selectDirectory(target);
+}
+
+async function loadCurrentScope(restoreRetryFocus = false): Promise<void> {
+  if (scopeLoading.value || launching.value) return;
+  const dir = resolveCurrentDirectory();
+  if (!dir) return;
+  const requestId = ++scopeRequestId;
+  scopeLoading.value = true;
+  let refocusRetry = false;
   try {
     await store.loadTabsForDirectory(dir.id);
-    if (store.pendingPicker?.dirId === sourceScope) store.selectDirectory(dir);
+    if (isCurrentInstance() && scopeRequestId === requestId) pickerError.value = null;
   } catch (error) {
-    console.error("[NewSessionPicker] scope load failed:", error);
-    if (store.pendingPicker?.dirId === sourceScope) {
+    if (isCurrentInstance() && scopeRequestId === requestId) {
+      console.error("[NewSessionPicker] scope load failed:", error);
+      const currentDir = resolveCurrentDirectory();
+      if (!currentDir) return;
       pickerError.value = {
         title: "Couldn't Load Scope",
-        message: `Verne couldn't load ${scopeLabel(dir)}. Try again.`,
-        retry: { kind: "scope", directory: dir },
+        message: `Verne couldn't load ${scopeLabel(currentDir)}. Try again.`,
+        retry: { kind: "scope" },
       };
+      refocusRetry = restoreRetryFocus;
     }
   } finally {
-    busy.value = false;
+    if (isCurrentInstance() && scopeRequestId === requestId) scopeLoading.value = false;
+  }
+  if (refocusRetry) {
+    await nextTick();
+    if (isCurrentInstance() && scopeRequestId === requestId) retryButton.value?.focus();
   }
 }
 
-async function launch(launchCommand: string | undefined, label: string): Promise<void> {
+async function launch(
+  launchCommand: string | undefined,
+  label: string,
+  { preserveError = false, restoreRetryFocus = false } = {},
+): Promise<void> {
   if (busy.value) return;
-  const launchedScope = props.dirId;
-  busy.value = true;
-  pickerError.value = null;
+  const dir = resolveCurrentDirectory();
+  if (!dir) return;
+  const launchedScope = dir.id;
+  const requestId = ++launchRequestId;
+  launching.value = true;
+  if (!preserveError) pickerError.value = null;
+  let refocusRetry = false;
   try {
     await store.newSession(launchedScope, { launchCommand });
-    if (store.pendingPicker?.dirId === launchedScope) store.closeSessionPicker();
+    if (
+      isCurrentInstance()
+      && launchRequestId === requestId
+      && store.pendingPicker?.dirId === launchedScope
+    )
+      store.closeSessionPicker();
   } catch (error) {
-    console.error("[NewSessionPicker] create failed:", error);
-    if (store.pendingPicker?.dirId === launchedScope) {
+    if (isCurrentInstance() && launchRequestId === requestId) {
+      console.error("[NewSessionPicker] create failed:", error);
       pickerError.value = {
         title: "Couldn't Start Session",
         message: `Verne couldn't start ${label}. Try again${launchCommand ? " or start a Terminal instead" : ""}.`,
         retry: { kind: "launch", launchCommand, label },
       };
+      refocusRetry = restoreRetryFocus;
     }
   } finally {
-    busy.value = false;
+    if (isCurrentInstance() && launchRequestId === requestId) launching.value = false;
+  }
+  if (refocusRetry) {
+    await nextTick();
+    if (isCurrentInstance() && launchRequestId === requestId) retryButton.value?.focus();
   }
 }
 
 async function retryFailedAction(): Promise<void> {
   const action = pickerError.value?.retry;
   if (!action) return;
-  if (action.kind === "scope") await selectScope(action.directory);
-  else await launch(action.launchCommand, action.label);
+  if (action.kind === "scope") await loadCurrentScope(true);
+  else {
+    await launch(action.launchCommand, action.label, {
+      preserveError: true,
+      restoreRetryFocus: true,
+    });
+  }
 }
 
 function onEscape(): void {
   if (canDismiss.value) store.closeSessionPicker();
 }
 
+async function loadAgentChoices(): Promise<void> {
+  const requestId = ++agentRequestId;
+  try {
+    const available = await loadAvailableAgents((bins) => rpc.request.agentBinsAvailable({ bins }));
+    if (isCurrentInstance() && agentRequestId === requestId) agents.value = available;
+  } catch (error) {
+    if (!isCurrentInstance() || agentRequestId !== requestId) return;
+    console.warn("[NewSessionPicker] agent availability failed:", error);
+    agents.value = [];
+  }
+}
+
 onMounted(() => {
+  mounted = true;
   terminalButton.value?.focus();
-  void loadAvailableAgents((bins) => rpc.request.agentBinsAvailable({ bins }))
-    .then((available) => { agents.value = available; })
-    .catch((error) => {
-      console.warn("[NewSessionPicker] agent availability failed:", error);
-      agents.value = [];
-    });
+  void loadCurrentScope();
+  void loadAgentChoices();
+});
+
+onUnmounted(() => {
+  mounted = false;
+  scopeRequestId++;
+  launchRequestId++;
+  agentRequestId++;
 });
 </script>
 
@@ -170,7 +242,7 @@ onMounted(() => {
               type="button"
               variant="outline"
               class="min-h-10 w-full justify-between px-3 py-2 text-left"
-              :disabled="busy"
+              :disabled="launching"
             >
               <span class="min-w-0">
                 <span class="block truncate font-medium">{{ scopeTitle }}</span>
@@ -184,7 +256,7 @@ onMounted(() => {
             <template v-for="(root, rootIndex) in roots" :key="root.id">
               <DropdownMenuSeparator v-if="rootIndex > 0" />
               <DropdownMenuGroup>
-                <DropdownMenuItem :disabled="busy" @select="selectScope(root)">
+                <DropdownMenuItem :disabled="launching" @select="selectScope(root)">
                   <span class="min-w-0">
                     <span class="block truncate">{{ root.name }}</span>
                     <span class="block truncate text-xs text-muted-foreground">{{ homePath(root.path) }}</span>
@@ -194,7 +266,7 @@ onMounted(() => {
                   v-for="worktree in worktreesByRoot.get(root.id) ?? []"
                   :key="worktree.id"
                   class="pl-6"
-                  :disabled="busy"
+                  :disabled="launching"
                   @select="selectScope(worktree)"
                 >
                   <span class="min-w-0">
@@ -237,22 +309,26 @@ onMounted(() => {
           </Button>
         </div>
 
-        <Alert v-if="pickerError" variant="destructive" class="mt-4" aria-atomic="true">
-          <CircleAlert aria-hidden="true" />
-          <AlertTitle>{{ pickerError.title }}</AlertTitle>
-          <AlertDescription class="flex w-full items-center gap-3">
-            <span class="flex-1 text-pretty">{{ pickerError.message }}</span>
-            <Button
-              type="button"
-              variant="outline"
-              class="h-10 shrink-0"
-              :disabled="busy"
-              @click="retryFailedAction"
-            >
-              Retry
-            </Button>
-          </AlertDescription>
-        </Alert>
+        <div v-if="pickerError" class="mt-4 flex items-center gap-3">
+          <Alert variant="destructive" class="min-w-0 flex-1" aria-atomic="true">
+            <CircleAlert aria-hidden="true" />
+            <AlertTitle>{{ pickerError.title }}</AlertTitle>
+            <AlertDescription id="new-session-picker-error-description" class="text-pretty">
+              {{ pickerError.message }}
+            </AlertDescription>
+          </Alert>
+          <Button
+            ref="retryButton"
+            type="button"
+            variant="outline"
+            class="h-10 shrink-0"
+            aria-describedby="new-session-picker-error-description"
+            :disabled="busy"
+            @click="retryFailedAction"
+          >
+            Retry
+          </Button>
+        </div>
       </div>
     </section>
   </div>
