@@ -358,14 +358,28 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
             let name = s(req.params.get("name"));
             let is_remote = req.params.get("isRemote").and_then(|v| v.as_bool()).unwrap_or(false);
             let remote_ref = opt_s(req.params.get("remoteRef"));
-            match crate::services::git::checkout_branch(&path, &name, is_remote, remote_ref.as_deref()) {
-                Ok(()) => {
-                    if let Ok(handle) = git_handle(&state, &path) {
+            let checkout_path = path.clone();
+            let checkout_name = name.clone();
+            let checkout_remote_ref = remote_ref.clone();
+            let refresh_state = state.clone();
+            let res = tokio::task::spawn_blocking(move || {
+                crate::services::git::checkout_branch(
+                    &checkout_path,
+                    &checkout_name,
+                    is_remote,
+                    checkout_remote_ref.as_deref(),
+                )
+            })
+            .await
+            .map_err(|e| format!("git checkout task failed: {e}"));
+            match res {
+                Ok(Ok(())) => {
+                    if let Ok(handle) = git_handle(&refresh_state, &path) {
                         let _ = handle.schedule_refresh(std::time::Duration::ZERO);
                     }
                     Response::ok(req.id, serde_json::Value::Null)
                 }
-                Err(e) => Response::err(req.id, e),
+                Ok(Err(e)) | Err(e) => Response::err(req.id, e),
             }
         }
         m if m == crate::protocol::methods::GIT_PULL => {

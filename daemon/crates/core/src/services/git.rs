@@ -200,6 +200,80 @@ mod classify_tests {
     }
 }
 
+#[cfg(test)]
+mod checkout_tests {
+    use super::*;
+
+    struct CheckoutFixture {
+        _temp: tempfile::TempDir,
+        path: std::path::PathBuf,
+    }
+
+    fn commit(repo: &Repository, message: &str, parents: &[&git2::Commit<'_>]) -> git2::Oid {
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("tracked.txt")).unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let signature = git2::Signature::now("t", "t@t").unwrap();
+        repo.commit(
+            Some("HEAD"),
+            &signature,
+            &signature,
+            message,
+            &tree,
+            parents,
+        )
+        .unwrap()
+    }
+
+    fn checkout_fixture(conflicting: bool) -> CheckoutFixture {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().to_path_buf();
+        let repo = Repository::init(&path).unwrap();
+
+        std::fs::write(path.join("tracked.txt"), "initial").unwrap();
+        let first = repo.find_commit(commit(&repo, "initial", &[])).unwrap();
+        repo.branch("main", &first, false).unwrap();
+        repo.branch("other", &first, false).unwrap();
+
+        repo.set_head("refs/heads/other").unwrap();
+        repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+            .unwrap();
+        if conflicting {
+            std::fs::write(path.join("tracked.txt"), "other").unwrap();
+            commit(&repo, "other", &[&first]);
+        }
+
+        repo.set_head("refs/heads/main").unwrap();
+        repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+            .unwrap();
+
+        CheckoutFixture { _temp: temp, path }
+    }
+
+    #[test]
+    fn checkout_carries_non_conflicting_dirty_changes() {
+        let fixture = checkout_fixture(false);
+        std::fs::write(fixture.path.join("dirty-only.txt"), "local").unwrap();
+        checkout_branch(fixture.path.to_str().unwrap(), "other", false, None).unwrap();
+        assert_eq!(
+            branch_name(fixture.path.to_str().unwrap()).unwrap(),
+            "other"
+        );
+        assert!(fixture.path.join("dirty-only.txt").exists());
+    }
+
+    #[test]
+    fn checkout_reports_conflicting_dirty_changes() {
+        let fixture = checkout_fixture(true);
+        std::fs::write(fixture.path.join("tracked.txt"), "dirty main").unwrap();
+        let error =
+            checkout_branch(fixture.path.to_str().unwrap(), "other", false, None).unwrap_err();
+        assert!(error.contains("would be overwritten") || error.contains("local changes"));
+        assert_eq!(branch_name(fixture.path.to_str().unwrap()).unwrap(), "main");
+    }
+}
+
 /// Initialize a new git repo at `path`
 pub fn init(path: &str) -> Result<(), String> {
     Repository::init(path).map_err(|e| format!("git init: {e}"))?;
@@ -805,15 +879,6 @@ pub fn list_branches(path: &str) -> Result<Vec<crate::types::GitBranch>, String>
 /// Checkout a branch (local or remote tracking)
 pub fn checkout_branch(path: &str, name: &str, is_remote: bool, remote_ref: Option<&str>) -> Result<(), String> {
     let repo_path = repo_key(path);
-
-    let repo = Repository::discover(&repo_path).map_err(|e| format!("git open: {e}"))?;
-    let statuses = repo.statuses(None).map_err(|e| format!("statuses: {e}"))?;
-    let dirty = statuses.iter().any(|s| {
-        !s.status().intersects(git2::Status::IGNORED)
-    });
-    if dirty {
-        return Err("Commit or stash your changes first".to_string());
-    }
 
     let args = if is_remote {
         // name is e.g. "origin/feature" — strip remote prefix for local branch name
