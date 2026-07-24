@@ -452,8 +452,6 @@ export interface CreateTabOpts {
   label?: string;
   cwd?: string;
   agentLaunch?: AgentLaunchSelection;
-  /** Legacy internal launch path; picker callers use `agentLaunch`. */
-  launchCommand?: string;
 }
 
 /** Daemon-canonical agent status sent over the socket. Mirrors the Rust enum
