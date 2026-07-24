@@ -1,9 +1,22 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
-import { Bot, ChevronDown, CircleAlert, SquareTerminal } from "@lucide/vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import type { AcceptableValue } from "reka-ui";
+import {
+  Bot,
+  Check,
+  ChevronDown,
+  CircleAlert,
+  Cloud,
+  Gauge,
+  GitBranch as GitBranchIcon,
+  Rocket,
+  SquareTerminal,
+  Zap,
+} from "@lucide/vue";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useRpc } from "@/composables/useRpc";
 import { useTheme } from "@/composables/useTheme";
+import { useDirectorySettings } from "@/composables/useDirectorySettings";
 import {
   agentIconSurfaceForTheme,
   findAgentIconForSurface,
@@ -11,16 +24,28 @@ import {
 import {
   loadAvailableAgents,
   type AgentDefinition,
+  type ModelDefinition,
 } from "@/lib/agentRegistry";
-import type { AgentLaunchSelection, WorkingDirectory } from "@/types";
+import type { AgentLaunchSelection, AgentType, GitBranch, WorkingDirectory } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
-  DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -29,77 +54,92 @@ const props = defineProps<{ dirId: string }>();
 const store = useWorkspaceStore();
 const rpc = useRpc();
 const { getActiveThemeSpec } = useTheme();
-const terminalButton = ref<HTMLButtonElement | null>(null);
-const retryButton = ref<HTMLButtonElement | null>(null);
+
+const startButton = ref<{ $el?: HTMLElement } | null>(null);
 const agents = ref<AgentDefinition[]>([]);
-const scopeLoading = ref(false);
+const selectedAgentType = ref<AgentType | "terminal" | null>(null);
+const agentSelectionTouched = ref(false);
+const selectedModelId = ref<string | null>(null);
+const selectedEffort = ref<string | null>(null);
+const fast = ref(false);
+const checkoutMode = ref<"current" | "worktree">("current");
+const branches = ref<GitBranch[]>([]);
+const selectedBranch = ref<GitBranch | null>(null);
+const dirtyWarningOpen = ref(false);
 const launching = ref(false);
-const busy = computed(() => scopeLoading.value || launching.value);
+const loadingBranches = ref(false);
+const agentLoading = ref(false);
+const pickerError = ref<{ title: string; message: string; retry: () => void } | null>(null);
+let mounted = false;
+let agentRequestId = 0;
+let branchRequestId = 0;
+let startRequestId = 0;
 
-type RetryAction =
-  | { kind: "launch"; agentLaunch?: AgentLaunchSelection; label: string }
-  | { kind: "scope" };
-
-interface PickerError {
-  title: string;
-  message: string;
-  retry: RetryAction;
+interface StartSnapshot {
+  requestId: number;
+  branchRequestId: number;
+  directoryId: string;
+  path: string;
+  mode: "current" | "worktree";
+  branch: GitBranch;
+  agentLaunch?: AgentLaunchSelection;
 }
 
-const scopeError = ref<PickerError | null>(null);
-const launchError = ref<PickerError | null>(null);
-const visibleErrorKind = ref<RetryAction["kind"] | null>(null);
-const pickerError = computed(() => {
-  const visible = visibleErrorKind.value === "launch" ? launchError.value : scopeError.value;
-  return visible ?? launchError.value ?? scopeError.value;
-});
-const retryAction = computed(() => pickerError.value?.retry ?? null);
-const retrying = computed(() => retryAction.value?.kind === "launch"
-  ? launching.value
-  : scopeLoading.value);
-let mounted = false;
-let scopeRequestId = 0;
-let launchRequestId = 0;
-let agentRequestId = 0;
-
-const current = computed(() => store.directories.find((dir) => dir.id === props.dirId) ?? null);
-const roots = computed(() => {
-  const ids = new Set(store.directories.map((dir) => dir.id));
-  return store.directories.filter((dir) => !dir.parentDirectoryId || !ids.has(dir.parentDirectoryId));
-});
-const worktreesByRoot = computed(() => {
-  const groups = new Map<string, WorkingDirectory[]>();
-  for (const dir of store.directories) {
-    if (!dir.parentDirectoryId) continue;
-    const children = groups.get(dir.parentDirectoryId) ?? [];
-    children.push(dir);
-    groups.set(dir.parentDirectoryId, children);
-  }
-  return groups;
-});
+const pendingStart = ref<StartSnapshot | null>(null);
+const current = computed<WorkingDirectory | null>(() =>
+  store.directories.find((dir) => dir.id === props.dirId) ?? null,
+);
 const currentRoot = computed(() => current.value?.parentDirectoryId
-  ? store.directories.find((dir) => dir.id === current.value?.parentDirectoryId) ?? null
+  ? store.directories.find((dir) => dir.id === current.value?.parentDirectoryId) ?? current.value
   : current.value);
-const scopeTitle = computed(() => current.value?.parentDirectoryId
-  ? `${currentRoot.value?.name ?? "Workspace"} / ${current.value.name}`
-  : current.value?.name ?? "Workspace");
-const scopePath = computed(() => homePath(current.value?.path ?? ""));
+const directoryId = computed(() => current.value?.id ?? null);
+const { settings: directorySettings } = useDirectorySettings(directoryId);
 const surface = computed(() => agentIconSurfaceForTheme(getActiveThemeSpec().type));
 const agentChoices = computed(() => agents.value.map((agent) => ({
   ...agent,
   icon: findAgentIconForSurface(agent.type, surface.value),
 })));
-const canDismiss = computed(() => (store.terminalTabsByDirectory[props.dirId] ?? []).length > 0);
-
-function homePath(path: string): string {
-  return path.replace(/^\/Users\/[^/]+(?=\/|$)/, "~");
+const selectedAgent = computed(() => selectedAgentType.value && selectedAgentType.value !== "terminal"
+  ? agents.value.find((agent) => agent.type === selectedAgentType.value) ?? null
+  : null,
+);
+const selectedModel = computed<ModelDefinition | null>(() => selectedModelId.value
+  ? selectedAgent.value?.models.find((model) => model.id === selectedModelId.value) ?? null
+  : null,
+);
+const isTerminal = computed(() => !selectedAgent.value);
+function effortsFor(model: ModelDefinition | null): string[] {
+  if (!model) return [];
+  if (model.efforts) return [...model.efforts];
+  return [...new Set(Object.keys(model.cursorVariants ?? {})
+    .map((variant) => variant.split(":")[0]!)
+    .filter((effort) => effort !== "default"))];
 }
-
-function scopeLabel(dir: WorkingDirectory): string {
-  if (!dir.parentDirectoryId) return dir.name;
-  const root = store.directories.find((candidate) => candidate.id === dir.parentDirectoryId);
-  return `${root?.name ?? "Workspace"} / ${dir.name}`;
+function supportsFastFor(model: ModelDefinition | null): boolean {
+  return !!model?.fast || Object.keys(model?.cursorVariants ?? {}).some((variant) => variant.endsWith(":on"));
 }
+const availableEfforts = computed(() => effortsFor(selectedModel.value));
+const supportsFast = computed(() => supportsFastFor(selectedModel.value));
+const showTuning = computed(() => availableEfforts.value.length > 0 || supportsFast.value);
+const selectedAgentLabel = computed(() => selectedAgent.value?.label ?? "Terminal");
+const selectedModelLabel = computed(() => selectedModel.value?.label ?? "Model Default");
+const tuningLabel = computed(() => {
+  const labels: string[] = [];
+  if (isTerminal.value || availableEfforts.value.length)
+    labels.push(selectedEffort.value
+      ? `Effort ${selectedEffort.value[0]!.toUpperCase()}${selectedEffort.value.slice(1)}`
+      : "Effort Default");
+  if (supportsFast.value) labels.push(`Fast Mode ${fast.value ? "On" : "Off"}`);
+  return labels.join(" · ");
+});
+const checkoutModeLabel = computed(() => checkoutMode.value === "current"
+  ? "Current Checkout"
+  : "Create New Worktree");
+const branchLabel = computed(() => checkoutMode.value === "worktree" ? "Create From" : "Branch");
+const localBranches = computed(() => branches.value.filter((branch) => !branch.isRemote));
+const remoteBranches = computed(() => branches.value.filter((branch) => branch.isRemote));
+const busy = computed(() => launching.value || loadingBranches.value);
+const canStart = computed(() => !!current.value && !!selectedBranch.value && !busy.value);
 
 function isCurrentInstance(): boolean {
   return mounted
@@ -107,255 +147,434 @@ function isCurrentInstance(): boolean {
     && store.selectedDirectoryId === props.dirId;
 }
 
-function resolveCurrentDirectory(): WorkingDirectory | null {
-  if (!isCurrentInstance()) return null;
-  return store.directories.find((dir) => dir.id === props.dirId) ?? null;
+function homePath(path: string): string {
+  return path.replace(/^\/Users\/[^/]+(?=\/|$)/, "~");
 }
 
-function showError(kind: RetryAction["kind"], error: PickerError): void {
-  const hasVisibleError = pickerError.value !== null;
-  if (kind === "launch") launchError.value = error;
-  else scopeError.value = error;
-  if (!hasVisibleError) visibleErrorKind.value = kind;
+function clearError(): void {
+  pickerError.value = null;
 }
 
-function clearError(kind: RetryAction["kind"]): void {
-  if (kind === "launch") launchError.value = null;
-  else scopeError.value = null;
-  if (visibleErrorKind.value !== kind) return;
-  const otherKind = kind === "launch" ? "scope" : "launch";
-  const otherError = otherKind === "launch" ? launchError.value : scopeError.value;
-  visibleErrorKind.value = otherError ? otherKind : null;
+function compatibleModel(): void {
+  if (!selectedModel.value) {
+    selectedEffort.value = null;
+    fast.value = false;
+    return;
+  }
+  if (selectedEffort.value && !availableEfforts.value.includes(selectedEffort.value))
+    selectedEffort.value = null;
+  if (!supportsFast.value) fast.value = false;
 }
 
-function selectScope(dir: WorkingDirectory): void {
-  if (launching.value) return;
-  const target = store.directories.find((candidate) => candidate.id === dir.id);
-  if (target) store.selectDirectory(target);
+function selectAgent(value: AcceptableValue): void {
+  if (typeof value !== "string") return;
+  agentSelectionTouched.value = true;
+  selectedAgentType.value = value === "terminal" ? "terminal" : value as AgentType;
+  selectedModelId.value = null;
+  selectedEffort.value = null;
+  fast.value = false;
 }
 
-async function loadCurrentScope(restoreRetryFocus = false): Promise<void> {
-  if (scopeLoading.value) return;
-  const dir = resolveCurrentDirectory();
-  if (!dir) return;
-  const requestId = ++scopeRequestId;
-  scopeLoading.value = true;
-  let refocusRetry = false;
+function selectModel(value: AcceptableValue): void {
+  if (typeof value !== "string") return;
+  selectedModelId.value = value === "default" ? null : value;
+  const nextModel = selectedModelId.value
+    ? selectedAgent.value?.models.find((model) => model.id === selectedModelId.value) ?? null
+    : null;
+  if (selectedEffort.value && !effortsFor(nextModel).includes(selectedEffort.value))
+    selectedEffort.value = null;
+  if (!supportsFastFor(nextModel)) fast.value = false;
+}
+
+function selectEffort(value: AcceptableValue): void {
+  if (typeof value !== "string") return;
+  selectedEffort.value = value === "default" ? null : value;
+}
+
+function selectFast(value: AcceptableValue): void {
+  if (typeof value !== "string") return;
+  fast.value = value === "on";
+}
+
+function selectBranch(value: AcceptableValue): void {
+  if (typeof value !== "string") return;
+  selectedBranch.value = branches.value.find((branch) => branch.fullRef === value) ?? null;
+}
+
+function preferredBranch(nextBranches: GitBranch[]): GitBranch | null {
+  if (checkoutMode.value === "current") return nextBranches.find((branch) => branch.isHead) ?? null;
+  const preferred = [
+    directorySettings.value.defaultBaseRef,
+    "main",
+    "origin/main",
+    "master",
+    "origin/master",
+  ].filter((ref): ref is string => !!ref);
+  return preferred.map((ref) => nextBranches.find((branch) => branch.name === ref || branch.fullRef === ref))
+    .find((branch): branch is GitBranch => !!branch)
+    ?? nextBranches.find((branch) => branch.isHead)
+    ?? null;
+}
+
+async function loadCurrentScope(): Promise<void> {
+  const dir = current.value;
+  if (!dir || !isCurrentInstance()) return;
   try {
     await store.loadTabsForDirectory(dir.id);
-    if (isCurrentInstance() && scopeRequestId === requestId) clearError("scope");
   } catch (error) {
-    if (isCurrentInstance() && scopeRequestId === requestId) {
-      console.error("[NewSessionPicker] scope load failed:", error);
-      const currentDir = resolveCurrentDirectory();
-      if (!currentDir) return;
-      showError("scope", {
-        title: "Couldn't Load Scope",
-        message: `Verne couldn't load ${scopeLabel(currentDir)}. Try again.`,
-        retry: { kind: "scope" },
-      });
-      refocusRetry = restoreRetryFocus;
-    }
-  } finally {
-    if (isCurrentInstance() && scopeRequestId === requestId) scopeLoading.value = false;
+    if (!isCurrentInstance()) return;
+    console.error("[NewSessionPicker] scope load failed:", error);
+    pickerError.value = {
+      title: "Couldn't Load Scope",
+      message: `Verne couldn't load ${dir.name}. Try again.`,
+      retry: () => void loadCurrentScope(),
+    };
   }
-  if (refocusRetry) {
-    await nextTick();
-    if (isCurrentInstance() && scopeRequestId === requestId) retryButton.value?.focus();
-  }
-}
-
-async function launch(
-  agentLaunch: AgentLaunchSelection | undefined,
-  label: string,
-  { preserveError = false, restoreRetryFocus = false } = {},
-): Promise<void> {
-  if (launching.value) return;
-  const dir = resolveCurrentDirectory();
-  if (!dir) return;
-  const launchedScope = dir.id;
-  const requestId = ++launchRequestId;
-  launching.value = true;
-  if (!preserveError) clearError("launch");
-  let refocusRetry = false;
-  try {
-    await store.newSession(launchedScope, { agentLaunch });
-    if (
-      isCurrentInstance()
-      && launchRequestId === requestId
-      && store.pendingPicker?.dirId === launchedScope
-    )
-      store.closeSessionPicker();
-  } catch (error) {
-    if (isCurrentInstance() && launchRequestId === requestId) {
-      console.error("[NewSessionPicker] create failed:", error);
-      showError("launch", {
-        title: "Couldn't Start Session",
-        message: `Verne couldn't start ${label}. Try again${agentLaunch ? " or start a Terminal instead" : ""}.`,
-        retry: { kind: "launch", agentLaunch, label },
-      });
-      refocusRetry = restoreRetryFocus;
-    }
-  } finally {
-    if (isCurrentInstance() && launchRequestId === requestId) launching.value = false;
-  }
-  if (refocusRetry) {
-    await nextTick();
-    if (isCurrentInstance() && launchRequestId === requestId) retryButton.value?.focus();
-  }
-}
-
-async function retryFailedAction(): Promise<void> {
-  const action = retryAction.value;
-  if (!action) return;
-  if (action.kind === "scope") await loadCurrentScope(true);
-  else {
-    await launch(action.agentLaunch, action.label, {
-      preserveError: true,
-      restoreRetryFocus: true,
-    });
-  }
-}
-
-function onEscape(): void {
-  if (canDismiss.value) store.closeSessionPicker();
 }
 
 async function loadAgentChoices(): Promise<void> {
   const requestId = ++agentRequestId;
+  agentLoading.value = true;
   try {
     const available = await loadAvailableAgents((bins) => rpc.request.agentBinsAvailable({ bins }));
-    if (isCurrentInstance() && agentRequestId === requestId) agents.value = available;
+    if (!isCurrentInstance() || requestId !== agentRequestId) return;
+    agents.value = available;
+    if (!agentSelectionTouched.value)
+      selectedAgentType.value = available[0]?.type ?? "terminal";
+    clearError();
   } catch (error) {
-    if (!isCurrentInstance() || agentRequestId !== requestId) return;
+    if (!isCurrentInstance() || requestId !== agentRequestId) return;
     console.warn("[NewSessionPicker] agent availability failed:", error);
     agents.value = [];
+    if (!agentSelectionTouched.value) selectedAgentType.value = "terminal";
+    pickerError.value = {
+      title: "Couldn't Load Agents",
+      message: "Verne couldn't check installed agents. Terminal is still available.",
+      retry: () => void loadAgentChoices(),
+    };
+  } finally {
+    if (isCurrentInstance() && requestId === agentRequestId) agentLoading.value = false;
   }
 }
 
+async function loadBranches(): Promise<void> {
+  const dir = current.value;
+  if (!dir || !isCurrentInstance()) return;
+  const requestId = ++branchRequestId;
+  const path = dir.path;
+  const mode = checkoutMode.value;
+  loadingBranches.value = true;
+  try {
+    const nextBranches = await rpc.request.gitListBranches({ path });
+    if (!isCurrentInstance() || requestId !== branchRequestId || path !== current.value?.path || mode !== checkoutMode.value)
+      return;
+    branches.value = nextBranches;
+    selectedBranch.value = preferredBranch(nextBranches);
+    clearError();
+  } catch (error) {
+    if (!isCurrentInstance() || requestId !== branchRequestId || path !== current.value?.path || mode !== checkoutMode.value)
+      return;
+    console.error("[NewSessionPicker] branch load failed:", error);
+    branches.value = [];
+    selectedBranch.value = null;
+    pickerError.value = {
+      title: "Couldn't Load Branches",
+      message: "Verne couldn't load branches for this workspace. Try again.",
+      retry: () => void loadBranches(),
+    };
+  } finally {
+    if (isCurrentInstance() && requestId === branchRequestId && path === current.value?.path && mode === checkoutMode.value)
+      loadingBranches.value = false;
+  }
+}
+
+function launchSelection(): AgentLaunchSelection | undefined {
+  if (!selectedAgent.value) return undefined;
+  return {
+    agentType: selectedAgent.value.type,
+    modelId: selectedModelId.value,
+    effort: selectedEffort.value,
+    fast: supportsFast.value ? fast.value : null,
+  };
+}
+
+function snapshotStart(): StartSnapshot | null {
+  const dir = current.value;
+  const branch = selectedBranch.value;
+  if (!dir || !branch) return null;
+  return {
+    requestId: ++startRequestId,
+    branchRequestId,
+    directoryId: dir.id,
+    path: dir.path,
+    mode: checkoutMode.value,
+    branch,
+    agentLaunch: launchSelection(),
+  };
+}
+
+async function continueStart(snapshot: StartSnapshot): Promise<void> {
+  if (!isCurrentInstance() || snapshot.requestId !== startRequestId) return;
+  launching.value = true;
+  clearError();
+  try {
+    await store.startPickerSession({
+      directoryId: snapshot.directoryId,
+      mode: snapshot.mode,
+      branch: snapshot.branch,
+      agentLaunch: snapshot.agentLaunch,
+    });
+    if (mounted && snapshot.requestId === startRequestId && store.pendingPicker?.dirId === props.dirId)
+      store.closeSessionPicker();
+  } catch (error) {
+    if (!isCurrentInstance() || snapshot.requestId !== startRequestId) return;
+    console.error("[NewSessionPicker] create failed:", error);
+    pickerError.value = {
+      title: "Couldn't Start Session",
+      message: "Verne couldn't start this session. Try again.",
+      retry: () => void continueStart(snapshot),
+    };
+  } finally {
+    if (mounted && snapshot.requestId === startRequestId && store.pendingPicker?.dirId === props.dirId)
+      launching.value = false;
+  }
+}
+
+async function start(): Promise<void> {
+  const snapshot = snapshotStart();
+  if (!snapshot || launching.value) return;
+  if (snapshot.mode === "worktree" || snapshot.branch.isHead) {
+    await continueStart(snapshot);
+    return;
+  }
+  launching.value = true;
+  clearError();
+  try {
+    const status = await rpc.request.gitStatus({ path: snapshot.path });
+    if (!isCurrentInstance() || snapshot.requestId !== startRequestId || snapshot.branchRequestId !== branchRequestId)
+      return;
+    if (status.staged.length || status.unstaged.length || status.untracked.length) {
+      pendingStart.value = snapshot;
+      dirtyWarningOpen.value = true;
+      return;
+    }
+    await continueStart(snapshot);
+  } catch (error) {
+    if (!isCurrentInstance() || snapshot.requestId !== startRequestId) return;
+    console.error("[NewSessionPicker] status failed:", error);
+    pickerError.value = {
+      title: "Couldn't Check Changes",
+      message: "Verne couldn't check local changes. Try again.",
+      retry: () => void start(),
+    };
+  } finally {
+    if (isCurrentInstance() && snapshot.requestId === startRequestId) launching.value = false;
+  }
+}
+
+function confirmDirtyStart(): void {
+  const snapshot = pendingStart.value;
+  pendingStart.value = null;
+  dirtyWarningOpen.value = false;
+  if (snapshot) void continueStart(snapshot);
+}
+
+function onEscape(): void {
+  if ((store.terminalTabsByDirectory[props.dirId] ?? []).length > 0) store.closeSessionPicker();
+}
+
+watch([() => current.value?.id, checkoutMode], () => {
+  void loadBranches();
+});
+watch(() => directorySettings.value.defaultBaseRef, () => {
+  if (checkoutMode.value === "worktree") void loadBranches();
+});
+watch([selectedAgent, selectedModel], compatibleModel);
+
 onMounted(() => {
   mounted = true;
-  terminalButton.value?.focus();
   void loadCurrentScope();
   void loadAgentChoices();
+  void loadBranches();
+  void nextTick(() => startButton.value?.$el?.focus?.());
 });
 
 onUnmounted(() => {
   mounted = false;
-  scopeRequestId++;
-  launchRequestId++;
   agentRequestId++;
+  branchRequestId++;
+  startRequestId++;
 });
 </script>
 
 <template>
-  <div class="flex h-full min-h-0 items-center justify-center p-8" @keydown.esc.stop="onEscape">
-    <section
-      aria-labelledby="new-session-picker-title"
-      :aria-busy="busy"
-      class="w-full max-w-2xl rounded-xl border bg-card p-6 shadow-sm"
-    >
-      <div class="mb-6">
-        <h2
-          id="new-session-picker-title"
-          class="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground"
-        >
-          New Session
-        </h2>
-        <DropdownMenu>
-          <DropdownMenuTrigger as-child>
-            <Button
-              type="button"
-              variant="outline"
-              class="min-h-10 w-full justify-between px-3 py-2 text-left"
-              :disabled="launching"
-            >
-              <span class="min-w-0">
-                <span class="block truncate font-medium">{{ scopeTitle }}</span>
-                <span class="block truncate text-xs font-normal text-muted-foreground">{{ scopePath }}</span>
-              </span>
-              <ChevronDown aria-hidden="true" class="ml-3 size-4 shrink-0 text-muted-foreground" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent class="w-[var(--reka-dropdown-menu-trigger-width)]" align="start">
-            <DropdownMenuLabel>Scopes</DropdownMenuLabel>
-            <template v-for="(root, rootIndex) in roots" :key="root.id">
-              <DropdownMenuSeparator v-if="rootIndex > 0" />
-              <DropdownMenuGroup>
-                <DropdownMenuItem :disabled="launching" @select="selectScope(root)">
-                  <span class="min-w-0">
-                    <span class="block truncate">{{ root.name }}</span>
-                    <span class="block truncate text-xs text-muted-foreground">{{ homePath(root.path) }}</span>
-                  </span>
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  v-for="worktree in worktreesByRoot.get(root.id) ?? []"
-                  :key="worktree.id"
-                  class="pl-6"
-                  :disabled="launching"
-                  @select="selectScope(worktree)"
-                >
-                  <span class="min-w-0">
-                    <span class="block truncate">{{ root.name }} / {{ worktree.name }}</span>
-                    <span class="block truncate text-xs text-muted-foreground">{{ homePath(worktree.path) }}</span>
-                  </span>
-                </DropdownMenuItem>
-              </DropdownMenuGroup>
-            </template>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
+  <div class="flex h-full min-h-0 items-center justify-center p-5 sm:p-8" @keydown.esc.stop="onEscape">
+    <div class="w-full max-w-4xl">
+      <p id="new-session-picker-title" class="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        New Session · {{ currentRoot?.name ?? "Workspace" }}
+      </p>
+      <section aria-labelledby="new-session-picker-title" :aria-busy="busy" class="w-full max-w-4xl rounded-xl border bg-card shadow-sm">
+        <div class="grid gap-3 p-5 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
+          <DropdownMenu>
+            <DropdownMenuTrigger as-child>
+              <Button type="button" variant="outline" class="min-h-10 w-full justify-between px-3" :disabled="launching" aria-label="Select Agent">
+                <span class="flex min-w-0 items-center gap-2">
+                  <img v-if="selectedAgent && findAgentIconForSurface(selectedAgent.type, surface)" :src="findAgentIconForSurface(selectedAgent.type, surface)" alt="" class="size-4" />
+                  <SquareTerminal v-else-if="isTerminal" aria-hidden="true" class="size-4 text-muted-foreground" />
+                  <Bot v-else aria-hidden="true" class="size-4 text-muted-foreground" />
+                  <span class="truncate">{{ selectedAgentLabel }}</span>
+                </span>
+                <ChevronDown aria-hidden="true" class="size-4 text-muted-foreground" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" class="w-[var(--reka-dropdown-menu-trigger-width)]">
+              <DropdownMenuLabel>Agents</DropdownMenuLabel>
+              <DropdownMenuRadioGroup :model-value="selectedAgentType ?? 'terminal'" @update:model-value="selectAgent">
+                <DropdownMenuRadioItem v-for="agent in agentChoices" :key="agent.type" :value="agent.type">
+                  <img v-if="agent.icon" :src="agent.icon" alt="" class="size-4" />
+                  <Bot v-else aria-hidden="true" class="size-4 text-muted-foreground" />
+                  {{ agent.label }}
+                </DropdownMenuRadioItem>
+                <DropdownMenuSeparator v-if="agentChoices.length" />
+                <DropdownMenuRadioItem value="terminal">
+                  <SquareTerminal aria-hidden="true" class="size-4 text-muted-foreground" />
+                  Terminal
+                </DropdownMenuRadioItem>
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
 
-      <div>
-        <p class="mb-3 text-sm font-medium">Start With</p>
-        <div class="flex flex-wrap gap-2">
-          <Button
-            v-for="agent in agentChoices"
-            :key="agent.type"
-            type="button"
-            variant="outline"
-            class="h-12 gap-2 px-4"
-            :disabled="launching"
-            @click="launch({ agentType: agent.type, modelId: null, effort: null, fast: null }, agent.label)"
-          >
-            <img v-if="agent.icon" :src="agent.icon" alt="" class="size-5" />
-            <Bot v-else aria-hidden="true" class="size-5" />
-            <span>{{ agent.label }}</span>
-          </Button>
-          <Button
-            ref="terminalButton"
-            type="button"
-            variant="outline"
-            class="h-12 gap-2 px-4"
-            :disabled="launching"
-            @click="launch(undefined, 'Terminal')"
-          >
-            <SquareTerminal aria-hidden="true" class="size-5" />
-            <span>Terminal</span>
+          <DropdownMenu>
+            <DropdownMenuTrigger as-child>
+              <Button type="button" variant="outline" class="min-h-10 w-full justify-between px-3" :disabled="isTerminal || launching" aria-label="Select Model">
+                <span class="truncate">{{ selectedModelLabel }}</span>
+                <ChevronDown aria-hidden="true" class="size-4 text-muted-foreground" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" class="w-[var(--reka-dropdown-menu-trigger-width)]">
+              <DropdownMenuLabel>Model</DropdownMenuLabel>
+              <DropdownMenuRadioGroup :model-value="selectedModelId ?? 'default'" @update:model-value="selectModel">
+                <DropdownMenuRadioItem value="default">Default</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem v-for="model in selectedAgent?.models ?? []" :key="model.id" :value="model.id">
+                  {{ model.label }}
+                </DropdownMenuRadioItem>
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          <DropdownMenu v-if="showTuning || isTerminal">
+            <DropdownMenuTrigger as-child>
+              <Button type="button" variant="outline" class="min-h-10 w-full justify-between px-3" :disabled="isTerminal || launching" aria-label="Select Effort Or Fast Mode">
+                <span class="truncate">{{ tuningLabel }}</span>
+                <ChevronDown aria-hidden="true" class="size-4 text-muted-foreground" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" class="w-[var(--reka-dropdown-menu-trigger-width)]">
+              <template v-if="availableEfforts.length">
+                <DropdownMenuLabel>Effort</DropdownMenuLabel>
+                <DropdownMenuRadioGroup :model-value="selectedEffort ?? 'default'" @update:model-value="selectEffort">
+                  <DropdownMenuRadioItem value="default">Default</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem v-for="effort in availableEfforts" :key="effort" :value="effort">
+                    {{ effort[0]?.toUpperCase() }}{{ effort.slice(1) }}
+                  </DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+              </template>
+              <DropdownMenuSeparator v-if="availableEfforts.length && supportsFast" />
+              <template v-if="supportsFast">
+                <DropdownMenuLabel>Fast Mode</DropdownMenuLabel>
+                <DropdownMenuRadioGroup :model-value="fast ? 'on' : 'off'" @update:model-value="selectFast">
+                  <DropdownMenuRadioItem value="on"><Zap aria-hidden="true" class="size-4" />On</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="off">Off</DropdownMenuRadioItem>
+                </DropdownMenuRadioGroup>
+              </template>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <div v-else class="hidden sm:block" aria-hidden="true" />
+
+          <Button ref="startButton" type="button" class="min-h-10 px-5 active:scale-[0.96] transition-transform" :disabled="!canStart" @click="start">
+            <Rocket aria-hidden="true" class="size-4" />
+            {{ launching ? "Starting" : "Start" }}
           </Button>
         </div>
 
-        <div v-if="pickerError" class="mt-4 flex items-center gap-3">
-          <Alert variant="destructive" class="min-w-0 flex-1" aria-atomic="true">
+        <div class="flex flex-col gap-2 border-t px-5 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+          <DropdownMenu>
+            <DropdownMenuTrigger as-child>
+              <Button type="button" variant="ghost" class="min-h-10 justify-start px-2" :disabled="launching" aria-label="Select Checkout Mode">
+                <GitBranchIcon aria-hidden="true" class="size-4 text-muted-foreground" />
+                {{ checkoutModeLabel }}
+                <ChevronDown aria-hidden="true" class="size-4 text-muted-foreground" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              <DropdownMenuLabel>Checkout Mode</DropdownMenuLabel>
+              <DropdownMenuRadioGroup v-model="checkoutMode">
+                <DropdownMenuRadioItem value="current">Current Checkout</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="worktree">Create New Worktree</DropdownMenuRadioItem>
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          <DropdownMenu>
+            <DropdownMenuTrigger as-child>
+              <Button type="button" variant="ghost" class="min-h-10 min-w-0 justify-start px-2 sm:justify-end" :disabled="launching || loadingBranches || !branches.length" aria-label="Select Branch">
+                <Gauge aria-hidden="true" class="size-4 text-muted-foreground" />
+                <span class="text-muted-foreground">{{ branchLabel }}</span>
+                <span class="truncate font-medium">{{ selectedBranch?.name ?? "Loading" }}</span>
+                <ChevronDown aria-hidden="true" class="size-4 text-muted-foreground" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" class="min-w-56">
+              <DropdownMenuLabel>{{ branchLabel }}</DropdownMenuLabel>
+              <DropdownMenuRadioGroup :model-value="selectedBranch?.fullRef" @update:model-value="selectBranch">
+                <DropdownMenuGroup v-if="localBranches.length">
+                  <DropdownMenuLabel>Local</DropdownMenuLabel>
+                  <DropdownMenuRadioItem v-for="branch in localBranches" :key="branch.fullRef" :value="branch.fullRef">
+                    <GitBranchIcon aria-hidden="true" class="size-4" />
+                    <span class="flex-1 truncate">{{ branch.name }}</span>
+                    <Check v-if="branch.isHead" aria-label="Current Branch" class="size-4 text-muted-foreground" />
+                  </DropdownMenuRadioItem>
+                </DropdownMenuGroup>
+                <DropdownMenuSeparator v-if="localBranches.length && remoteBranches.length" />
+                <DropdownMenuGroup v-if="remoteBranches.length">
+                  <DropdownMenuLabel>Remote</DropdownMenuLabel>
+                  <DropdownMenuRadioItem v-for="branch in remoteBranches" :key="branch.fullRef" :value="branch.fullRef">
+                    <Cloud aria-hidden="true" class="size-4" />
+                    <span class="truncate">{{ branch.name }}</span>
+                  </DropdownMenuRadioItem>
+                </DropdownMenuGroup>
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+
+        <div v-if="pickerError" class="border-t p-5">
+          <Alert variant="destructive" aria-atomic="true">
             <CircleAlert aria-hidden="true" />
             <AlertTitle>{{ pickerError.title }}</AlertTitle>
-            <AlertDescription id="new-session-picker-error-description" class="text-pretty">
-              {{ pickerError.message }}
+            <AlertDescription class="flex items-center justify-between gap-3 text-pretty">
+              <span>{{ pickerError.message }}</span>
+              <Button type="button" variant="outline" class="min-h-10 shrink-0" :disabled="busy" @click="pickerError.retry">Retry</Button>
             </AlertDescription>
           </Alert>
-          <Button
-            ref="retryButton"
-            type="button"
-            variant="outline"
-            class="h-10 shrink-0"
-            aria-describedby="new-session-picker-error-description"
-            :disabled="retrying"
-            @click="retryFailedAction"
-          >
-            Retry
-          </Button>
         </div>
-      </div>
-    </section>
+      </section>
+      <p class="mt-3 truncate text-xs text-muted-foreground">{{ homePath(current?.path ?? "") }}</p>
+    </div>
   </div>
+
+  <AlertDialog :open="dirtyWarningOpen" @update:open="dirtyWarningOpen = $event">
+    <AlertDialogContent>
+      <AlertDialogHeader>
+        <AlertDialogTitle>Switch To {{ pendingStart?.branch.name }}?</AlertDialogTitle>
+        <AlertDialogDescription>
+          Local changes will remain in this working tree while Verne switches to the selected branch.
+        </AlertDialogDescription>
+      </AlertDialogHeader>
+      <AlertDialogFooter>
+        <AlertDialogCancel>Cancel</AlertDialogCancel>
+        <AlertDialogAction @click="confirmDirtyStart">Switch And Start</AlertDialogAction>
+      </AlertDialogFooter>
+    </AlertDialogContent>
+  </AlertDialog>
 </template>

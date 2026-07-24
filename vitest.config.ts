@@ -1,9 +1,11 @@
 import { resolve } from "node:path";
 import { configDefaults, defineConfig } from "vitest/config";
+import vue from "@vitejs/plugin-vue";
 
 // Node is the default environment (main-process / pure-logic tests). DOM-based
 // tests opt in per-file with `// @vitest-environment jsdom`.
 export default defineConfig({
+  plugins: [vue()],
   resolve: {
     alias: [{ find: "@", replacement: resolve(__dirname, "src") }],
   },
