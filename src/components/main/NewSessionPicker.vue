@@ -1,15 +1,13 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
-import type { AcceptableValue } from "reka-ui";
 import {
   Bot,
   Check,
   ChevronDown,
   CircleAlert,
   Cloud,
-  Gauge,
+  ArrowRight,
   GitBranch as GitBranchIcon,
-  Rocket,
   SquareTerminal,
   Zap,
 } from "@lucide/vue";
@@ -45,8 +43,6 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -171,8 +167,7 @@ function compatibleModel(): void {
   if (!supportsFast.value) fast.value = false;
 }
 
-function selectAgent(value: AcceptableValue): void {
-  if (typeof value !== "string") return;
+function selectAgent(value: AgentType | "terminal"): void {
   agentSelectionTouched.value = true;
   selectedAgentType.value = value === "terminal" ? "terminal" : value as AgentType;
   selectedModelId.value = null;
@@ -180,8 +175,7 @@ function selectAgent(value: AcceptableValue): void {
   fast.value = false;
 }
 
-function selectModel(value: AcceptableValue): void {
-  if (typeof value !== "string") return;
+function selectModel(value: string): void {
   selectedModelId.value = value === "default" ? null : value;
   const nextModel = selectedModelId.value
     ? selectedAgent.value?.models.find((model) => model.id === selectedModelId.value) ?? null
@@ -191,19 +185,20 @@ function selectModel(value: AcceptableValue): void {
   if (!supportsFastFor(nextModel)) fast.value = false;
 }
 
-function selectEffort(value: AcceptableValue): void {
-  if (typeof value !== "string") return;
+function selectEffort(value: string): void {
   selectedEffort.value = value === "default" ? null : value;
 }
 
-function selectFast(value: AcceptableValue): void {
-  if (typeof value !== "string") return;
+function selectFast(value: "on" | "off"): void {
   fast.value = value === "on";
 }
 
-function selectBranch(value: AcceptableValue): void {
-  if (typeof value !== "string") return;
+function selectBranch(value: string): void {
   selectedBranch.value = branches.value.find((branch) => branch.fullRef === value) ?? null;
+}
+
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
 }
 
 function selectPickerDirectory(directory: WorkingDirectory): void {
@@ -345,7 +340,7 @@ async function continueStart(snapshot: StartSnapshot): Promise<void> {
     console.error("[NewSessionPicker] create failed:", error);
     launchError.value = {
       title: "Couldn't Start Session",
-      message: "Verne couldn't start this session. Try again.",
+      message: errorMessage(error, "Verne couldn't start this session. Try again."),
       retry: () => void continueStart(snapshot),
     };
   } finally {
@@ -435,11 +430,12 @@ onUnmounted(() => {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" class="min-w-64">
-            <DropdownMenuItem v-for="root in roots" :key="root.id" class="min-h-10" :disabled="launching" @select="selectPickerDirectory(root)">
+            <DropdownMenuItem v-for="root in roots" :key="root.id" :disabled="launching" @select="selectPickerDirectory(root)">
               <span class="min-w-0">
                 <span class="block truncate font-medium">{{ root.name }}</span>
                 <span class="block truncate text-xs text-muted-foreground">{{ homePath(root.path) }}</span>
               </span>
+              <Check :class="['ml-auto size-3.5', root.id === props.dirId ? 'opacity-100' : 'opacity-0']" />
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -460,18 +456,18 @@ onUnmounted(() => {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" class="w-[var(--reka-dropdown-menu-trigger-width)]">
               <DropdownMenuLabel class="text-xs font-normal text-muted-foreground">Agents</DropdownMenuLabel>
-              <DropdownMenuRadioGroup :model-value="selectedAgentType ?? 'terminal'" @update:model-value="selectAgent">
-                <DropdownMenuRadioItem v-for="agent in agentChoices" :key="agent.type" :value="agent.type" class="min-h-10">
-                  <img v-if="agent.icon" :src="agent.icon" alt="" class="size-4" />
-                  <Bot v-else aria-hidden="true" class="size-4 text-muted-foreground" />
-                  {{ agent.label }}
-                </DropdownMenuRadioItem>
-                <DropdownMenuSeparator v-if="agentChoices.length" />
-                <DropdownMenuRadioItem value="terminal" class="min-h-10">
-                  <SquareTerminal aria-hidden="true" class="size-4 text-muted-foreground" />
-                  Terminal
-                </DropdownMenuRadioItem>
-              </DropdownMenuRadioGroup>
+              <DropdownMenuItem v-for="agent in agentChoices" :key="agent.type" @select="selectAgent(agent.type)">
+                <img v-if="agent.icon" :src="agent.icon" alt="" class="size-4" />
+                <Bot v-else aria-hidden="true" class="size-4 text-muted-foreground" />
+                {{ agent.label }}
+                <Check :class="['ml-auto size-3.5', selectedAgentType === agent.type ? 'opacity-100' : 'opacity-0']" />
+              </DropdownMenuItem>
+              <DropdownMenuSeparator v-if="agentChoices.length" />
+              <DropdownMenuItem @select="selectAgent('terminal')">
+                <SquareTerminal aria-hidden="true" class="size-4 text-muted-foreground" />
+                Terminal
+                <Check :class="['ml-auto size-3.5', isTerminal ? 'opacity-100' : 'opacity-0']" />
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
 
@@ -484,12 +480,14 @@ onUnmounted(() => {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" class="w-[var(--reka-dropdown-menu-trigger-width)]">
               <DropdownMenuLabel class="text-xs font-normal text-muted-foreground">Model</DropdownMenuLabel>
-              <DropdownMenuRadioGroup :model-value="selectedModelId ?? 'default'" @update:model-value="selectModel">
-                <DropdownMenuRadioItem value="default" class="min-h-10">Default</DropdownMenuRadioItem>
-                <DropdownMenuRadioItem v-for="model in selectedAgent?.models ?? []" :key="model.id" :value="model.id" class="min-h-10">
-                  {{ model.label }}
-                </DropdownMenuRadioItem>
-              </DropdownMenuRadioGroup>
+              <DropdownMenuItem @select="selectModel('default')">
+                Default
+                <Check :class="['ml-auto size-3.5', selectedModelId === null ? 'opacity-100' : 'opacity-0']" />
+              </DropdownMenuItem>
+              <DropdownMenuItem v-for="model in selectedAgent?.models ?? []" :key="model.id" @select="selectModel(model.id)">
+                {{ model.label }}
+                <Check :class="['ml-auto size-3.5', selectedModelId === model.id ? 'opacity-100' : 'opacity-0']" />
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
 
@@ -503,28 +501,35 @@ onUnmounted(() => {
             <DropdownMenuContent align="start" class="w-[var(--reka-dropdown-menu-trigger-width)]">
               <template v-if="availableEfforts.length">
                 <DropdownMenuLabel class="text-xs font-normal text-muted-foreground">Effort</DropdownMenuLabel>
-                <DropdownMenuRadioGroup :model-value="selectedEffort ?? 'default'" @update:model-value="selectEffort">
-                  <DropdownMenuRadioItem value="default" class="min-h-10">Default</DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem v-for="effort in availableEfforts" :key="effort" :value="effort" class="min-h-10">
-                    {{ effort[0]?.toUpperCase() }}{{ effort.slice(1) }}
-                  </DropdownMenuRadioItem>
-                </DropdownMenuRadioGroup>
+                <DropdownMenuItem @select="selectEffort('default')">
+                  Default
+                  <Check :class="['ml-auto size-3.5', selectedEffort === null ? 'opacity-100' : 'opacity-0']" />
+                </DropdownMenuItem>
+                <DropdownMenuItem v-for="effort in availableEfforts" :key="effort" @select="selectEffort(effort)">
+                  {{ effort[0]?.toUpperCase() }}{{ effort.slice(1) }}
+                  <Check :class="['ml-auto size-3.5', selectedEffort === effort ? 'opacity-100' : 'opacity-0']" />
+                </DropdownMenuItem>
               </template>
               <DropdownMenuSeparator v-if="availableEfforts.length && supportsFast" />
               <template v-if="supportsFast">
                 <DropdownMenuLabel class="text-xs font-normal text-muted-foreground">Fast Mode</DropdownMenuLabel>
-                <DropdownMenuRadioGroup :model-value="fast ? 'on' : 'off'" @update:model-value="selectFast">
-                  <DropdownMenuRadioItem value="on" class="min-h-10"><Zap aria-hidden="true" class="size-4" />On</DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="off" class="min-h-10">Off</DropdownMenuRadioItem>
-                </DropdownMenuRadioGroup>
+                <DropdownMenuItem @select="selectFast('on')">
+                  <Zap aria-hidden="true" class="size-4" />
+                  On
+                  <Check :class="['ml-auto size-3.5', fast ? 'opacity-100' : 'opacity-0']" />
+                </DropdownMenuItem>
+                <DropdownMenuItem @select="selectFast('off')">
+                  Off
+                  <Check :class="['ml-auto size-3.5', !fast ? 'opacity-100' : 'opacity-0']" />
+                </DropdownMenuItem>
               </template>
             </DropdownMenuContent>
           </DropdownMenu>
           <div v-else class="hidden sm:block" aria-hidden="true" />
 
           <Button ref="startButton" type="button" class="min-h-10 px-5 active:scale-[0.96] transition-transform" :disabled="!canStart" @click="start">
-            <Rocket aria-hidden="true" class="size-4" />
             {{ launching ? "Starting" : "Start" }}
+            <ArrowRight aria-hidden="true" class="size-4" />
           </Button>
         </div>
 
@@ -539,17 +544,21 @@ onUnmounted(() => {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start">
               <DropdownMenuLabel class="text-xs font-normal text-muted-foreground">Checkout Mode</DropdownMenuLabel>
-              <DropdownMenuRadioGroup v-model="checkoutMode">
-                <DropdownMenuRadioItem value="current" class="min-h-10">Current Checkout</DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="worktree" class="min-h-10">Create New Worktree</DropdownMenuRadioItem>
-              </DropdownMenuRadioGroup>
+              <DropdownMenuItem @select="checkoutMode = 'current'">
+                Current Checkout
+                <Check :class="['ml-auto size-3.5', checkoutMode === 'current' ? 'opacity-100' : 'opacity-0']" />
+              </DropdownMenuItem>
+              <DropdownMenuItem @select="checkoutMode = 'worktree'">
+                Create New Worktree
+                <Check :class="['ml-auto size-3.5', checkoutMode === 'worktree' ? 'opacity-100' : 'opacity-0']" />
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
 
           <DropdownMenu>
             <DropdownMenuTrigger as-child>
               <Button type="button" variant="ghost" class="min-h-10 min-w-0 justify-start px-2 sm:justify-end" :disabled="launching || loadingBranches || !branches.length" aria-label="Select Branch">
-                <Gauge aria-hidden="true" class="size-4 text-muted-foreground" />
+                <GitBranchIcon aria-hidden="true" class="size-4 text-muted-foreground" />
                 <span class="text-muted-foreground">{{ branchLabel }}</span>
                 <span class="truncate font-medium">{{ selectedBranch?.name ?? "Loading" }}</span>
                 <ChevronDown aria-hidden="true" class="size-4 text-muted-foreground" />
@@ -557,24 +566,23 @@ onUnmounted(() => {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" class="min-w-56">
               <DropdownMenuLabel class="text-xs font-normal text-muted-foreground">{{ branchLabel }}</DropdownMenuLabel>
-              <DropdownMenuRadioGroup :model-value="selectedBranch?.fullRef" @update:model-value="selectBranch">
-                <DropdownMenuGroup v-if="localBranches.length">
-                  <DropdownMenuLabel class="text-xs font-normal text-muted-foreground">Local</DropdownMenuLabel>
-                  <DropdownMenuRadioItem v-for="branch in localBranches" :key="branch.fullRef" :value="branch.fullRef" class="min-h-10">
-                    <GitBranchIcon aria-hidden="true" class="size-4" />
-                    <span class="flex-1 truncate">{{ branch.name }}</span>
-                    <Check v-if="branch.isHead" aria-label="Current Branch" class="size-4 text-muted-foreground" />
-                  </DropdownMenuRadioItem>
-                </DropdownMenuGroup>
-                <DropdownMenuSeparator v-if="localBranches.length && remoteBranches.length" />
-                <DropdownMenuGroup v-if="remoteBranches.length">
-                  <DropdownMenuLabel class="text-xs font-normal text-muted-foreground">Remote</DropdownMenuLabel>
-                  <DropdownMenuRadioItem v-for="branch in remoteBranches" :key="branch.fullRef" :value="branch.fullRef" class="min-h-10">
-                    <Cloud aria-hidden="true" class="size-4" />
-                    <span class="truncate">{{ branch.name }}</span>
-                  </DropdownMenuRadioItem>
-                </DropdownMenuGroup>
-              </DropdownMenuRadioGroup>
+              <DropdownMenuGroup v-if="localBranches.length">
+                <DropdownMenuLabel class="text-xs font-normal text-muted-foreground">Local</DropdownMenuLabel>
+                <DropdownMenuItem v-for="branch in localBranches" :key="branch.fullRef" @select="selectBranch(branch.fullRef)">
+                  <GitBranchIcon aria-hidden="true" class="size-4" />
+                  <span class="flex-1 truncate">{{ branch.name }}</span>
+                  <Check :class="['ml-auto size-3.5', selectedBranch?.fullRef === branch.fullRef ? 'opacity-100' : 'opacity-0']" />
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
+              <DropdownMenuSeparator v-if="localBranches.length && remoteBranches.length" />
+              <DropdownMenuGroup v-if="remoteBranches.length">
+                <DropdownMenuLabel class="text-xs font-normal text-muted-foreground">Remote</DropdownMenuLabel>
+                <DropdownMenuItem v-for="branch in remoteBranches" :key="branch.fullRef" @select="selectBranch(branch.fullRef)">
+                  <Cloud aria-hidden="true" class="size-4" />
+                  <span class="flex-1 truncate">{{ branch.name }}</span>
+                  <Check :class="['ml-auto size-3.5', selectedBranch?.fullRef === branch.fullRef ? 'opacity-100' : 'opacity-0']" />
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>

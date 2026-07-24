@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, onUnmounted, type Ref } from "vue";
-import { PanelRight } from "@lucide/vue";
+import { PanelRight, SquareTerminal } from "@lucide/vue";
 import { ask } from "@/platform";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useRpc } from "@/composables/useRpc";
@@ -29,6 +29,10 @@ const showRightOverlay = computed(() => !!dirId.value && !!rightCollapsed?.value
 const arrangement = computed(() =>
   dirId.value ? store.arrangementFor(dirId.value) : null,
 );
+const pickerDirectoryName = computed(() => {
+  const id = store.pendingPicker?.dirId;
+  return store.directories.find((directory) => directory.id === id)?.name ?? "Workspace";
+});
 
 const welcome = computed(() =>
   firstRunView({
@@ -112,11 +116,20 @@ onUnmounted(() => {
       <div v-if="!dirId" class="flex-1 min-h-0 flex items-center justify-center">
         <WelcomeHero v-if="welcome !== 'none'" :mode="welcome === 'hero' ? 'hero' : 'picker'" />
       </div>
-      <NewSessionPicker
+      <div
         v-else-if="store.pendingPicker"
-        :key="store.pendingPicker.dirId"
-        :dir-id="store.pendingPicker.dirId"
-      />
+        class="flex flex-1 min-h-0 flex-col"
+      >
+        <div class="flex h-11.5 shrink-0 items-center gap-1.5 overflow-hidden border-b bg-sidebar pl-4 text-xs text-muted-foreground">
+          <SquareTerminal aria-hidden="true" class="size-4" />
+          <span class="truncate">{{ pickerDirectoryName }} &gt; New Session</span>
+        </div>
+        <NewSessionPicker
+          :key="store.pendingPicker.dirId"
+          :dir-id="store.pendingPicker.dirId"
+          class="flex-1 min-h-0"
+        />
+      </div>
       <SplitLayout
         v-else-if="arrangement"
         :key="dirId"

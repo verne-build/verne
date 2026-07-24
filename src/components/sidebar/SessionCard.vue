@@ -67,7 +67,7 @@ const state = computed<DisplayState>(() => {
 const title = computed(() => stripSpinner(store.sessionName(id.value)));
 const exited = computed(() => store.sessionLifecycle.get(id.value) === "exited");
 const focused = computed(
-  () => id.value === store.focusedSessionId && props.row.directory.id === store.selectedDirectoryId,
+  () => !store.pendingPicker && id.value === store.focusedSessionId && props.row.directory.id === store.selectedDirectoryId,
 );
 // Part of a multi-pane arrangement in its scope → show a composition marker.
 const composed = computed(() => {

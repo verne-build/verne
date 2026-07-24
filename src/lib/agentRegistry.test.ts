@@ -37,7 +37,7 @@ describe("agent registry", () => {
   it("rejects stale and incompatible selections", () => {
     expect(() => buildAgentArgv({ agentType: "agy", modelId: "missing", effort: null, fast: null })).toThrow("Unknown Agy model");
     expect(() => buildAgentArgv({ agentType: "claude", modelId: "sonnet", effort: "medium", fast: true })).toThrow("Fast mode is unavailable");
-    expect(() => buildAgentArgv({ agentType: "copilot", modelId: null, effort: null, fast: null })).toThrow("Unknown agent type");
+    expect(() => buildAgentArgv({ agentType: "copilot", modelId: null, effort: null, fast: null } as any)).toThrow("Unknown agent type");
   });
 
   it("exposes controls only for supported combinations", () => {

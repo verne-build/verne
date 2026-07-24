@@ -438,7 +438,7 @@ export interface TabGroup {
   createdAt: number;
 }
 
-export type AgentType = "claude" | "codex" | "copilot" | "opencode" | "agy" | "cursor";
+export type AgentType = "claude" | "codex" | "opencode" | "agy" | "cursor";
 
 export interface AgentLaunchSelection {
   agentType: AgentType;

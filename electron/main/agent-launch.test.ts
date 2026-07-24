@@ -27,8 +27,8 @@ describe("resolveLaunchCommand", () => {
     expect(() => resolveLaunchCommand(selection as any)).toThrow("Invalid agent launch selection");
   });
 
-  it("validates agent types after validating their runtime shape", () => {
-    expect(() => resolveLaunchCommand({ agentType: "shell", modelId: null, effort: null, fast: null } as any))
+  it.each(["shell", "copilot"])("rejects unsupported runtime agent type %s", (agentType) => {
+    expect(() => resolveLaunchCommand({ agentType, modelId: null, effort: null, fast: null } as any))
       .toThrow("Unknown agent type");
   });
 });

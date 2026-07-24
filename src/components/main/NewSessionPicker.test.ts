@@ -66,7 +66,7 @@ function button(label: string): HTMLButtonElement {
 }
 
 function menuItem(label: string): HTMLElement {
-  const match = Array.from(document.querySelectorAll<HTMLElement>("[data-slot=dropdown-menu-radio-item]"))
+  const match = Array.from(document.querySelectorAll<HTMLElement>("[data-slot=dropdown-menu-item]"))
     .find((element) => element.textContent?.trim() === label);
   if (!match) throw new Error(`Missing menu item: ${label}`);
   return match;
@@ -312,5 +312,16 @@ describe("NewSessionPicker", () => {
 
     expect(store.closeSessionPicker).toHaveBeenCalledOnce();
     expect(button("Start").disabled).toBe(false);
+  });
+
+  it("surfaces the combined launch and cleanup error", async () => {
+    const message = "Launch failed: PTY unavailable; cleanup failed: worktree remains";
+    store.startPickerSession.mockRejectedValueOnce(new Error(message));
+    await flush();
+
+    button("Start").click();
+    await flush();
+
+    expect(document.body.textContent).toContain(message);
   });
 });
