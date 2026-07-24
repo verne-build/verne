@@ -905,8 +905,12 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     const originalSelection = selectedDirectoryId.value;
     const root = worktreeRoot(source.id);
     let created: WorkingDirectory | null = null;
+    let pendingPickerBeforeSelection: { dirId: string } | null = null;
     try {
       created = await createWorktree(root.id, "", input.branch.name);
+      pendingPickerBeforeSelection = pendingPicker.value
+        ? { ...pendingPicker.value }
+        : null;
       selectDirectory(created);
       return await newSession(created.id, { agentLaunch: input.agentLaunch });
     } catch (error) {
@@ -917,9 +921,13 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       } catch (cleanup) {
         cleanupError = cleanup;
       }
+      dropFilePanelScope(created.id);
       sweepRemovedScopes([created.id]);
       directories.value = directories.value.filter((directory) => directory.id !== created!.id);
-      selectedDirectoryId.value = originalSelection;
+      if (pendingPicker.value?.dirId === created.id)
+        pendingPicker.value = pendingPickerBeforeSelection;
+      if (selectedDirectoryId.value === created.id)
+        selectedDirectoryId.value = originalSelection;
       if (cleanupError) {
         const launchMessage = error instanceof Error ? error.message : String(error);
         const cleanupMessage = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);

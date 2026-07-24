@@ -49,6 +49,9 @@ const rpc = vi.hoisted(() => ({
   worktreeRemove: vi.fn(async () => true),
   tabsCreate: vi.fn(),
 }));
+const filePanel = vi.hoisted(() => ({
+  dropFilePanelScope: vi.fn(),
+}));
 const {
   getLiveTabIds,
   setLiveTabIds,
@@ -185,6 +188,10 @@ rpc.tabsCreate.mockImplementation(defaultTabsCreate);
 
 vi.mock("@/composables/useLanguageClient", () => ({
   stopClient: vi.fn(),
+}));
+
+vi.mock("@/composables/useFilePanelTabs", () => ({
+  dropFilePanelScope: filePanel.dropFilePanelScope,
 }));
 
 vi.mock("@/composables/useRpc", () => ({
@@ -724,6 +731,7 @@ describe("picker launch orchestration", () => {
     rpc.worktreeCreate.mockClear();
     rpc.worktreeRemove.mockClear();
     rpc.tabsCreate.mockClear();
+    filePanel.dropFilePanelScope.mockClear();
   });
 
   afterEach(() => {
@@ -741,6 +749,7 @@ describe("picker launch orchestration", () => {
     rpc.worktreeRemove.mockResolvedValue(true);
     rpc.tabsCreate.mockReset();
     rpc.tabsCreate.mockImplementation(defaultTabsCreate);
+    filePanel.dropFilePanelScope.mockReset();
   });
 
   it("checks out the selected current branch before launch", async () => {
@@ -815,14 +824,41 @@ describe("picker launch orchestration", () => {
     const store = useWorkspaceStore();
     store.directories.push(dir("dir-1"), { ...dir("wt-existing"), parentDirectoryId: "dir-1" });
     store.selectDirectory(dir("dir-1"));
+    store.openSessionPicker();
     rpc.tabsCreate.mockRejectedValueOnce(new Error("spawn failed"));
 
     await expect(store.startPickerSession({ directoryId: "dir-1", mode: "worktree", branch: mainBranch }))
       .rejects.toThrow("spawn failed");
 
     expect(rpc.worktreeRemove).toHaveBeenCalledWith({ id: "wt-new", force: true });
+    expect(filePanel.dropFilePanelScope).toHaveBeenCalledWith("wt-new");
     expect(store.directories.map((directory) => directory.id)).toEqual(["dir-1", "wt-existing"]);
     expect(store.selectedDirectoryId).toBe("dir-1");
+    expect(store.pendingPicker).toEqual({ dirId: "dir-1" });
+  });
+
+  it("does not overwrite a newer selection or picker target during rollback", async () => {
+    const store = useWorkspaceStore();
+    store.directories.push(dir("dir-1"), dir("dir-2"));
+    store.selectDirectory(dir("dir-1"));
+    store.openSessionPicker();
+    let rejectCreate!: (error: Error) => void;
+    rpc.tabsCreate.mockImplementationOnce(async (opts) => {
+      tabsCreateCalls.push({ ...opts });
+      await new Promise<void>((_, reject) => {
+        rejectCreate = reject;
+      });
+      throw new Error("unreachable");
+    });
+
+    const launch = store.startPickerSession({ directoryId: "dir-1", mode: "worktree", branch: mainBranch });
+    await vi.waitFor(() => expect(rpc.tabsCreate).toHaveBeenCalled());
+    store.selectDirectory(dir("dir-2"));
+    rejectCreate(new Error("spawn failed"));
+
+    await expect(launch).rejects.toThrow("spawn failed");
+    expect(store.selectedDirectoryId).toBe("dir-2");
+    expect(store.pendingPicker).toEqual({ dirId: "dir-2" });
   });
 
   it("keeps the spawn failure visible when rollback also fails", async () => {
