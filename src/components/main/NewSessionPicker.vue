@@ -214,6 +214,18 @@ function setBranchMenuOpen(open: boolean): void {
   branchQuery.value = "";
 }
 
+function onBranchFilterKeydown(event: KeyboardEvent): void {
+  if (event.key === "Escape") {
+    if (!branchQuery.value) return;
+    event.preventDefault();
+    event.stopPropagation();
+    branchQuery.value = "";
+    return;
+  }
+  if (["ArrowUp", "ArrowDown", "Home", "End", "Enter", "Tab"].includes(event.key)) return;
+  event.stopPropagation();
+}
+
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
 }
@@ -585,7 +597,7 @@ onUnmounted(() => {
               <div class="border-b p-2">
                 <div class="relative">
                   <Search aria-hidden="true" class="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-                  <Input v-model="branchQuery" placeholder="Filter Branches…" class="h-8 pl-8 text-xs" @keydown.stop />
+                  <Input v-model="branchQuery" placeholder="Filter Branches…" class="h-8 pl-8 text-xs" @keydown="onBranchFilterKeydown" />
                 </div>
               </div>
               <div class="max-h-64 overflow-y-auto p-1">

@@ -321,6 +321,25 @@ describe("NewSessionPicker", () => {
     expect(document.body.textContent).not.toContain("feature");
   });
 
+  it("clears a branch filter before closing the menu on Escape", async () => {
+    await flush();
+    await openMenu("Select Branch");
+    const filter = document.querySelector<HTMLInputElement>('input[placeholder="Filter Branches…"]');
+    if (!filter) throw new Error("Missing branch filter");
+    filter.value = "feature";
+    filter.dispatchEvent(new Event("input", { bubbles: true }));
+    await flush();
+
+    filter.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    await flush();
+    expect(filter.value).toBe("");
+    expect(document.querySelector('input[placeholder="Filter Branches…"]')).toBe(filter);
+
+    filter.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    await flush();
+    expect(document.querySelector('input[placeholder="Filter Branches…"]')).toBeNull();
+  });
+
   it("keeps the active start request valid through rapid repeated clicks", async () => {
     let resolveStart!: () => void;
     store.startPickerSession.mockImplementationOnce(() => new Promise<void>((resolve) => { resolveStart = resolve; }));
