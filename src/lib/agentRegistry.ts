@@ -19,7 +19,6 @@ export interface AgentDefinition {
 const MODEL_VALUES = {
   claude: ["fable", "sonnet", "opus"],
   codex: ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.5", "gpt-5.4"],
-  copilot: ["auto", "claude-sonnet-4.6", "claude-haiku-4.5", "gpt-5.4", "gpt-5.3-codex", "gemini-3.1-pro-preview", "gemini-3.5-flash", "mai-code-1-flash"],
   opencode: ["opencode/big-pickle", "openai/gpt-5.6-sol", "openai/gpt-5.6-terra", "openai/gpt-5.5", "openai/gpt-5.4"],
 } as const;
 
@@ -75,7 +74,6 @@ const CURSOR_VARIANTS = {
 
 const CLAUDE_EFFORTS = ["low", "medium", "high"] as const;
 const CODEX_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
-const COPILOT_EFFORTS = ["low", "medium", "high"] as const;
 
 function titleCaseModelId(id: string): string {
   return id
@@ -98,10 +96,6 @@ const codexModels = modelsFor(MODEL_VALUES.codex).map((model) => ({
   efforts: CODEX_EFFORTS,
   fast: "codex-tier" as const,
 }));
-const copilotModels = modelsFor(MODEL_VALUES.copilot).map((model) => ({
-  ...model,
-  ...(["gpt-5.4", "gpt-5.3-codex"].includes(model.id) ? { efforts: COPILOT_EFFORTS } : {}),
-}));
 const cursorModels = Object.entries(CURSOR_VARIANTS).map(([id, cursorVariants]) => ({
   id,
   label: titleCaseModelId(id),
@@ -112,7 +106,6 @@ const cursorModels = Object.entries(CURSOR_VARIANTS).map(([id, cursorVariants]) 
 export const AGENT_REGISTRY: readonly AgentDefinition[] = [
   { type: "claude", label: "Claude", bin: "claude", models: claudeModels },
   { type: "codex", label: "Codex", bin: "codex", models: codexModels },
-  { type: "copilot", label: "Copilot", bin: "copilot", models: copilotModels },
   { type: "opencode", label: "OpenCode", bin: "opencode", models: modelsFor(MODEL_VALUES.opencode) },
   { type: "agy", label: "Agy", bin: "agy", models: AGY_MODELS.map((id) => ({ id, label: id, cliValue: id })) },
   { type: "cursor", label: "Cursor", bin: "cursor-agent", models: cursorModels },

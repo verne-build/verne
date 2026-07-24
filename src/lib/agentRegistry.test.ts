@@ -13,10 +13,10 @@ import { findAgentIconForSurface } from "@/composables/useAgentIcon";
 describe("agent registry", () => {
   beforeEach(() => resetAgentAvailabilityCacheForTests());
 
-  it("uses the approved agents and replaces Gemini with Agy", () => {
+  it("uses the approved launch agents and excludes Copilot", () => {
     expect(AGENT_REGISTRY.map(({ type, bin }) => [type, bin])).toEqual([
-      ["claude", "claude"], ["codex", "codex"], ["copilot", "copilot"],
-      ["opencode", "opencode"], ["agy", "agy"], ["cursor", "cursor-agent"],
+      ["claude", "claude"], ["codex", "codex"], ["opencode", "opencode"],
+      ["agy", "agy"], ["cursor", "cursor-agent"],
     ]);
   });
 
@@ -37,6 +37,7 @@ describe("agent registry", () => {
   it("rejects stale and incompatible selections", () => {
     expect(() => buildAgentArgv({ agentType: "agy", modelId: "missing", effort: null, fast: null })).toThrow("Unknown Agy model");
     expect(() => buildAgentArgv({ agentType: "claude", modelId: "sonnet", effort: "medium", fast: true })).toThrow("Fast mode is unavailable");
+    expect(() => buildAgentArgv({ agentType: "copilot", modelId: null, effort: null, fast: null })).toThrow("Unknown agent type");
   });
 
   it("exposes controls only for supported combinations", () => {
@@ -56,6 +57,7 @@ describe("agent registry", () => {
     await loadAvailableAgents(fetcher, 1_000 + 299_999);
     await loadAvailableAgents(fetcher, 1_000 + 300_001);
     expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher).not.toHaveBeenCalledWith(expect.arrayContaining(["copilot"]));
   });
 
   it("returns no asset for iconless registry types", () => {

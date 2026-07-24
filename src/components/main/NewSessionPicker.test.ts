@@ -126,6 +126,21 @@ describe("NewSessionPicker", () => {
     expect(button("Agy")).toBeTruthy();
   });
 
+  it("renders and selects the registry-first Claude result", async () => {
+    app.unmount();
+    host.replaceChildren();
+    resetAgentAvailabilityCacheForTests();
+    rpc.agentBinsAvailable.mockReset();
+    rpc.agentBinsAvailable.mockResolvedValue({ available: ["claude", "agy"] });
+    app = createApp({ render: () => h(NewSessionPicker, { dirId: "dir-1" }) });
+    app.use(createPinia());
+    app.mount(host);
+    await flush();
+
+    expect(button("Claude")).toBeTruthy();
+    expect(namedButton("Select Agent").textContent).toContain("Claude");
+  });
+
   it("keeps an explicit Terminal selection when availability resolves late", async () => {
     let resolveBins!: (value: { available: string[] }) => void;
     app.unmount();
