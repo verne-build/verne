@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { TerminalController } from './TerminalController';
+import { TerminalController, type GridTransport } from './TerminalController';
 import { GridStore } from './GridStore';
 import { GridSession, type GridSocket } from './GridSession';
 import type { TerminalRenderer } from './renderer';
@@ -82,7 +82,7 @@ function setup(modes: WireModes = MODES()) {
   const renderer = new FakeRenderer();
   const controller = new TerminalController({
     store,
-    session,
+    transport: session,
     renderer,
     metrics: METRICS,
     schedule: (cb) => cb(), // synchronous
@@ -422,7 +422,7 @@ describe('TerminalController', () => {
     const session = new GridSession('ws://x', store, () => (sock = new FakeSocket()));
     session.connect();
     const controller = new TerminalController({
-      store, session, renderer: new FakeRenderer(), metrics: METRICS,
+      store, transport: session, renderer: new FakeRenderer(), metrics: METRICS,
       schedule: (cb) => cb(), clock: () => t,
     });
     void controller;
@@ -548,7 +548,7 @@ describe('drag-selection auto-scroll', () => {
     const renderer = new FakeRenderer();
     const controller = new TerminalController({
       store,
-      session,
+      transport: session,
       renderer,
       metrics: METRICS,
       schedule: (cb) => cb(),
@@ -646,6 +646,97 @@ describe('drag-selection auto-scroll', () => {
     expect(isActive()).toBe(true);
     controller.clearSelection();
     expect(isActive()).toBe(false);
+  });
+});
+
+/** A GridTransport that records every forwarded call, so read-only suppression
+ *  can be asserted directly (no socket). */
+class SpyTransport implements GridTransport {
+  readonly store: GridStore;
+  onUpdate?: () => void;
+  onSearchResult?: (r: import('./gridProtocol').SearchResultFrame) => void;
+  keys: unknown[] = [];
+  texts: string[] = [];
+  pastes: string[] = [];
+  mice: unknown[] = [];
+  fetches: unknown[] = [];
+  searches: unknown[] = [];
+  resizes: unknown[] = [];
+  constructor(store: GridStore) {
+    this.store = store;
+  }
+  sendKey(key: string, mods?: unknown) { this.keys.push({ key, mods }); }
+  sendText(text: string) { this.texts.push(text); }
+  sendPaste(text: string) { this.pastes.push(text); }
+  sendMouse(action: string, button: number, col: number, row: number, mods?: unknown) {
+    this.mice.push({ action, button, col, row, mods });
+  }
+  fetchHistory(from: number, to: number) { this.fetches.push({ from, to }); return 1; }
+  cancelHistory() {}
+  cancelAllFetches() {}
+  search(query: string, opts?: unknown) { this.searches.push({ query, opts }); return 1; }
+  resize(cols: number, rows: number) { this.resizes.push({ cols, rows }); }
+  dispose() {}
+}
+
+describe('TerminalController read-only (archived snapshot)', () => {
+  function setupReadOnly(modes: WireModes = MODES()) {
+    const store = new GridStore();
+    store.applySync({
+      type: 'sync', rev: 1, cols: 10, rows: 4, cursor: [0, 0],
+      altScreen: modes.altScreen, modes, totalLines: 100, runs: [],
+    });
+    const transport = new SpyTransport(store);
+    const renderer = new FakeRenderer();
+    const controller = new TerminalController({
+      store, transport, renderer, metrics: METRICS, readOnly: true,
+      schedule: (cb) => cb(),
+    });
+    return { store, transport, renderer, controller };
+  }
+
+  it('swallows keydown/text/paste (no transport input)', () => {
+    const { controller, transport } = setupReadOnly();
+    expect(controller.handleKeyDown(key({ key: 'ArrowUp' }))).toBe(false);
+    controller.handleText('hi');
+    controller.handlePaste('blob');
+    expect(transport.keys).toEqual([]);
+    expect(transport.texts).toEqual([]);
+    expect(transport.pastes).toEqual([]);
+  });
+
+  it('never forwards mouse even with reporting on — returns the cell for selection', () => {
+    const { controller, transport } = setupReadOnly(MODES({ mouseReporting: true }));
+    expect(controller.handlePointer('down', 0, 20, 33)).toEqual({ col: 2, row: 2 });
+    expect(transport.mice).toEqual([]);
+  });
+
+  it('wheel always scrolls locally even in alt-screen/mouse-reporting modes', () => {
+    const { controller, store, transport } = setupReadOnly(MODES({ altScreen: true, mouseReporting: true }));
+    controller.handleWheel(3, 0, 0);
+    expect(store.scrollOffset).toBe(3); // local scrollback moved
+    expect(transport.keys).toEqual([]); // no arrow keys
+    expect(transport.mice).toEqual([]); // no wheel mouse events
+  });
+
+  it('skips history fetches (full history pre-seeded)', () => {
+    const { controller, transport } = setupReadOnly();
+    controller.handleWheel(3, 0, 0); // scroll into history
+    controller.fetchVisible();
+    controller.prefetchAboveTail();
+    expect(transport.fetches).toEqual([]);
+  });
+
+  it('keeps selection + copy active', () => {
+    const { controller, store } = setupReadOnly();
+    store.applyDelta({
+      type: 'delta', rev: 2, cursor: [0, 0], modes: MODES(), totalLines: 100,
+      runs: [{ line: 0, startCol: 0, cells: [...'hello'].map((c) => textCell(c)), wrapped: false }],
+    });
+    controller.selectionStart(0, 0);
+    controller.selectionUpdate(24, 0);
+    expect(controller.hasSelection()).toBe(true);
+    expect(controller.copySelection()).toBe('hel');
   });
 });
 

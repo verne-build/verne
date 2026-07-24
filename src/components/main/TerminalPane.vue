@@ -72,6 +72,8 @@ const dropActive = ref(false);
 
 const isActive = computed(() => props.multi && props.focusedSessionId === props.paneId);
 const isExited = computed(() => store.sessionLifecycle.get(props.paneId) === "exited");
+// Archived: render the frozen snapshot read-only; never spawn a PTY.
+const isArchived = computed(() => tab.value?.archivedAt != null);
 
 function pastePaths(paths: string[]) {
   const text = formatPathsForShell(paths);
@@ -157,6 +159,12 @@ const otherSessions = computed(() => {
 // session, or respawns after a daemon restart). Only called on mount.
 let mountGen = 0;
 async function mountActive(opts: { force?: boolean } = {}) {
+  // Archived tabs render from the stored snapshot and must NEVER spawn a PTY —
+  // guard before tabsSessionId so no session is ever resolved for them.
+  if (isArchived.value) {
+    sessionId.value = null;
+    return;
+  }
   // Lifecycle-aware: an exited session shows the overlay instead of silently
   // respawning. Explicit restart (overlay click / restart event) forces.
   if (!opts.force && store.sessionLifecycle.get(props.paneId) === "exited") return;
@@ -182,6 +190,12 @@ function onRestartEvent(e: Event) {
 }
 
 watch(() => props.paneId, () => { void mountActive(); });
+
+// Becoming archived (Task 7 un-archive flow is separate) must drop the live
+// session id so the archived branch renders and no PTY lingers.
+watch(isArchived, (archived) => {
+  if (archived) sessionId.value = null;
+});
 
 function focusPane() {
   if (store.focusedSessionId !== props.paneId) store.focusSession(props.paneId);
@@ -307,7 +321,15 @@ onUnmounted(() => {
         >
           <div ref="container" :data-session-id="sessionId" class="absolute inset-0 overflow-hidden">
             <GridTerminal
-              v-if="sessionId"
+              v-if="isArchived"
+              ref="gridRef"
+              :key="`archived:${paneId}:${tab?.archivedAt}`"
+              :archived-tab-id="paneId"
+              :cwd="tab?.cwd"
+              :auto-focus="false"
+            />
+            <GridTerminal
+              v-else-if="sessionId"
               ref="gridRef"
               :key="sessionId"
               :session-id="sessionId"
@@ -326,9 +348,10 @@ onUnmounted(() => {
             v-if="dropActive"
             class="pointer-events-none absolute inset-0 z-20 border-2 border-primary/60 bg-primary/5"
           />
-          <!-- Exited overlay: PTY is gone; click to respawn. -->
+          <!-- Exited overlay: PTY is gone; click to respawn. Never for archived
+               (there's no PTY to restart). -->
           <button
-            v-if="isExited"
+            v-if="isExited && !isArchived"
             type="button"
             class="absolute inset-0 z-40 flex items-center justify-center bg-[var(--editor-bg)]/50 opacity-50 hover:opacity-70 transition-opacity cursor-pointer"
             @click="restart"
@@ -345,16 +368,17 @@ onUnmounted(() => {
           Copy
           <ContextMenuShortcut>⌘C</ContextMenuShortcut>
         </ContextMenuItem>
-        <ContextMenuItem @select="() => gridRef?.paste()">
+        <!-- Paste + split imply a live PTY — hidden for archived snapshots. -->
+        <ContextMenuItem v-if="!isArchived" @select="() => gridRef?.paste()">
           Paste
           <ContextMenuShortcut>⌘V</ContextMenuShortcut>
         </ContextMenuItem>
-        <ContextMenuSeparator />
-        <ContextMenuItem @select="splitH">
+        <ContextMenuSeparator v-if="!isArchived" />
+        <ContextMenuItem v-if="!isArchived" @select="splitH">
           Split Right
           <ContextMenuShortcut>{{ shortcutText("split-pane-h") }}</ContextMenuShortcut>
         </ContextMenuItem>
-        <ContextMenuItem @select="splitV">
+        <ContextMenuItem v-if="!isArchived" @select="splitV">
           Split Down
           <ContextMenuShortcut>{{ shortcutText("split-pane-v") }}</ContextMenuShortcut>
         </ContextMenuItem>

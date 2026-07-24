@@ -12,6 +12,12 @@ import { useTheme } from '../../composables/useTheme';
 import { GridStore } from '../../lib/terminal/GridStore';
 import { GridSession } from '../../lib/terminal/GridSession';
 import { TerminalController } from '../../lib/terminal/TerminalController';
+import { StaticGridTransport } from '../../lib/terminal/StaticGridTransport';
+import {
+  decodeArchivedSnapshot,
+  gridStoreFromArchivedSnapshot,
+  isCurrentArchivedRead,
+} from '../../lib/terminal/archivedSnapshot';
 import { createRenderer, makeCanvas2D, type RendererOptions } from '../../lib/terminal/createRenderer';
 import { cellWidthFor, cellHeightFor, gridSizeFor } from '../../lib/terminal/metrics';
 import { defaultPalette, resolveColor, type Palette } from '../../lib/terminal/palette';
@@ -24,7 +30,22 @@ import type { FontMetrics, TerminalRenderer } from '../../lib/terminal/renderer'
 // `cwd` resolves repo-relative file links (e.g. electron/main/window.ts).
 // `autoFocus` (default true): grab keyboard focus on mount. Multi-pane mounts
 // gate this to the focused pane so last-mount-wins can't steal focus.
-const props = defineProps<{ sessionId: string; cwd?: string; autoFocus?: boolean }>();
+// Exactly one of `sessionId` (live PTY) / `archivedTabId` (frozen snapshot) is
+// set; archived mode opens no socket and accepts no input.
+const props = defineProps<{
+  sessionId?: string;
+  archivedTabId?: string;
+  cwd?: string;
+  autoFocus?: boolean;
+}>();
+
+/** Archived (read-only snapshot) vs live. Fixed at mount. */
+const archived = computed(() => props.archivedTabId != null);
+/** Set true when the stored snapshot can't be read/decoded; the host still shows
+ *  the un-archive controls. */
+const snapshotUnavailable = ref(false);
+/** Guards the async archived read against a teardown mid-flight. */
+let disposed = false;
 // Emitted after each applySize with the pane's grid size, so the workspace can
 // keep backgrounded single-pane tabs sized to the viewport (no reactivation jump).
 const emit = defineEmits<{ resized: [cols: number, rows: number] }>();
@@ -234,6 +255,23 @@ function applySize(): void {
     metricsDpr = ratio;
     controller.setMetrics(metrics);
   }
+  // Archived: the grid is frozen. Keep the captured cols/rows (reflowing would
+  // corrupt the stored layout), size the Canvas2D backing store to exactly those
+  // cells at the current DPR, and let the pane clip/scroll. No transport resize.
+  if (archived.value) {
+    const s = controller.store;
+    const { cols, rows } = s;
+    cnv.width = Math.floor(cols * metrics.cellWidth * ratio);
+    cnv.height = Math.floor(rows * metrics.cellHeight * ratio);
+    cnv.style.width = `${cols * metrics.cellWidth}px`;
+    cnv.style.height = `${rows * metrics.cellHeight}px`;
+    if (ctx2d) ctx2d.setTransform(ratio, 0, 0, ratio, 0, 0);
+    renderer?.setDpr?.(ratio);
+    renderer?.resize(cols, rows, 1); // renderer viewport only (no PTY behind it)
+    controller.store.markAllDirty();
+    controller.repaint();
+    return;
+  }
   // Settings hides the terminal with v-show. A font change still runs this
   // watcher, but the hidden container cannot supply a valid grid; wait for the
   // ResizeObserver fired when it becomes visible instead of resizing the PTY to
@@ -327,6 +365,68 @@ function onContextLost(e: Event): void {
   rebuildRenderer(false);
 }
 
+/** Read the stored snapshot for `archivedTabId`, seed a GridStore, and drive a
+ *  read-only controller with a no-op transport on a forced-Canvas2D renderer. No
+ *  socket, no WebGL2, no PTY. Both awaits are stale-guarded so a fast tab switch
+ *  never seeds the wrong pane. */
+async function mountArchived(c: HTMLCanvasElement): Promise<void> {
+  const requestedTabId = props.archivedTabId;
+  let blob;
+  try {
+    blob = await useRpc().request.tabSnapshotRead({ id: requestedTabId! });
+  } catch {
+    snapshotUnavailable.value = true;
+    return;
+  }
+  if (!isCurrentArchivedRead(requestedTabId, props.archivedTabId, disposed)) return;
+  if (!blob) {
+    snapshotUnavailable.value = true;
+    return;
+  }
+  let dump;
+  try {
+    dump = await decodeArchivedSnapshot(blob);
+  } catch {
+    snapshotUnavailable.value = true;
+    return;
+  }
+  if (!isCurrentArchivedRead(requestedTabId, props.archivedTabId, disposed)) return;
+
+  const store = gridStoreFromArchivedSnapshot(dump);
+  const transport = new StaticGridTransport(store);
+  // Force Canvas2D: an archived snapshot must allocate no WebGL2 context.
+  const made = createRenderer(c, { ...rendererOptions(), preferWebgl: false });
+  renderer = made.renderer;
+  renderKind = 'canvas2d';
+  ctx2d = c.getContext('2d');
+  bindCanvasEvents(c);
+
+  controller = new TerminalController({
+    store,
+    transport,
+    renderer,
+    metrics,
+    readOnly: true,
+    schedule: (cb) => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(cb);
+    },
+  });
+  controller.onAfterPaint = () => updateScrollUi();
+  controller.onScroll = () => updateScrollUi();
+
+  applySize();
+  controller.repaint();
+
+  resizeObserver = new ResizeObserver(() => scheduleResize());
+  if (container.value) resizeObserver.observe(container.value);
+
+  // Link affordance stays active (modifier-hover underlines) — read-only doesn't
+  // disable link detection/opening.
+  window.addEventListener('keydown', onModifierChange);
+  window.addEventListener('keyup', onModifierChange);
+}
+
 onMounted(async () => {
   const c = canvas.value;
   if (!c) return;
@@ -334,6 +434,21 @@ onMounted(async () => {
 
   metrics = measure();
   bgColor.value = paletteFromTheme().background;
+
+  // Exactly one source of truth: reject both/neither id (a live PTY and a frozen
+  // snapshot are mutually exclusive).
+  const hasLive = props.sessionId != null;
+  const hasArchived = props.archivedTabId != null;
+  if (hasLive === hasArchived) {
+    console.error('GridTerminal: exactly one of sessionId / archivedTabId is required');
+    return;
+  }
+
+  if (hasArchived) {
+    await mountArchived(c);
+    return;
+  }
+
   const store = new GridStore();
 
   const made = createRenderer(c, rendererOptions());
@@ -348,7 +463,7 @@ onMounted(async () => {
 
   controller = new TerminalController({
     store,
-    session,
+    transport: session,
     renderer,
     metrics,
     schedule: (cb) => {
@@ -361,7 +476,7 @@ onMounted(async () => {
   controller.onScroll = () => updateScrollUi(); // sub-line scrollbar tracking
 
   session.connect();
-  registerGridSession(props.sessionId, session, renderKind);
+  registerGridSession(props.sessionId!, session, renderKind);
   applySize();
 
   resizeObserver = new ResizeObserver(() => scheduleResize());
@@ -814,7 +929,8 @@ function refreshFindState(): void {
 }
 
 onBeforeUnmount(() => {
-  unregisterGridSession(props.sessionId);
+  disposed = true;
+  if (props.sessionId) unregisterGridSession(props.sessionId);
   cancelAnimationFrame(raf);
   stopBlink();
   window.removeEventListener('pointermove', onSliderMove);
@@ -899,7 +1015,17 @@ defineExpose({
     >
       ↓ Latest
     </button>
+    <!-- Archived read failure: keep the pane visible (un-archive controls live in
+         TerminalPane) but tell the user the snapshot couldn't be restored. -->
+    <div
+      v-if="snapshotUnavailable"
+      class="pointer-events-none absolute inset-0 flex items-center justify-center text-xs text-muted-foreground"
+    >
+      Archived snapshot unavailable
+    </div>
+    <!-- Hidden keyboard/IME input: live sessions only (archived accepts none). -->
     <textarea
+      v-if="!archived"
       ref="hiddenInput"
       class="terminal-input absolute resize-none overflow-hidden border-0 p-0 outline-none"
       :class="composing ? 'z-10 whitespace-pre' : 'h-px w-px opacity-0'"

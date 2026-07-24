@@ -3,7 +3,6 @@
 // and dependency-injected so it's unit-testable; the Vue host feeds it real DOM
 // events and a real renderer/session.
 
-import { GridSession } from './GridSession';
 import { GridStore } from './GridStore';
 import { Ime } from './ime';
 import {
@@ -14,7 +13,7 @@ import {
   type KeyLike,
 } from './inputMapping';
 import type { FontMetrics, SearchHighlight, TerminalRenderer } from './renderer';
-import type { MouseAction, SearchResultFrame } from './gridProtocol';
+import type { Mods, MouseAction, SearchResultFrame } from './gridProtocol';
 import {
   colToIndex,
   flattenSelection,
@@ -42,11 +41,36 @@ const TAIL_PREFETCH_SCREENS = 2;
  *  where the rows just above the tail keep scrolling away before they're read. */
 const TAIL_PREFETCH_THROTTLE_MS = 120;
 
+/** The transport a controller drives: the live socket-backed `GridSession`, or a
+ *  no-op `StaticGridTransport` for a frozen archived snapshot. Structural so both
+ *  satisfy it without a shared base class. Covers exactly the surface the
+ *  controller touches. */
+export interface GridTransport {
+  readonly store: GridStore;
+  /** Called after each applied grid frame so the renderer can repaint. */
+  onUpdate?: () => void;
+  /** Called when a search reply arrives. */
+  onSearchResult?: (r: SearchResultFrame) => void;
+  sendKey(key: string, mods?: Mods): void;
+  sendText(text: string): void;
+  sendPaste(text: string): void;
+  sendMouse(action: MouseAction, button: number, col: number, row: number, mods?: Mods): void;
+  fetchHistory(from: number, to: number): number;
+  cancelHistory(reqId: number): void;
+  cancelAllFetches(): void;
+  search(query: string, opts?: { limit?: number; caseSensitive?: boolean }): number;
+  resize(cols: number, rows: number): void;
+  dispose(): void;
+}
+
 export interface ControllerDeps {
   store: GridStore;
-  session: GridSession;
+  transport: GridTransport;
   renderer: TerminalRenderer;
   metrics: FontMetrics;
+  /** Read-only (archived snapshot): suppress all input/fetch/resize forwarding;
+   *  keep selection, scroll, copy, link detection, repaint. */
+  readOnly?: boolean;
   ime?: Ime;
   /** Paint scheduler (rAF in the app; synchronous in tests). */
   schedule?: (cb: () => void) => void;
@@ -61,7 +85,8 @@ export interface ControllerDeps {
 
 export class TerminalController {
   readonly store: GridStore;
-  readonly session: GridSession;
+  readonly transport: GridTransport;
+  private readonly readOnly: boolean;
   /** Mutable so the host can swap backends at runtime (WebGL2 context loss →
    *  Canvas2D). Use `setRenderer` to swap so selection is re-applied. */
   renderer: TerminalRenderer;
@@ -106,7 +131,8 @@ export class TerminalController {
 
   constructor(deps: ControllerDeps) {
     this.store = deps.store;
-    this.session = deps.session;
+    this.transport = deps.transport;
+    this.readOnly = deps.readOnly ?? false;
     this.renderer = deps.renderer;
     this.metrics = deps.metrics;
     this.ime = deps.ime ?? new Ime();
@@ -115,7 +141,7 @@ export class TerminalController {
     this.setAutoScroll = deps.setAutoScroll ?? ((cb, ms) => setInterval(cb, ms) as unknown);
     this.clearAutoScroll = deps.clearAutoScroll ?? ((h) => clearInterval(h as ReturnType<typeof setInterval>));
 
-    this.session.onUpdate = () => {
+    this.transport.onUpdate = () => {
       if (this.store.syncGen !== this.lastSyncGen) {
         this.lastSyncGen = this.store.syncGen;
         // A sync may have reflowed the grid → absolute-line selection anchors
@@ -123,7 +149,7 @@ export class TerminalController {
         if (this.sel) this.clearSelection();
         // Resync invalidates outstanding fetches; clear so post-resync fetches
         // aren't deduped against dead reqIds (store clears pendingHistory in applySync).
-        this.session.cancelAllFetches();
+        this.transport.cancelAllFetches();
         this.lastFetchReqId = 0;
       }
       this.requestPaint();
@@ -132,8 +158,11 @@ export class TerminalController {
       if (this.store.atBottom()) this.prefetchAboveTail();
       else this.fetchVisible();
     };
-    this.ime.onCommit = (text) => this.session.sendText(text);
-    this.session.onSearchResult = (r) => this.onSearchResult(r);
+    this.ime.onCommit = (text) => {
+      if (this.readOnly) return;
+      this.transport.sendText(text);
+    };
+    this.transport.onSearchResult = (r) => this.onSearchResult(r);
     // onPreedit is wired by the host to the renderer's inline preedit overlay.
   }
 
@@ -170,28 +199,31 @@ export class TerminalController {
 
   /** Handle a keydown. Returns true if it was consumed as terminal input. */
   handleKeyDown(e: KeyLike): boolean {
+    if (this.readOnly) return false; // archived snapshot accepts no input
     if (this.ime.composing) return false; // let composition run
     if (isAppShortcut(e)) return false; // app handles it
     const sem = keyEventToSemantic(e);
     if (!sem) return false; // plain text → flows through the input/composition path
     this.clearSelection();
     this.snapToBottomOnInput();
-    this.session.sendKey(sem.key, sem.mods);
+    this.transport.sendKey(sem.key, sem.mods);
     return true;
   }
 
   /** Committed text from the `input` event path (non-IME printable input). */
   handleText(text: string): void {
+    if (this.readOnly) return; // archived snapshot accepts no input
     if (!text) return;
     this.clearSelection();
     this.snapToBottomOnInput();
-    this.session.sendText(text);
+    this.transport.sendText(text);
   }
 
   handlePaste(text: string): void {
+    if (this.readOnly) return; // archived snapshot accepts no input
     if (!text) return;
     this.snapToBottomOnInput();
-    this.session.sendPaste(text);
+    this.transport.sendPaste(text);
   }
 
   /** Pointer event at canvas-relative pixels. Routes to the app (mouse mode on)
@@ -204,8 +236,10 @@ export class TerminalController {
     mods: { shift?: boolean; alt?: boolean; ctrl?: boolean; meta?: boolean } = {},
   ): { col: number; row: number } | null {
     const { col, row } = pixelToCell(px, py, this.metrics, this.store.cols, this.store.rows);
-    if (this.store.modes.mouseReporting) {
-      this.session.sendMouse(action, mouseButton(button), col, row, mods);
+    // Read-only: never forward to a PTY; always hand back the cell so the host
+    // drives local selection (the frozen grid has no app to report to).
+    if (this.store.modes.mouseReporting && !this.readOnly) {
+      this.transport.sendMouse(action, mouseButton(button), col, row, mods);
       return null;
     }
     return { col, row }; // host drives local selection
@@ -221,7 +255,9 @@ export class TerminalController {
     if (deltaRows === 0) return;
 
     // Discrete paths emit whole-line events, so accumulate the fractional rows.
-    if (this.store.modes.mouseReporting || this.store.modes.altScreen) {
+    // Read-only always uses local scrollback: a frozen grid has no live program
+    // to send wheel/arrow events to, regardless of its captured modes.
+    if (!this.readOnly && (this.store.modes.mouseReporting || this.store.modes.altScreen)) {
       this.wheelAccum += deltaRows;
       const lines = Math.trunc(this.wheelAccum);
       if (lines === 0) return;
@@ -231,10 +267,10 @@ export class TerminalController {
       if (this.store.modes.mouseReporting) {
         const { col, row } = pixelToCell(px, py, this.metrics, this.store.cols, this.store.rows);
         const action: MouseAction = up ? 'wheelUp' : 'wheelDown';
-        for (let i = 0; i < n; i++) this.session.sendMouse(action, 0, col, row);
+        for (let i = 0; i < n; i++) this.transport.sendMouse(action, 0, col, row);
       } else {
         const key = up ? 'ArrowUp' : 'ArrowDown';
-        for (let i = 0; i < n; i++) this.session.sendKey(key, {});
+        for (let i = 0; i < n; i++) this.transport.sendKey(key, {});
       }
       return;
     }
@@ -269,6 +305,7 @@ export class TerminalController {
    *  the scroll direction) that aren't cached yet. No-op while following the
    *  tail. */
   fetchVisible(): void {
+    if (this.readOnly) return; // full history pre-seeded; nothing to fetch
     const s = this.store;
     const scrollbackEnd = s.maxScrollOffset(); // = totalLines - rows
     if (s.atBottom() || scrollbackEnd <= 0) return;
@@ -283,11 +320,11 @@ export class TerminalController {
     // Supersede: a new visible range means the prior fetch (likely a different
     // range after a direction change / scroll) is obsolete — cancel its stream.
     if (this.lastFetchReqId) {
-      this.session.cancelHistory(this.lastFetchReqId);
+      this.transport.cancelHistory(this.lastFetchReqId);
       s.clearPendingHistory(); // cancelled rows must not stay pinned (unfetchable)
     }
     s.markHistoryRequested(from, to); // dedup: don't re-request rows on the wire
-    this.lastFetchReqId = this.session.fetchHistory(from, to);
+    this.lastFetchReqId = this.transport.fetchHistory(from, to);
   }
 
   /** While following the tail, warm the cache just above the live screen so the
@@ -295,6 +332,7 @@ export class TerminalController {
    *  above the tail keep scrolling away unread, so refetching them every frame
    *  is wasted work (and competes with live deltas for the emulator lock). */
   prefetchAboveTail(): void {
+    if (this.readOnly) return; // full history pre-seeded; nothing to prefetch
     const s = this.store;
     const end = s.maxScrollOffset(); // abs index of the live screen's top row
     if (end <= 0) return;
@@ -304,7 +342,7 @@ export class TerminalController {
     if (from >= end || s.missingHistory(from, end).length === 0) return;
     this.lastTailPrefetch = now;
     s.markHistoryRequested(from, end);
-    this.session.fetchHistory(from, end);
+    this.transport.fetchHistory(from, end);
   }
 
   // ---- selection (local; mouse-reporting-off only) ----
@@ -453,7 +491,7 @@ export class TerminalController {
       this.clearSearch();
       return;
     }
-    this.searchReqId = this.session.search(query, { caseSensitive });
+    this.searchReqId = this.transport.search(query, { caseSensitive });
   }
 
   searchNext(): void {
@@ -531,11 +569,11 @@ export class TerminalController {
   }
 
   resize(cols: number, rows: number): void {
-    this.session.cancelAllFetches();
+    this.transport.cancelAllFetches();
     this.store.clearPendingHistory();
     this.lastFetchReqId = 0;
     this.renderer.resize(cols, rows, 1);
-    this.session.resize(cols, rows);
+    this.transport.resize(cols, rows);
   }
 
   private snapToBottomOnInput(): void {
@@ -547,7 +585,7 @@ export class TerminalController {
 
   dispose(): void {
     this.stopAutoScroll();
-    this.session.dispose();
+    this.transport.dispose();
     this.renderer.dispose();
   }
 }
