@@ -183,6 +183,22 @@ async fn dispatch_impl(req: Request, state: Arc<DaemonState>) -> Response {
             .unwrap_or(false);
             Response::ok(req.id, serde_json::Value::Bool(found))
         }
+        m if m == methods::TAB_SNAPSHOT => {
+            // Encoding up to ~5,000 rows is non-trivial CPU work; keep it off
+            // the Tokio worker.
+            let tab_id = s(req.params.get("tabId"));
+            let sessions = Arc::clone(&state.sessions);
+            let encoded = tokio::task::spawn_blocking(move || {
+                let dump = crate::daemon::tab_pty::snapshot_tab_pty(&sessions, &tab_id)?;
+                serde_json::to_value(dump).map_err(|e| e.to_string())
+            })
+            .await;
+            match encoded {
+                Ok(Ok(value)) => Response::ok(req.id, value),
+                Ok(Err(e)) => Response::err(req.id, e),
+                Err(e) => Response::err(req.id, format!("snapshot task failed: {e}")),
+            }
+        }
         m if m == methods::LIST_LIVE_TAB_IDS => {
             let result: Result<Vec<String>, String> = (|| {
                 let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
@@ -273,5 +289,24 @@ async fn dispatch_impl(req: Request, state: Arc<DaemonState>) -> Response {
         }
 
         other => Response::err(req.id, format!("unknown daemon method: {other}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::DaemonState;
+
+    #[tokio::test]
+    async fn tab_snapshot_missing_tab_returns_exact_error() {
+        let state = Arc::new(DaemonState::new(0));
+        let req = Request {
+            id: 1,
+            method: methods::TAB_SNAPSHOT.to_string(),
+            params: serde_json::json!({ "tabId": "nonexistent" }),
+        };
+        let resp = dispatch_impl(req, state).await;
+        let err = resp.error.expect("expected an error response");
+        assert_eq!(err.message, "session already exited; nothing to archive.");
     }
 }

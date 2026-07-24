@@ -17,8 +17,9 @@ use alacritty_terminal::term::{Config, Term, TermDamage, TermMode};
 use alacritty_terminal::vte::ansi::{Color, CursorShape, CursorStyle, NamedColor, Processor, Rgb};
 
 use crate::services::grid_protocol::{
-    flags as wf, GridDelta, GridSnapshot, RowRun, WireCell, WireColor, WireModes,
+    flags as wf, pack_color, GridDelta, GridSnapshot, RowRun, WireCell, WireColor, WireModes,
 };
+use crate::types::{GridSnapshotCell, GridSnapshotDump, GridSnapshotModes, GridSnapshotRow};
 
 /// Terminal color table used to answer OSC 10/11/12 + indexed color queries.
 /// The 16 ANSI colors + fg/bg/cursor come from the client's active theme (pushed
@@ -583,6 +584,76 @@ impl TerminalEmulator {
             cells.push(Self::cell_to_wire(cell));
         }
         cells
+    }
+
+    /// Convert one wire cell to its renderer-native, JSON-serializable form
+    /// (packed colors, u32 code points) for the archive-snapshot DTO.
+    fn wire_cell_to_dump(cell: &WireCell) -> GridSnapshotCell {
+        GridSnapshotCell {
+            cp: cell.ch as u32,
+            fg: pack_color(cell.fg),
+            bg: pack_color(cell.bg),
+            flags: cell.flags,
+            width: cell.width,
+            zw: cell.zerowidth.iter().map(|c| *c as u32).collect(),
+            ul_color: cell.underline_color.map(pack_color),
+            link: cell.hyperlink.clone(),
+        }
+    }
+
+    /// Build a one-shot, renderer-native snapshot dump of the full retained
+    /// grid (scrollback + live screen) for archiving a session. Reads the
+    /// viewport and `visual_rows` under the caller's single emulator lock —
+    /// no separate re-lock, so the grid can't shift between reads. History
+    /// excludes the live screen (`history_len = total - rows`) to avoid
+    /// duplicating it in both `history_rows` and `viewport`.
+    pub fn snapshot_dump(&self) -> GridSnapshotDump {
+        let total_lines = self.grid_total_lines();
+        let history_len = total_lines.saturating_sub(self.rows as usize);
+        let history_rows: Vec<GridSnapshotRow> = self
+            .visual_rows(0, history_len)
+            .into_iter()
+            .enumerate()
+            .map(|(i, (cells, wrapped))| GridSnapshotRow {
+                line: i,
+                start_col: 0,
+                cells: cells.iter().map(Self::wire_cell_to_dump).collect(),
+                wrapped,
+            })
+            .collect();
+
+        let viewport: Vec<GridSnapshotRow> = (0..self.rows as i32)
+            .map(|l| GridSnapshotRow {
+                line: (history_len as i32 + l) as usize,
+                start_col: 0,
+                cells: self.wire_row(l).iter().map(Self::wire_cell_to_dump).collect(),
+                wrapped: self.row_wrapped(l),
+            })
+            .collect();
+
+        let (cursor_shape, cursor_blink) = self.cursor_style();
+        let cursor = self.cursor();
+        let m = self.wire_modes();
+        GridSnapshotDump {
+            cols: self.cols,
+            rows: self.rows,
+            cursor_row: cursor.0,
+            cursor_col: cursor.1,
+            total_lines,
+            base: self.evicted,
+            cursor_shape: cursor_shape.to_string(),
+            cursor_blink,
+            modes: GridSnapshotModes {
+                mouse_reporting: m.mouse_reporting,
+                mouse_drag: m.mouse_drag,
+                mouse_motion: m.mouse_motion,
+                alt_screen: m.alt_screen,
+                app_cursor: m.app_cursor,
+                bracketed_paste: m.bracketed_paste,
+            },
+            history_rows,
+            viewport,
+        }
     }
 
     /// Full visible-screen snapshot in wire form.
@@ -1198,5 +1269,46 @@ mod tests {
             emu.process(b"\x1b]11;?\x07"); // OSC 11 background-color query
         }
         assert!(emu.take_responses().len() <= 64 * 1024);
+    }
+
+    #[test]
+    fn snapshot_dump_captures_history_and_viewport() {
+        let mut m = TerminalEmulator::new(2, 6, 100);
+        m.process(b"one\r\ntwo\r\nthree");
+        let dump = m.snapshot_dump();
+        assert_eq!((dump.cols, dump.rows), (6, 2));
+        assert_eq!(dump.total_lines, 3);
+        assert_eq!(dump.history_rows.len(), 1);
+        assert_eq!(dump.viewport.len(), 2);
+        assert_eq!(dump.history_rows[0].cells[0].cp, 'o' as u32);
+        assert_eq!(dump.viewport[1].cells[0].cp, 't' as u32);
+        assert_eq!((dump.cursor_row, dump.cursor_col), m.cursor());
+    }
+
+    #[test]
+    fn snapshot_dump_survives_scroll_color_and_wrap() {
+        // 4x3 grid: emit enough lines to scroll (more than one screen), include
+        // an indexed-color run, and a soft-wrapped line (width 4, 6 chars).
+        let mut m = TerminalEmulator::new(3, 4, 100);
+        for i in 0..5 {
+            m.process(format!("l{}\r\n", i).as_bytes());
+        }
+        m.process(b"\x1b[31mR\x1b[0m");
+        m.process(b"abcdef"); // wraps across two visual rows at width 4
+        let dump = m.snapshot_dump();
+
+        // History + viewport rows together account for every retained row.
+        assert_eq!(dump.history_rows.len() + dump.viewport.len(), dump.total_lines);
+        assert!(dump.history_rows.len() > 0, "expected scrollback beyond one screen");
+
+        // Packed indexed foreground (red = index 1): tag (1<<24) | index.
+        let all_rows: Vec<&crate::types::GridSnapshotRow> =
+            dump.history_rows.iter().chain(dump.viewport.iter()).collect();
+        let has_red = all_rows.iter().any(|row| row.cells.iter().any(|c| c.fg == (1u32 << 24) | 1));
+        assert!(has_red, "expected packed indexed red foreground to survive");
+
+        // At least one wrapped row.
+        let has_wrapped = all_rows.iter().any(|row| row.wrapped);
+        assert!(has_wrapped, "expected a wrapped row to survive");
     }
 }

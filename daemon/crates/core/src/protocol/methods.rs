@@ -32,6 +32,8 @@ pub const TAB_KILL: &str = "tab_kill";
 pub const TAB_RESIZE: &str = "tab_resize";
 pub const LIST_LIVE_TAB_IDS: &str = "list_live_tab_ids";
 pub const TABS_HAS_RUNNING_CHILD: &str = "tabs_has_running_child";
+// Archive: one-shot renderer-native grid dump for a tab's live PTY.
+pub const TAB_SNAPSHOT: &str = "tab_snapshot";
 
 // sidecar diagnostics (watcher/cache counters; daemon serves the session half)
 pub const GET_SIDECAR_DIAGNOSTICS: &str = "get_sidecar_diagnostics";

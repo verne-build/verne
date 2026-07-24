@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::services::session_manager::{self, SessionManager, StartSessionOpts};
 use crate::state::EventBus;
-use crate::types::TabSpawnPlan;
+use crate::types::{GridSnapshotDump, TabSpawnPlan};
 
 /// Spawn (or reuse) the live PTY session for a tab, keyed by `tab_id`. Returns
 /// the session id. Idempotent: if a live session already exists for the tab
@@ -161,4 +161,21 @@ pub fn kill_tab_pty(sessions: &Arc<Mutex<SessionManager>>, tab_id: &str) -> Resu
     } else {
         Ok(false)
     }
+}
+
+/// Snapshot the live grid of a tab's PTY for archiving. Clones the emulator
+/// `Arc` before releasing the session-manager lock so grid encoding never
+/// holds both locks at once.
+pub fn snapshot_tab_pty(
+    sessions: &Arc<Mutex<SessionManager>>,
+    tab_id: &str,
+) -> Result<GridSnapshotDump, String> {
+    let emulator = {
+        let sm = sessions.lock().map_err(|e| e.to_string())?;
+        sm.get_session_by_agent(tab_id)
+            .map(|s| Arc::clone(&s.emulator))
+            .ok_or_else(|| "session already exited; nothing to archive.".to_string())?
+    };
+    let dump = emulator.lock().map_err(|e| e.to_string())?.snapshot_dump();
+    Ok(dump)
 }

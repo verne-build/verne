@@ -29,6 +29,7 @@ const DAEMON_METHODS = new Set<string>([
   "tab_spawn",
   "tab_kill",
   "tab_resize",
+  "tab_snapshot",
   "list_live_tab_ids",
   // hook config + agent states (daemon owns these after slice 4)
   "__get_hook_config",

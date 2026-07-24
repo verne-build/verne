@@ -444,6 +444,62 @@ pub struct TabCreateResult {
     pub spawn_plan: TabSpawnPlan,
 }
 
+/// Archive-session snapshot DTOs: renderer-native (packed colors, u32 code
+/// points), camelCase over the wire. Distinct from the live binary grid
+/// protocol (`services::grid_protocol`) — these are JSON, built once at
+/// archive time, not streamed.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GridSnapshotCell {
+    pub cp: u32,
+    pub fg: u32,
+    pub bg: u32,
+    pub flags: u16,
+    pub width: u8,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub zw: Vec<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ul_color: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GridSnapshotRow {
+    pub line: usize,
+    pub start_col: u16,
+    pub cells: Vec<GridSnapshotCell>,
+    pub wrapped: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GridSnapshotModes {
+    pub mouse_reporting: bool,
+    pub mouse_drag: bool,
+    pub mouse_motion: bool,
+    pub alt_screen: bool,
+    pub app_cursor: bool,
+    pub bracketed_paste: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GridSnapshotDump {
+    pub cols: u16,
+    pub rows: u16,
+    pub cursor_row: u16,
+    pub cursor_col: u16,
+    pub total_lines: usize,
+    pub base: usize,
+    pub cursor_shape: String,
+    pub cursor_blink: bool,
+    pub modes: GridSnapshotModes,
+    pub history_rows: Vec<GridSnapshotRow>,
+    pub viewport: Vec<GridSnapshotRow>,
+}
+
 #[cfg(test)]
 mod tab_spawn_plan_tests {
     use super::*;

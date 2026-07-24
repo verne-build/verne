@@ -114,6 +114,20 @@ pub struct GridDelta {
     pub runs: Vec<RowRun>,
 }
 
+/// Pack a `WireColor` into a renderer-native u32 for the (non-streamed)
+/// archive-snapshot DTOs: `0` default, `(1 << 24) | index` indexed,
+/// `(2 << 24) | rgb` truecolor. Distinct from the tagged-byte wire encoding
+/// used by `encode_color` for the live binary protocol — do not conflate.
+pub fn pack_color(c: WireColor) -> u32 {
+    match c {
+        WireColor::Default => 0,
+        WireColor::Indexed(i) => (1u32 << 24) | i as u32,
+        WireColor::Rgb(r, g, b) => {
+            (2u32 << 24) | ((r as u32) << 16) | ((g as u32) << 8) | b as u32
+        }
+    }
+}
+
 fn encode_color(out: &mut Vec<u8>, c: WireColor) {
     match c {
         WireColor::Default => out.push(0),
