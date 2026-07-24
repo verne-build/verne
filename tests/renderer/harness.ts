@@ -3,10 +3,14 @@
 import { GridStore } from '../../src/lib/terminal/GridStore';
 import { createRenderer } from '../../src/lib/terminal/createRenderer';
 import { defaultPalette } from '../../src/lib/terminal/palette';
+import { gridStoreFromArchivedSnapshot } from '../../src/lib/terminal/archivedSnapshot';
+import { StaticGridTransport } from '../../src/lib/terminal/StaticGridTransport';
+import { TerminalController } from '../../src/lib/terminal/TerminalController';
 import type { FontMetrics, TerminalRenderer } from '../../src/lib/terminal/renderer';
 import type { DeltaFrame, SyncFrame } from '../../src/lib/terminal/gridProtocol';
 import type { WebGL2Renderer } from '../../src/lib/terminal/WebGL2Renderer';
 import {
+  archivedFixture,
   cell,
   floodFrames,
   searchHighlights,
@@ -16,6 +20,43 @@ import {
   truecolorFrames,
   uniqueGlyphFrames,
 } from './scenarios';
+
+// ---- Archived-mode instrumentation ----------------------------------------
+// Counts survive for the lifetime of the page (each Playwright test reloads
+// the page, so this never leaks across tests). `mountArchived` resets both to
+// 0 immediately before it runs so the counts it reports are scoped to exactly
+// that call, regardless of what other harness functions on this same page did
+// before it (e.g. a webgl2 readback in paintFrames).
+let webglRequests = 0;
+let websocketRequests = 0;
+
+const nativeGetContext = HTMLCanvasElement.prototype.getContext;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+(HTMLCanvasElement.prototype as any).getContext = function (
+  this: HTMLCanvasElement,
+  type: string,
+  ...rest: unknown[]
+) {
+  if (type === 'webgl2') webglRequests++;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (nativeGetContext as any).call(this, type, ...rest);
+};
+
+/** Counting stand-in for `window.WebSocket` — the archived path must never
+ *  construct one (`StaticGridTransport` opens no socket). Present so a
+ *  regression that accidentally wires a live `GridSession` into archived mode
+ *  is caught here instead of only in manual QA. */
+class CountingWebSocket {
+  constructor(..._args: unknown[]) {
+    websocketRequests++;
+  }
+  close(): void {}
+  send(): void {}
+  addEventListener(): void {}
+  removeEventListener(): void {}
+}
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+(window as any).WebSocket = CountingWebSocket;
 
 interface BenchStats {
   frames: number;
@@ -206,6 +247,73 @@ const api = {
     renderer.setSelection({ startLine: 13, startCol: 0, endLine: 14, endCol: 20 });
     renderer.paint(store);
     return k;
+  },
+
+  // ---- archived-snapshot scenario: proves Canvas2D-only, no-socket replay --
+  // Reset per-call so counts reported below are scoped to this mount, not
+  // whatever else ran on this page earlier.
+  webglRequests: 0,
+  websocketRequests: 0,
+  copiedText: '',
+  totalLines: 0,
+
+  /** Seed a GridStore from an archived snapshot dump (Task 4's replay path),
+   *  drive it through the same read-only TerminalController + StaticGridTransport
+   *  GridTerminal.vue uses for archived tabs, force Canvas2D (`preferWebgl:
+   *  false`), scroll to the oldest retained row, select it, and copy. Mirrors
+   *  `mountArchived()` in GridTerminal.vue. */
+  mountArchived(cols: number, rows: number): string {
+    webglRequests = 0;
+    websocketRequests = 0;
+
+    document.querySelector('canvas')?.remove();
+    renderer?.dispose();
+    canvas = document.createElement('canvas');
+    canvas.width = cols * METRICS.cellWidth;
+    canvas.height = rows * METRICS.cellHeight;
+    canvas.style.width = `${cols * METRICS.cellWidth}px`;
+    canvas.style.height = `${rows * METRICS.cellHeight}px`;
+    document.body.appendChild(canvas);
+
+    const dump = archivedFixture(cols, rows);
+    store = gridStoreFromArchivedSnapshot(dump);
+    const transport = new StaticGridTransport(store);
+    const made = createRenderer(canvas, {
+      metrics: METRICS,
+      palette: defaultPalette,
+      ligatures: false,
+      boldIsBright: false,
+      minContrast: 1,
+      preferWebgl: false, // archived: must never request a webgl2 context
+    });
+    renderer = made.renderer;
+    kind = made.kind;
+
+    const controller = new TerminalController({
+      store,
+      transport,
+      renderer,
+      metrics: METRICS,
+      readOnly: true,
+      schedule: (cb) => cb(), // synchronous in the harness
+    });
+    controller.repaint();
+
+    // Scroll to the very top of scrollback: the oldest history row lands on
+    // render row 0 once scrollOffset === maxScrollOffset.
+    controller.scrollTo(store.maxScrollOffset());
+    controller.repaint();
+
+    // Select the full width of render row 0 (the oldest line) and copy it.
+    controller.selectionStart(0, 0);
+    controller.selectionUpdate(canvas.width, 0);
+    controller.selectionEnd();
+
+    api.webglRequests = webglRequests;
+    api.websocketRequests = websocketRequests;
+    api.copiedText = controller.copySelection();
+    api.totalLines = store.totalLines;
+    return kind;
   },
 };
 

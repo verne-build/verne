@@ -40,3 +40,17 @@ test('selection + search overlays @ dpr1', async ({ page }) => {
   expect(kind).toBe('webgl2');
   await expect(page.locator('canvas')).toHaveScreenshot('overlays-dpr1.png');
 });
+
+// Archived-snapshot replay: proves the frozen-tab path (Task 4's
+// gridStoreFromArchivedSnapshot + StaticGridTransport + read-only
+// TerminalController) never touches WebGL2 or WebSocket, retains full
+// history, and supports copy.
+test('archived snapshot renders via Canvas2D with full history, no socket', async ({ page }) => {
+  const kind = await page.evaluate(() => window.__harness.mountArchived(20, 2));
+  expect(kind).toBe('canvas2d');
+  expect(await page.evaluate(() => window.__harness.webglRequests)).toBe(0);
+  expect(await page.evaluate(() => window.__harness.websocketRequests)).toBe(0);
+  expect(await page.evaluate(() => window.__harness.totalLines)).toBe(5);
+  expect(await page.evaluate(() => window.__harness.copiedText)).toContain('oldest');
+  await expect(page.locator('canvas')).toHaveScreenshot('archived-terminal-dpr1.png');
+});

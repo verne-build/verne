@@ -12,6 +12,7 @@ import {
   type SyncFrame,
   type WireModes,
 } from '../../src/lib/terminal/gridProtocol';
+import type { GridSnapshotDump, GridSnapshotRow } from '../../src/types/shared';
 
 export const MODES: WireModes = {
   mouseReporting: false,
@@ -190,4 +191,51 @@ export function stylesFixture(cols: number, rows: number): SyncFrame {
   const f = syncFrame(cols, rows, runs);
   f.cursor = [21, 4]; // block cursor on an empty row, in-frame
   return f;
+}
+
+/** Archived-snapshot fixture for `gridStoreFromArchivedSnapshot`: 3 history
+ *  rows (oldest first, one soft-wrapped) + a 2-row viewport (totalLines === 5),
+ *  covering truecolor and a wide glyph. History row 0 (the absolute oldest
+ *  line, at max scroll) carries the word "oldest" so a copy of it is
+ *  unambiguous in the harness assertion. */
+export function archivedFixture(cols: number, rows: number): GridSnapshotDump {
+  const row = (line: number, cells: Cell[], wrapped = false): GridSnapshotRow => ({
+    line,
+    startCol: 0,
+    cells,
+    wrapped,
+  });
+  const text = (s: string, over: Partial<Cell> = {}) => [...s].map((c) => cell(c, over));
+  const truecolorRun = (n: number): Cell[] =>
+    Array.from({ length: n }, (_, i) =>
+      cell('█', { fg: rgbColor(i * 10, 255 - i * 10, 128), bg: rgbColor(20, 20, 20) }),
+    );
+  const wideRun = (): Cell[] => [
+    ...text('wide: '),
+    { cp: '世'.codePointAt(0)!, fg: DEFAULT_COLOR, bg: DEFAULT_COLOR, flags: FLAG.WIDE, width: 2 },
+    { cp: '界'.codePointAt(0)!, fg: DEFAULT_COLOR, bg: DEFAULT_COLOR, flags: FLAG.WIDE, width: 2 },
+  ];
+
+  const historyRows: GridSnapshotRow[] = [
+    row(0, text('oldest history row 0')), // absolute line 0 — the top of scrollback
+    row(1, [...text('wrapped truecolor '), ...truecolorRun(6)], true),
+    row(2, wideRun()),
+  ];
+  const viewport: GridSnapshotRow[] = Array.from({ length: rows }, (_, r) =>
+    row(r, text(`viewport row ${r}`)),
+  );
+
+  return {
+    cols,
+    rows,
+    cursorRow: rows - 1,
+    cursorCol: 0,
+    totalLines: historyRows.length + rows,
+    base: 0,
+    cursorShape: 'hidden',
+    cursorBlink: false,
+    modes: MODES,
+    historyRows,
+    viewport,
+  };
 }
