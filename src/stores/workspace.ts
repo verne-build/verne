@@ -940,11 +940,25 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         dropFilePanelScope(created.id);
         sweepRemovedScopes([created.id]);
         directories.value = directories.value.filter((directory) => directory.id !== created!.id);
+        const hasLiveDirectory = (id: string | null): id is string =>
+          id !== null && directories.value.some((directory) => directory.id === id);
+        const selectionFallback = [selectionBeforeSelection, root.id, source.id]
+          .find(hasLiveDirectory) ?? null;
+        const pickerFallback = pendingPickerBeforeSelection
+          && hasLiveDirectory(pendingPickerBeforeSelection.dirId)
+          ? pendingPickerBeforeSelection
+          : null;
+        if (
+          selectionRevision === selectionRevisionAfterSelection
+          || selectedDirectoryId.value === created.id
+        )
+          selectedDirectoryId.value = selectionFallback;
+        if (
+          pickerRevision === pickerRevisionAfterSelection
+          || pendingPicker.value?.dirId === created.id
+        )
+          pendingPicker.value = pickerFallback;
       }
-      if (cleanupSucceeded && pickerRevision === pickerRevisionAfterSelection)
-        pendingPicker.value = pendingPickerBeforeSelection;
-      if (cleanupSucceeded && selectionRevision === selectionRevisionAfterSelection)
-        selectedDirectoryId.value = selectionBeforeSelection;
       if (cleanupError) {
         const launchMessage = error instanceof Error ? error.message : String(error);
         const cleanupMessage = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);

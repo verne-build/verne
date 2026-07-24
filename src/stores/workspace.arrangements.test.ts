@@ -861,7 +861,7 @@ describe("picker launch orchestration", () => {
     expect(store.pendingPicker).toEqual({ dirId: "dir-2" });
   });
 
-  it("does not restore a stale selection after the user returns to the created worktree", async () => {
+  it("falls back to a live selection after the user returns to the created worktree", async () => {
     const store = useWorkspaceStore();
     store.directories.push(dir("dir-1"), dir("dir-2"));
     store.selectDirectory(dir("dir-1"));
@@ -882,11 +882,11 @@ describe("picker launch orchestration", () => {
     rejectCreate(new Error("spawn failed"));
 
     await expect(launch).rejects.toThrow("spawn failed");
-    expect(store.selectedDirectoryId).toBe("wt-new");
-    expect(store.pendingPicker).toEqual({ dirId: "wt-new" });
+    expect(store.selectedDirectoryId).toBe("dir-1");
+    expect(store.pendingPicker).toEqual({ dirId: "dir-1" });
   });
 
-  it("does not restore a stale picker target after the picker returns to the created worktree", async () => {
+  it("falls back to a live picker target after the picker returns to the created worktree", async () => {
     const store = useWorkspaceStore();
     store.directories.push(dir("dir-1"), dir("dir-2"));
     store.selectDirectory(dir("dir-1"));
@@ -907,7 +907,7 @@ describe("picker launch orchestration", () => {
     rejectCreate(new Error("spawn failed"));
 
     await expect(launch).rejects.toThrow("spawn failed");
-    expect(store.pendingPicker).toEqual({ dirId: "wt-new" });
+    expect(store.pendingPicker).toEqual({ dirId: "dir-1" });
   });
 
   it("restores the selection that was current when the created worktree took focus", async () => {
