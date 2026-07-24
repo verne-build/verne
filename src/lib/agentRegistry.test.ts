@@ -20,6 +20,12 @@ describe("agent registry", () => {
     ]);
   });
 
+  it("presents agy as Antigravity with the existing agent icon", () => {
+    expect(AGENT_REGISTRY.find(({ type }) => type === "agy")?.label).toBe("Antigravity");
+    expect(findAgentIconForSurface("agy", "dark"))
+      .toBe(findAgentIconForSurface("antigravity", "dark"));
+  });
+
   it("omits default categories", () => {
     expect(buildAgentArgv({ agentType: "claude", modelId: null, effort: null, fast: null }))
       .toEqual(["claude"]);
@@ -35,7 +41,7 @@ describe("agent registry", () => {
   });
 
   it("rejects stale and incompatible selections", () => {
-    expect(() => buildAgentArgv({ agentType: "agy", modelId: "missing", effort: null, fast: null })).toThrow("Unknown Agy model");
+    expect(() => buildAgentArgv({ agentType: "agy", modelId: "missing", effort: null, fast: null })).toThrow("Unknown Antigravity model");
     expect(() => buildAgentArgv({ agentType: "claude", modelId: "sonnet", effort: "medium", fast: true })).toThrow("Fast mode is unavailable");
     expect(() => buildAgentArgv({ agentType: "copilot", modelId: null, effort: null, fast: null } as any)).toThrow("Unknown agent type");
   });
@@ -61,7 +67,6 @@ describe("agent registry", () => {
   });
 
   it("returns no asset for iconless registry types", () => {
-    expect(findAgentIconForSurface("agy", "dark")).toBeUndefined();
     expect(findAgentIconForSurface("cursor", "light")).toBeUndefined();
   });
 });

@@ -136,11 +136,11 @@ describe("NewSessionPicker", () => {
     document.body.replaceChildren();
   });
 
-  it("loads Agy after mount even when the shadcn Button focus target is unavailable", async () => {
+  it("loads Antigravity after mount even when the shadcn Button focus target is unavailable", async () => {
     await flush();
 
     expect(rpc.agentBinsAvailable).toHaveBeenCalledOnce();
-    expect(button("Agy")).toBeTruthy();
+    expect(button("Antigravity")).toBeTruthy();
   });
 
   it("renders and selects the registry-first Claude result", async () => {

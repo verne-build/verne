@@ -13,6 +13,7 @@ const darkSurfaceIcons: Record<string, string> = {
   claude: claudeIconUrl,
   copilot: copilotIconUrl,
   codex: codexDarkIconUrl,
+  agy: antigravityIconUrl,
   antigravity: antigravityIconUrl,
   opencode: opencodeDarkIconUrl,
 };

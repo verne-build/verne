@@ -107,7 +107,7 @@ export const AGENT_REGISTRY: readonly AgentDefinition[] = [
   { type: "claude", label: "Claude", bin: "claude", models: claudeModels },
   { type: "codex", label: "Codex", bin: "codex", models: codexModels },
   { type: "opencode", label: "OpenCode", bin: "opencode", models: modelsFor(MODEL_VALUES.opencode) },
-  { type: "agy", label: "Agy", bin: "agy", models: AGY_MODELS.map((id) => ({ id, label: id, cliValue: id })) },
+  { type: "agy", label: "Antigravity", bin: "agy", models: AGY_MODELS.map((id) => ({ id, label: id, cliValue: id })) },
   { type: "cursor", label: "Cursor", bin: "cursor-agent", models: cursorModels },
 ];
 
