@@ -2,6 +2,7 @@
 import { computed, inject, nextTick, onBeforeUnmount, ref, type Ref } from "vue";
 import {
   Archive,
+  ArchiveRestore,
   Columns2,
   Folder,
   FolderInput,
@@ -9,6 +10,7 @@ import {
   Pencil,
   RotateCcw,
   SquareTerminal,
+  Terminal,
   Trash2,
 } from "@lucide/vue";
 import StatusIndicator from "@/components/StatusIndicator.vue";
@@ -261,6 +263,17 @@ async function archiveSession() {
     window.alert(`Failed to archive session: ${e}`);
   }
 }
+
+// -- un-archive (Task 7): resume the agent or spawn a fresh shell. On failure
+// keep the static archived card and surface the error. --
+async function unarchive(resume: boolean) {
+  try {
+    await store.unarchiveSession(id.value, resume);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    window.alert(`Failed to un-archive session: ${message}`);
+  }
+}
 </script>
 
 <template>
@@ -360,6 +373,16 @@ async function archiveSession() {
           <Archive />
           Archive Session
         </ContextMenuItem>
+        <template v-if="archived">
+          <ContextMenuItem v-if="row.tab.resumeAvailable" @select="unarchive(true)">
+            <ArchiveRestore />
+            Un-archive (Resume Agent)
+          </ContextMenuItem>
+          <ContextMenuItem @select="unarchive(false)">
+            <Terminal />
+            Un-archive (Fresh Shell)
+          </ContextMenuItem>
+        </template>
         <ContextMenuSeparator />
         <ContextMenuItem variant="destructive" @select="closeSession()">
           <Trash2 />

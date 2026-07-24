@@ -547,3 +547,7 @@ export interface TabTitleEvent {
 export interface TabArchivedEvent {
   tab: Tab;
 }
+
+export interface TabUnarchivedEvent {
+  tab: Tab;
+}

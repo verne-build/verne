@@ -40,6 +40,7 @@ interface Harness {
   calls: string[];
   tabs: Map<string, Tab>;
   blobs: Map<string, ArchivedSnapshotBlob>;
+  plans: Array<{ tab: Tab; startupCommand?: string }>;
 }
 
 function makeHarness(opts: {
@@ -47,11 +48,25 @@ function makeHarness(opts: {
   writeFails?: boolean;
   killRejects?: boolean;
   killFalse?: boolean;
+  spawnFails?: boolean;
+  commitFails?: boolean;
+  initialTab?: Tab;
+  seedBlob?: boolean;
 } = {}): Harness {
   const calls: string[] = [];
   const tabs = new Map<string, Tab>();
-  tabs.set("t1", baseTab());
+  tabs.set("t1", opts.initialTab ?? baseTab());
   const blobs = new Map<string, ArchivedSnapshotBlob>();
+  const plans: Array<{ tab: Tab; startupCommand?: string }> = [];
+  if (opts.seedBlob) {
+    blobs.set("t1", {
+      cols: 80, rows: 24, cursorRow: 0, cursorCol: 0, capturedAt: 12345,
+      payload: new Uint8Array([1, 2, 3]),
+    });
+  }
+  // Snapshot for BEGIN/ROLLBACK simulation so a failed transaction restores
+  // the pre-transaction tabs+blobs state, mirroring node:sqlite semantics.
+  let tx: { tabs: Map<string, Tab>; blobs: Map<string, ArchivedSnapshotBlob> } | null = null;
 
   const deps: ArchiveSessionDeps = {
     getTab: (id) => tabs.get(id) ?? null,
@@ -60,6 +75,11 @@ function makeHarness(opts: {
         calls.push("daemon:tab_snapshot");
         if (opts.snapshotFails) throw new Error("snapshot failed");
         return DUMP as unknown as T;
+      }
+      if (method === "tab_spawn") {
+        calls.push("daemon:tab_spawn");
+        if (opts.spawnFails) throw new Error("spawn failed");
+        return undefined as unknown as T;
       }
       if (method === "tab_kill") {
         calls.push("daemon:tab_kill");
@@ -84,12 +104,29 @@ function makeHarness(opts: {
     setArchivedAt: (id, archivedAt) => {
       calls.push("db:set_archived_at");
       const tab = tabs.get(id);
-      if (tab) tabs.set(id, { ...tab, archivedAt });
+      if (tab) tabs.set(id, { ...tab, archivedAt: archivedAt ?? undefined });
+    },
+    deleteSnapshot: (id) => {
+      calls.push("db:delete_snapshot");
+      blobs.delete(id);
+    },
+    dbExec: (sql) => {
+      calls.push(`db:${sql}`);
+      if (sql === "BEGIN") tx = { tabs: new Map(tabs), blobs: new Map(blobs) };
+      if (sql === "COMMIT" && opts.commitFails) throw new Error("commit failed");
+      if (sql === "ROLLBACK" && tx) {
+        tabs.clear(); for (const [k, v] of tx.tabs) tabs.set(k, v);
+        blobs.clear(); for (const [k, v] of tx.blobs) blobs.set(k, v);
+      }
+    },
+    buildPlan: (tab, startupCommand) => {
+      plans.push({ tab, startupCommand });
+      return { tabId: tab.id, startupCommand };
     },
     now: () => 12345,
   };
 
-  return { ops: createArchiveSessionOperations(deps), calls, tabs, blobs };
+  return { ops: createArchiveSessionOperations(deps), calls, tabs, blobs, plans };
 }
 
 describe("createArchiveSessionOperations", () => {
@@ -166,6 +203,133 @@ describe("createArchiveSessionOperations", () => {
     expect(blob).not.toBeNull();
     expect(blob!.payload).toEqual(new Uint8Array([1, 2, 3]));
     expect(blob!.capturedAt).toBe(12345);
+  });
+});
+
+describe("unarchive", () => {
+  function archivedTab(overrides: Partial<Tab> = {}): Tab {
+    return baseTab({ archivedAt: 12345, ...overrides });
+  }
+
+  it("resume + claude + session id passes the resume startupCommand", async () => {
+    const { ops, plans } = makeHarness({
+      initialTab: archivedTab({ lastAgentType: "claude", lastAgentSessionId: "abc-123" }),
+      seedBlob: true,
+    });
+    await ops.unarchive("t1", true);
+    expect(plans).toHaveLength(1);
+    expect(plans[0].startupCommand).toBe("claude --resume 'abc-123'");
+  });
+
+  it("fresh shell passes undefined startupCommand", async () => {
+    const { ops, plans } = makeHarness({
+      initialTab: archivedTab({ lastAgentType: "claude", lastAgentSessionId: "abc-123" }),
+      seedBlob: true,
+    });
+    await ops.unarchive("t1", false);
+    expect(plans[0].startupCommand).toBeUndefined();
+  });
+
+  it("resume with an unknown agent falls back to a fresh shell (undefined)", async () => {
+    const { ops, plans } = makeHarness({
+      initialTab: archivedTab({ lastAgentType: "codex", lastAgentSessionId: "abc-123" }),
+      seedBlob: true,
+    });
+    await ops.unarchive("t1", true);
+    expect(plans[0].startupCommand).toBeUndefined();
+  });
+
+  it("resume with a missing session id falls back to a fresh shell (undefined)", async () => {
+    const { ops, plans } = makeHarness({
+      initialTab: archivedTab({ lastAgentType: "claude" }),
+      seedBlob: true,
+    });
+    await ops.unarchive("t1", true);
+    expect(plans[0].startupCommand).toBeUndefined();
+  });
+
+  it("spawns before deleting archive metadata, clears archived_at, deletes blob", async () => {
+    const { ops, calls, tabs, blobs } = makeHarness({
+      initialTab: archivedTab(),
+      seedBlob: true,
+    });
+    const updated = await ops.unarchive("t1", false);
+    expect(calls).toEqual([
+      "daemon:tab_spawn",
+      "db:BEGIN",
+      "db:set_archived_at",
+      "db:delete_snapshot",
+      "db:COMMIT",
+    ]);
+    expect(updated.archivedAt).toBeUndefined();
+    expect(tabs.get("t1")!.archivedAt).toBeUndefined();
+    expect(blobs.has("t1")).toBe(false);
+  });
+
+  it("rejects a non-archived tab with no side effects", async () => {
+    const { ops, calls } = makeHarness({ initialTab: baseTab() });
+    await expect(ops.unarchive("t1", false)).rejects.toThrow("session is not archived");
+    expect(calls).toEqual([]);
+  });
+
+  it("rejects an unknown tab with no side effects", async () => {
+    const { ops, calls } = makeHarness({ initialTab: archivedTab() });
+    await expect(ops.unarchive("nope", false)).rejects.toThrow("tab not found");
+    expect(calls).toEqual([]);
+  });
+
+  it("spawn failure leaves archived_at and snapshot untouched", async () => {
+    const { ops, calls, tabs, blobs } = makeHarness({
+      initialTab: archivedTab(),
+      seedBlob: true,
+      spawnFails: true,
+    });
+    await expect(ops.unarchive("t1", false)).rejects.toThrow("spawn failed");
+    expect(calls).toEqual(["daemon:tab_spawn"]);
+    expect(tabs.get("t1")!.archivedAt).toBe(12345);
+    expect(blobs.has("t1")).toBe(true);
+  });
+
+  it("db-finalize failure kills the spawned session, keeps the archive intact, rethrows", async () => {
+    const { ops, calls, tabs, blobs } = makeHarness({
+      initialTab: archivedTab(),
+      seedBlob: true,
+      commitFails: true,
+    });
+    await expect(ops.unarchive("t1", false)).rejects.toThrow("commit failed");
+    expect(calls).toEqual([
+      "daemon:tab_spawn",
+      "db:BEGIN",
+      "db:set_archived_at",
+      "db:delete_snapshot",
+      "db:COMMIT",
+      "db:ROLLBACK",
+      "daemon:tab_kill",
+    ]);
+    expect(tabs.get("t1")!.archivedAt).toBe(12345);
+    expect(blobs.has("t1")).toBe(true);
+  });
+
+  it("db-finalize + rollback-kill rejection raises the AggregateError", async () => {
+    const { ops } = makeHarness({
+      initialTab: archivedTab(),
+      seedBlob: true,
+      commitFails: true,
+      killRejects: true,
+    });
+    await expect(ops.unarchive("t1", false)).rejects.toThrow("failed to restore archived-only state");
+  });
+
+  it("db-finalize + rollback-kill returning false raises the AggregateError", async () => {
+    const { ops } = makeHarness({
+      initialTab: archivedTab(),
+      seedBlob: true,
+      commitFails: true,
+      killFalse: true,
+    });
+    const err = await ops.unarchive("t1", false).catch((e) => e);
+    expect(err).toBeInstanceOf(AggregateError);
+    expect((err as Error).message).toBe("failed to restore archived-only state");
   });
 });
 

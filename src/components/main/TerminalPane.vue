@@ -191,11 +191,24 @@ function onRestartEvent(e: Event) {
 
 watch(() => props.paneId, () => { void mountActive(); });
 
-// Becoming archived (Task 7 un-archive flow is separate) must drop the live
-// session id so the archived branch renders and no PTY lingers.
+// Becoming archived must drop the live session id so the archived branch
+// renders and no PTY lingers. Un-archiving (archived → live) attaches to the
+// already-spawned PTY via idempotent tabsSessionId.
 watch(isArchived, (archived) => {
   if (archived) sessionId.value = null;
+  else void mountActive({ force: true });
 });
+
+// Resume the archived agent or spawn a fresh shell. On failure keep the static
+// archived view and surface the error (the snapshot/row are untouched).
+async function unarchive(resume: boolean) {
+  try {
+    await store.unarchiveSession(props.paneId, resume);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    window.alert(`Failed to un-archive session: ${message}`);
+  }
+}
 
 function focusPane() {
   if (store.focusedSessionId !== props.paneId) store.focusSession(props.paneId);
@@ -383,6 +396,12 @@ onUnmounted(() => {
           <ContextMenuShortcut>{{ shortcutText("split-pane-v") }}</ContextMenuShortcut>
         </ContextMenuItem>
         <ContextMenuItem v-if="multi" @select="removeFromView">Remove From View</ContextMenuItem>
+        <template v-if="isArchived">
+          <ContextMenuItem v-if="tab?.resumeAvailable" @select="unarchive(true)">
+            Un-archive (Resume Agent)
+          </ContextMenuItem>
+          <ContextMenuItem @select="unarchive(false)">Un-archive (Fresh Shell)</ContextMenuItem>
+        </template>
         <ContextMenuSeparator />
         <ContextMenuItem variant="destructive" @select="closeSession">Close Session</ContextMenuItem>
       </ContextMenuContent>

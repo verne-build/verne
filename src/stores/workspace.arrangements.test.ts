@@ -30,6 +30,11 @@ let tabsArchiveNext: unknown = null;
 function setTabsArchiveResult(tab: unknown) {
   tabsArchiveNext = tab;
 }
+const tabsUnarchiveCalls: Array<{ id: string; resume: boolean }> = [];
+let tabsUnarchiveNext: unknown = null;
+function setTabsUnarchiveResult(tab: unknown) {
+  tabsUnarchiveNext = tab;
+}
 const tabsCreateCalls: Array<{
   directoryId: string;
   label?: string;
@@ -238,6 +243,10 @@ vi.mock("@/composables/useRpc", () => ({
       tabsArchive: vi.fn(async (p: { id: string }) => {
         tabsArchiveCalls.push(p.id);
         return tabsArchiveNext;
+      }),
+      tabsUnarchive: vi.fn(async (p: { id: string; resume: boolean }) => {
+        tabsUnarchiveCalls.push(p);
+        return tabsUnarchiveNext;
       }),
       tabsReorder: vi.fn(async () => true),
       listLiveTabIds: vi.fn(async () => getLiveTabIds()),
@@ -1267,5 +1276,64 @@ describe("archive session lifecycle", () => {
 
     expect(tabsSessionIdCalls).not.toContain(tab.id);
     expect(tabsClosedIds).toEqual([tab.id]);
+  });
+});
+
+describe("unarchive session lifecycle", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    setActivePinia(createPinia());
+    setAppStateCalls.length = 0;
+    tabsClosedIds.length = 0;
+    tabsSessionIdCalls.length = 0;
+    tabsArchiveCalls.length = 0;
+    tabsArchiveNext = null;
+    tabsUnarchiveCalls.length = 0;
+    tabsUnarchiveNext = null;
+    nextId = 0;
+    setLiveTabIds([]);
+    appState.clear();
+    for (const k of Object.keys(tabsListByDir)) delete tabsListByDir[k];
+    setFailArrangementGets(0);
+  });
+
+  it("unarchiveSession calls tabsUnarchive with resume, applies the live tab, marks it running", async () => {
+    const store = useWorkspaceStore();
+    const tab = await store.newSession("dir-1");
+    store.applyArchivedTab({ ...tab, archivedAt: 111 });
+    setTabsUnarchiveResult({ ...tab, archivedAt: undefined });
+
+    await store.unarchiveSession(tab.id, true);
+
+    expect(tabsUnarchiveCalls).toEqual([{ id: tab.id, resume: true }]);
+    expect(store.terminalTabsByDirectory["dir-1"]?.find((t) => t.id === tab.id)?.archivedAt).toBeUndefined();
+    expect(store.sessionLifecycle.get(tab.id)).toBe("running");
+  });
+
+  it("applyUnarchivedTab is idempotent (single tab, running lifecycle)", async () => {
+    const store = useWorkspaceStore();
+    const tab = await store.newSession("dir-1");
+    store.applyArchivedTab({ ...tab, archivedAt: 222 });
+    const live = { ...tab, archivedAt: undefined };
+
+    store.applyUnarchivedTab(live);
+    store.applyUnarchivedTab(live);
+    window.dispatchEvent(new CustomEvent("tab-unarchived", { detail: { tab: live } }));
+
+    const matches = store.terminalTabsByDirectory["dir-1"]?.filter((t) => t.id === tab.id) ?? [];
+    expect(matches).toHaveLength(1);
+    expect(matches[0].archivedAt).toBeUndefined();
+    expect(store.sessionLifecycle.get(tab.id)).toBe("running");
+  });
+
+  it("a tab-unarchived window event updates the store without a local unarchiveSession call", async () => {
+    const store = useWorkspaceStore();
+    const tab = await store.newSession("dir-1");
+    store.applyArchivedTab({ ...tab, archivedAt: 333 });
+
+    window.dispatchEvent(new CustomEvent("tab-unarchived", { detail: { tab: { ...tab, archivedAt: undefined } } }));
+
+    expect(store.terminalTabsByDirectory["dir-1"]?.find((t) => t.id === tab.id)?.archivedAt).toBeUndefined();
+    expect(tabsUnarchiveCalls).toEqual([]);
   });
 });

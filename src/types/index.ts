@@ -42,6 +42,7 @@ export type {
   TabUpdatedEvent,
   TabTitleEvent,
   TabArchivedEvent,
+  TabUnarchivedEvent,
   ArchivedSnapshotBlob,
   AgentState,
   ReviewComment,

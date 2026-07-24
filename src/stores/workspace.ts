@@ -10,6 +10,7 @@ import type {
   AgentState,
   GitBranch,
   TabArchivedEvent,
+  TabUnarchivedEvent,
 } from "@/types";
 import { useRpc } from "@/composables/useRpc";
 import { moveTabBetweenBuckets } from "@/lib/scopeMove";
@@ -854,6 +855,30 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   window.addEventListener("tab-archived", handleTabArchivedEvent as EventListener);
   onScopeDispose(() => window.removeEventListener("tab-archived", handleTabArchivedEvent as EventListener));
 
+  /** Apply a tab that just came back from archive (RPC response or the daemon's
+   *  `tab-unarchived` broadcast). Idempotent: replaceTab is a keyed swap; mark
+   *  the (now-live) session running so TerminalPane attaches to its PTY. */
+  function applyUnarchivedTab(tab: Tab): void {
+    replaceTab(tab);
+    markSessionRunning(tab.id);
+  }
+
+  /** Un-archive a session: spawn its PTY server-side (optionally resuming the
+   *  agent), mirror the now-live tab locally, then surface it in the pane via
+   *  the normal open/attach path. */
+  async function unarchiveSession(id: string, resume: boolean): Promise<void> {
+    const tab = await useRpc().request.tabsUnarchive({ id, resume });
+    applyUnarchivedTab(tab);
+    selectSession(id);
+  }
+
+  function handleTabUnarchivedEvent(e: Event) {
+    const detail = (e as CustomEvent<TabUnarchivedEvent>).detail;
+    if (detail?.tab) applyUnarchivedTab(detail.tab);
+  }
+  window.addEventListener("tab-unarchived", handleTabUnarchivedEvent as EventListener);
+  onScopeDispose(() => window.removeEventListener("tab-unarchived", handleTabUnarchivedEvent as EventListener));
+
   async function reorderTabsInDirectory(directoryId: string, ids: string[]) {
     const current = terminalTabsByDirectory.value[directoryId] ?? [];
     const byId = new Map(current.map(t => [t.id, t]));
@@ -1330,5 +1355,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     replaceTab,
     applyArchivedTab,
     archiveSession,
+    applyUnarchivedTab,
+    unarchiveSession,
   };
 });

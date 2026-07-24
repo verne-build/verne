@@ -39,8 +39,10 @@ import {
   defaultLabel,
   setTabArchivedAt,
 } from "./db/tabs";
-import { writeTabSnapshot, readTabSnapshotBlob } from "./db/tabSnapshots";
+import { writeTabSnapshot, readTabSnapshotBlob, deleteTabSnapshot } from "./db/tabSnapshots";
 import { createArchiveSessionOperations, assertRespawnable } from "./archive-session";
+import { canResumeAgent } from "./resume-registry";
+import type { DatabaseSync } from "node:sqlite";
 import type { Tab, CreateTabOpts } from "../../src/types/shared";
 import { resolveLaunchCommand } from "./agent-launch";
 import { writeMcpLauncher } from "./mcp/launcher";
@@ -145,6 +147,32 @@ function registerExtraNatives(): void {
 // (node:sqlite, slice 5b.2), the daemon owns the live PTY, the sidecar owns
 // agent-shadow teardown (DB-free RPCs). These native handlers preserve the
 // single renderer call (`tabs_create` etc.).
+// One plan builder shared by tabs_create / tabs_session_id / tabs_unarchive so
+// the daemon spawn plan can't drift between the three paths. `startupCommand` is
+// the one-shot line written into the PTY after the shell spawns (un-archive
+// resume). `launchCommand` (the live agent-launch field) is always preserved.
+function buildTabSpawnPlan(db: DatabaseSync, tab: Tab, startupCommand?: string) {
+  const env: Record<string, string> = { VERNE_TAB_ID: tab.id };
+  const root = resolveWorkspaceRoot(db, tab.directoryId);
+  if (root) env.VERNE_WORKSPACE_DIR = root;
+  const labels = tabDisplayLabels(db, tab.id);
+  return {
+    tabId: tab.id,
+    cwd: tab.cwd,
+    env,
+    startupCommand,
+    directoryName: labels.directoryName,
+    tabLabel: labels.tabLabel,
+    launchCommand: tab.launchCommand,
+  };
+}
+
+// `resumeAvailable` is DERIVED from the stored agent type + session id — never
+// persisted. Stamp it on every tab crossing to the renderer.
+function decorateTab(tab: Tab): Tab {
+  return { ...tab, resumeAvailable: canResumeAgent(tab.lastAgentType, tab.lastAgentSessionId) };
+}
+
 function registerTabOrchestration(d: DaemonClient, s: DaemonClient): void {
   const emit = (name: string, payload: unknown) =>
     getWindow().webContents.send("daemon-event", name, payload);
@@ -158,6 +186,9 @@ function registerTabOrchestration(d: DaemonClient, s: DaemonClient): void {
     writeSnapshot: (id, dump, capturedAt) => writeTabSnapshot(getDb(), id, dump, capturedAt),
     readSnapshot: (id) => readTabSnapshotBlob(getDb(), id),
     setArchivedAt: (id, archivedAt) => setTabArchivedAt(getDb(), id, archivedAt),
+    deleteSnapshot: (id) => deleteTabSnapshot(getDb(), id),
+    dbExec: (sql) => getDb().exec(sql),
+    buildPlan: (tab, startupCommand) => buildTabSpawnPlan(getDb(), tab, startupCommand),
     now: () => Date.now(),
   });
 
@@ -186,29 +217,18 @@ function registerTabOrchestration(d: DaemonClient, s: DaemonClient): void {
       userRenamed: false,
       launchCommand,
     };
-    const env: Record<string, string> = { VERNE_TAB_ID: tab.id };
-    const root = resolveWorkspaceRoot(db, opts.directoryId);
-    if (root) env.VERNE_WORKSPACE_DIR = root;
     insertTab(db, tab);
 
-    const labels = tabDisplayLabels(db, tab.id);
-    const plan = {
-      tabId: tab.id,
-      cwd,
-      env,
-      startupCommand: undefined,
-      directoryName: labels.directoryName,
-      tabLabel: labels.tabLabel,
-      launchCommand: tab.launchCommand,
-    };
+    const plan = buildTabSpawnPlan(db, tab);
     try {
       await d.request("tab_spawn", { plan });
     } catch (e) {
       deleteTab(db, tab.id);
       throw e;
     }
-    emit("tab-added", { tab });
-    return tab;
+    const decorated = decorateTab(tab);
+    emit("tab-added", { tab: decorated });
+    return decorated;
   });
 
   // close: daemon kills the PTY, Electron deletes the row, sidecar tears down the
@@ -231,24 +251,12 @@ function registerTabOrchestration(d: DaemonClient, s: DaemonClient): void {
     // Archived rows must never spawn via this legacy live-session seam — see
     // assertRespawnable in archive-session.ts. Only tabs_unarchive may respawn.
     assertRespawnable(tab);
-    const env: Record<string, string> = { VERNE_TAB_ID: tab.id };
-    const root = resolveWorkspaceRoot(db, tab.directoryId);
-    if (root) env.VERNE_WORKSPACE_DIR = root;
-    const labels = tabDisplayLabels(db, params.id);
-    const plan = {
-      tabId: params.id,
-      cwd: tab.cwd,
-      env,
-      startupCommand: undefined,
-      directoryName: labels.directoryName,
-      tabLabel: labels.tabLabel,
-      launchCommand: tab.launchCommand,
-    };
+    const plan = buildTabSpawnPlan(db, tab);
     return d.request("tab_spawn", { plan });
   });
 
   registerNative("tabs_list", (params: { directoryId?: string | null }) =>
-    getTabs(getDb(), params.directoryId));
+    getTabs(getDb(), params.directoryId).map(decorateTab));
 
   registerNative("tabs_rename", (params: { id: string; label: string }) => {
     const db = getDb();
@@ -267,8 +275,16 @@ function registerTabOrchestration(d: DaemonClient, s: DaemonClient): void {
 
   // archive: durable snapshot -> daemon kill -> flip archived_at (see archive-session.ts).
   registerNative("tabs_archive", async ({ id }: { id: string }) => {
-    const tab = await archiveOps.archive(id);
+    const tab = decorateTab(await archiveOps.archive(id));
     emit("tab-archived", { tab });
+    return tab;
+  });
+  // unarchive: spawn the live PTY (optionally resuming the agent) -> clear
+  // archived_at + delete the snapshot in one transaction (see archive-session.ts
+  // for the strict spawn-before-finalize ordering + rollback semantics).
+  registerNative("tabs_unarchive", async ({ id, resume }: { id: string; resume: boolean }) => {
+    const tab = decorateTab(await archiveOps.unarchive(id, resume));
+    emit("tab-unarchived", { tab });
     return tab;
   });
   registerNative("tab_snapshot_read", ({ id }: { id: string }) => archiveOps.read(id));
