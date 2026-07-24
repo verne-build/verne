@@ -484,7 +484,7 @@ impl Session {
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    pub fn write(&self, data: &[u8]) {
+    pub fn write(&self, data: &[u8]) -> Result<(), String> {
         let now = chrono::Utc::now().timestamp_millis();
         self.last_input_at
             .store(now, std::sync::atomic::Ordering::Relaxed);
@@ -511,14 +511,19 @@ impl Session {
                 data.len(),
                 STDIN_MAX_BYTES
             );
-            if let Ok(mut w) = self.writer.lock() {
-                let _ = w.write_all(&data[..STDIN_MAX_BYTES]);
-            }
-            return;
+            let mut w = self
+                .writer
+                .lock()
+                .map_err(|_| "pty writer lock poisoned".to_string())?;
+            return w
+                .write_all(&data[..STDIN_MAX_BYTES])
+                .map_err(|e| e.to_string());
         }
-        if let Ok(mut w) = self.writer.lock() {
-            let _ = w.write_all(data);
-        }
+        let mut w = self
+            .writer
+            .lock()
+            .map_err(|_| "pty writer lock poisoned".to_string())?;
+        w.write_all(data).map_err(|e| e.to_string())
     }
 
     pub fn resize(&self, cols: u16, rows: u16) {
@@ -740,11 +745,12 @@ impl SessionManager {
 pub struct StartSessionOpts {
     pub working_dir: String,
     pub launch_command: Option<String>,
-    pub resume: bool,
-    pub agent_session_id: Option<String>,
+    /// One-shot command written into the PTY after spawn (keystroke-style),
+    /// distinct from `launch_command` which replaces the shell's argv. Runs
+    /// inside the user's normal shell and falls back to it when done.
+    pub startup_command: Option<String>,
     pub cols: u16,
     pub rows: u16,
-    pub skip_permissions: bool,
     /// Extra env vars merged into the spawned child's environment. Phase 5
     /// uses this to preassign provider session ids (e.g. `CLAUDE_SESSION_ID`).
     pub env: HashMap<String, String>,
@@ -752,22 +758,13 @@ pub struct StartSessionOpts {
 
 impl StartSessionOpts {
     /// Convenience for callers that don't need extra env.
-    pub fn new(
-        working_dir: String,
-        resume: bool,
-        agent_session_id: Option<String>,
-        cols: u16,
-        rows: u16,
-        skip_permissions: bool,
-    ) -> Self {
+    pub fn new(working_dir: String, cols: u16, rows: u16) -> Self {
         Self {
             working_dir,
             launch_command: None,
-            resume,
-            agent_session_id,
+            startup_command: None,
             cols,
             rows,
-            skip_permissions,
             env: HashMap::new(),
         }
     }
@@ -1137,7 +1134,9 @@ pub fn create_session(
 
 /// Write input to a session's PTY.
 pub fn write_to_session(session: &Session, data: &[u8]) {
-    session.write(data);
+    if let Err(e) = session.write(data) {
+        log::warn!("write_to_session failed for {}: {e}", session.agent_id);
+    }
 }
 
 #[cfg(test)]

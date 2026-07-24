@@ -428,7 +428,7 @@ pub struct TabSpawnPlan {
     #[serde(default)]
     pub env: std::collections::HashMap<String, String>,
     #[serde(default)]
-    pub agent_session_id: Option<String>,
+    pub startup_command: Option<String>,
     #[serde(default)]
     pub directory_name: Option<String>,
     #[serde(default)]

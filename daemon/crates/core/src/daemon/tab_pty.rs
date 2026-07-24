@@ -24,14 +24,20 @@ pub fn spawn_tab_pty(
         }
     }
 
+    // Reject a multiline startup command before acquiring a spawn slot: an
+    // invalid command must never leave a live orphan session behind.
+    if let Some(command) = plan.startup_command.as_deref() {
+        if command.contains('\n') || command.contains('\r') {
+            return Err("startup_command must be single-line".to_string());
+        }
+    }
+
     let start_opts = StartSessionOpts {
         working_dir: plan.cwd.clone(),
         launch_command: plan.launch_command.clone(),
-        resume: false,
-        agent_session_id: plan.agent_session_id.clone(),
+        startup_command: plan.startup_command.clone(),
         cols: 80,
         rows: 50,
-        skip_permissions: false,
         env: plan.env.clone(),
     };
 
@@ -123,6 +129,24 @@ pub fn spawn_tab_pty(
     {
         let mut sm = sessions.lock().unwrap_or_else(|p| p.into_inner());
         sm.insert_session(session);
+
+        // One-shot keystroke-style injection: written into the PTY after the
+        // shell is up, so it runs inside the user's normal shell and the
+        // shell survives once the injected command exits. Distinct from
+        // `launch_command`, which replaces the shell's argv entirely.
+        if let Some(command) = plan.startup_command.as_deref() {
+            let write_result = sm
+                .get_session_by_agent(&plan.tab_id)
+                .ok_or_else(|| "spawned session was not registered".to_string())
+                .and_then(|registered| registered.write(format!("{command}\n").as_bytes()));
+            if let Err(e) = write_result {
+                if let Some(sid) = sm.get_session_by_agent(&plan.tab_id).map(|s| s.id.clone()) {
+                    sm.stop_session(&sid);
+                }
+                SessionManager::release_spawn_slot(&spawn_slots);
+                return Err(e);
+            }
+        }
     }
     SessionManager::release_spawn_slot(&spawn_slots);
 
@@ -178,4 +202,108 @@ pub fn snapshot_tab_pty(
     };
     let dump = emulator.lock().map_err(|e| e.to_string())?.snapshot_dump();
     Ok(dump)
+}
+
+#[cfg(test)]
+mod startup_command_tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    fn base_plan(tab_id: &str, cwd: &str, startup_command: Option<String>) -> TabSpawnPlan {
+        TabSpawnPlan {
+            tab_id: tab_id.to_string(),
+            cwd: cwd.to_string(),
+            launch_command: None,
+            env: Default::default(),
+            startup_command,
+            directory_name: None,
+            tab_label: None,
+        }
+    }
+
+    /// Poll the tab's tail buffer until `needle` appears or the timeout
+    /// elapses. Returns the number of times `needle` occurs in the final
+    /// snapshot.
+    fn poll_tail_for(
+        sessions: &Arc<Mutex<SessionManager>>,
+        tab_id: &str,
+        needle: &str,
+        timeout: Duration,
+    ) -> usize {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let count = {
+                let sm = sessions.lock().unwrap();
+                sm.get_session_by_agent(tab_id)
+                    .map(|s| {
+                        let tail = s.tail.lock().unwrap().snapshot();
+                        tail.matches(needle).count()
+                    })
+                    .unwrap_or(0)
+            };
+            if count > 0 || Instant::now() >= deadline {
+                return count;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
+
+    #[test]
+    fn startup_command_is_injected_once() {
+        let sessions = Arc::new(Mutex::new(SessionManager::new()));
+        let bus = Arc::new(EventBus::new());
+        let cwd = std::env::temp_dir().to_string_lossy().to_string();
+
+        let with_cmd = base_plan(
+            "startup-cmd-tab-1",
+            &cwd,
+            Some("printf '__VERNE_RESUMED__\\n'".to_string()),
+        );
+        let without_cmd = base_plan("startup-cmd-tab-2", &cwd, None);
+
+        let r1 = spawn_tab_pty(&sessions, &bus, with_cmd.clone());
+        let r2 = spawn_tab_pty(&sessions, &bus, without_cmd.clone());
+        assert!(r1.is_ok(), "spawn with startup_command failed: {r1:?}");
+        assert!(r2.is_ok(), "spawn without startup_command failed: {r2:?}");
+
+        let count = poll_tail_for(
+            &sessions,
+            &with_cmd.tab_id,
+            "__VERNE_RESUMED__",
+            Duration::from_secs(2),
+        );
+        assert_eq!(count, 1, "expected marker exactly once");
+
+        // Give the shell-only tab equal time to (not) produce the marker.
+        let none_count = poll_tail_for(
+            &sessions,
+            &without_cmd.tab_id,
+            "__VERNE_RESUMED__",
+            Duration::from_millis(500),
+        );
+        assert_eq!(none_count, 0, "marker must never appear without startup_command");
+
+        let _ = kill_tab_pty(&sessions, &with_cmd.tab_id);
+        let _ = kill_tab_pty(&sessions, &without_cmd.tab_id);
+    }
+
+    #[test]
+    fn multiline_startup_command_is_rejected_before_spawn() {
+        let sessions = Arc::new(Mutex::new(SessionManager::new()));
+        let bus = Arc::new(EventBus::new());
+        let cwd = std::env::temp_dir().to_string_lossy().to_string();
+
+        let plan = base_plan(
+            "startup-cmd-tab-multiline",
+            &cwd,
+            Some("echo one\necho two".to_string()),
+        );
+
+        let result = spawn_tab_pty(&sessions, &bus, plan.clone());
+        assert!(result.is_err(), "multiline startup_command must be rejected");
+
+        // No session should have been spawned.
+        let sm = sessions.lock().unwrap();
+        assert!(sm.get_session_by_agent(&plan.tab_id).is_none());
+    }
 }
