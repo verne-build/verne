@@ -30,6 +30,13 @@ describe("openDb", () => {
     expect(names).toContain("sidebar_tabs");
     expect(names).toContain("sidebar_state");
     expect(names).toContain("open_tabs");
+    expect(names).toContain("tab_snapshots");
+  });
+
+  it("fresh tabs table has archived_at column", () => {
+    const db = tmpDb();
+    const cols = db.prepare("SELECT name FROM pragma_table_info('tabs')").all() as { name: string }[];
+    expect(cols.map((c) => c.name)).toContain("archived_at");
   });
 
   it("round-trips a row in app_state", () => {
@@ -60,6 +67,28 @@ describe("openDb", () => {
     const migrated = openDb(path);
     const cols = migrated.prepare("SELECT name FROM pragma_table_info('tabs')").all() as { name: string }[];
     expect(cols.map((col) => col.name)).toContain("launch_command");
+  });
+
+  it("migrates archived_at + tab_snapshots onto an existing tabs table, exactly once across two opens", () => {
+    const dir = mkdtempSync(join(tmpdir(), "verne-db-archive-migrate-"));
+    const path = join(dir, "verne.db");
+    const old = new DatabaseSync(path);
+    old.exec(`CREATE TABLE tabs (
+      id TEXT PRIMARY KEY, directory_id TEXT NOT NULL, label TEXT NOT NULL,
+      cwd TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL,
+      last_agent_type TEXT, last_agent_session_id TEXT, last_agent_state TEXT,
+      user_renamed INTEGER NOT NULL DEFAULT 0, scope_pinned_by_user INTEGER NOT NULL DEFAULT 0,
+      launch_command TEXT
+    )`);
+    old.close();
+    openDb(path);
+    const migrated = openDb(path); // second open must not re-add the column or re-create the table
+    const cols = migrated.prepare("SELECT name FROM pragma_table_info('tabs')").all() as { name: string }[];
+    expect(cols.filter((col) => col.name === "archived_at")).toHaveLength(1);
+    const tables = migrated.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='tab_snapshots'"
+    ).all() as { name: string }[];
+    expect(tables).toHaveLength(1);
   });
 
   it("renames scratchpad app_state keys to notes on first open", () => {

@@ -65,9 +65,20 @@ CREATE TABLE IF NOT EXISTS tabs (
     last_agent_session_id TEXT,
     last_agent_state TEXT,
     user_renamed INTEGER NOT NULL DEFAULT 0,
-    launch_command TEXT
+    launch_command TEXT,
+    archived_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_tabs_dir ON tabs(directory_id);
+
+CREATE TABLE IF NOT EXISTS tab_snapshots (
+    tab_id TEXT PRIMARY KEY REFERENCES tabs(id) ON DELETE CASCADE,
+    cols INTEGER NOT NULL,
+    rows INTEGER NOT NULL,
+    cursor_row INTEGER NOT NULL,
+    cursor_col INTEGER NOT NULL,
+    captured_at INTEGER NOT NULL,
+    payload BLOB NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS tab_sessions (
     session_id TEXT PRIMARY KEY,
@@ -177,6 +188,23 @@ CREATE TABLE recent_files (
   if (!hasColumn("tabs", "launch_command")) {
     db.exec("ALTER TABLE tabs ADD COLUMN launch_command TEXT;");
   }
+
+  // tabs: archived_at — set when a session is archived (snapshot + resume metadata retained).
+  if (!hasColumn("tabs", "archived_at")) {
+    db.exec("ALTER TABLE tabs ADD COLUMN archived_at INTEGER;");
+  }
+
+  // tab_snapshots: not gated behind the tabs.archived_at check — an interrupted
+  // older migration could have added one without the other.
+  db.exec(`CREATE TABLE IF NOT EXISTS tab_snapshots (
+    tab_id TEXT PRIMARY KEY REFERENCES tabs(id) ON DELETE CASCADE,
+    cols INTEGER NOT NULL,
+    rows INTEGER NOT NULL,
+    cursor_row INTEGER NOT NULL,
+    cursor_col INTEGER NOT NULL,
+    captured_at INTEGER NOT NULL,
+    payload BLOB NOT NULL
+  );`);
 
   // directories: settings_json
   if (!hasColumn("directories", "settings_json")) {

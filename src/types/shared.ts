@@ -383,6 +383,63 @@ export interface Tab {
    *  auto re-pin on cwd change (Follow Agent unchecked). */
   scopePinnedByUser?: boolean;
   launchCommand?: string;
+  /** Set when this tab's session was archived; ms epoch of the archive action. */
+  archivedAt?: number;
+  /** Derived (never persisted): true when an archived snapshot can be restored. */
+  resumeAvailable?: boolean;
+}
+
+// --- Archive-session snapshot DTOs ---
+// Structural mirror of the daemon's `GridSnapshotDump` (see
+// daemon/crates/core/src/types.rs) — renderer-native (packed colors, u32 code
+// points), camelCase over the wire. Kept here (not a renderer module) so
+// Electron main can read/write archived snapshots without depending on the
+// renderer.
+
+export interface GridSnapshotCell {
+  cp: number;
+  fg: number;
+  bg: number;
+  flags: number;
+  width: number;
+  zw?: number[];
+  ulColor?: number;
+  link?: string;
+}
+export interface GridSnapshotRow {
+  line: number;
+  startCol: number;
+  cells: GridSnapshotCell[];
+  wrapped: boolean;
+}
+export interface GridSnapshotModes {
+  mouseReporting: boolean;
+  mouseDrag: boolean;
+  mouseMotion: boolean;
+  altScreen: boolean;
+  appCursor: boolean;
+  bracketedPaste: boolean;
+}
+export interface GridSnapshotDump {
+  cols: number;
+  rows: number;
+  cursorRow: number;
+  cursorCol: number;
+  totalLines: number;
+  base: number;
+  cursorShape: "block" | "beam" | "underline" | "hollow" | "hidden";
+  cursorBlink: boolean;
+  modes: GridSnapshotModes;
+  historyRows: GridSnapshotRow[];
+  viewport: GridSnapshotRow[];
+}
+export interface ArchivedSnapshotBlob {
+  cols: number;
+  rows: number;
+  cursorRow: number;
+  cursorCol: number;
+  capturedAt: number;
+  payload: Uint8Array;
 }
 
 export interface ReviewComment {

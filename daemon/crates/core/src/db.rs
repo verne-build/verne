@@ -81,9 +81,20 @@ pub fn init_db(conn: &Connection) {
             last_agent_type TEXT,
             last_agent_session_id TEXT,
             last_agent_state TEXT,
-            user_renamed INTEGER NOT NULL DEFAULT 0
+            user_renamed INTEGER NOT NULL DEFAULT 0,
+            archived_at INTEGER
         );
         CREATE INDEX IF NOT EXISTS idx_tabs_dir ON tabs(directory_id);
+
+        CREATE TABLE IF NOT EXISTS tab_snapshots (
+            tab_id TEXT PRIMARY KEY REFERENCES tabs(id) ON DELETE CASCADE,
+            cols INTEGER NOT NULL,
+            rows INTEGER NOT NULL,
+            cursor_row INTEGER NOT NULL,
+            cursor_col INTEGER NOT NULL,
+            captured_at INTEGER NOT NULL,
+            payload BLOB NOT NULL
+        );
 
         CREATE TABLE IF NOT EXISTS tab_sessions (
             session_id TEXT PRIMARY KEY,
@@ -193,6 +204,33 @@ pub fn init_db(conn: &Connection) {
         conn.execute_batch("ALTER TABLE tabs ADD COLUMN user_renamed INTEGER NOT NULL DEFAULT 0;")
             .unwrap();
     }
+
+    // tabs.archived_at — set when a session is archived; resume metadata
+    // (last_agent_*) is preserved for archived tabs so it survives restart.
+    let has_archived_at: bool = conn
+        .prepare("SELECT COUNT(*) FROM pragma_table_info('tabs') WHERE name='archived_at'")
+        .and_then(|mut s| s.query_row([], |r| r.get::<_, i64>(0)))
+        .map(|c| c > 0)
+        .unwrap_or(false);
+    if !has_archived_at {
+        conn.execute_batch("ALTER TABLE tabs ADD COLUMN archived_at INTEGER;")
+            .unwrap();
+    }
+
+    // tab_snapshots: not gated behind the tabs.archived_at check above — an
+    // interrupted older migration could have added one without the other.
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS tab_snapshots (
+            tab_id TEXT PRIMARY KEY REFERENCES tabs(id) ON DELETE CASCADE,
+            cols INTEGER NOT NULL,
+            rows INTEGER NOT NULL,
+            cursor_row INTEGER NOT NULL,
+            cursor_col INTEGER NOT NULL,
+            captured_at INTEGER NOT NULL,
+            payload BLOB NOT NULL
+        );",
+    )
+    .unwrap();
 
     // Directories: per-directory settings JSON blob
     let has_dir_settings: bool = conn

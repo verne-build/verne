@@ -19,6 +19,7 @@ import {
   moveTabToDirectory,
   setTabScopePinned,
   getTabScopePinned,
+  setTabArchivedAt,
 } from "./tabs";
 import type { Tab } from "../../../src/types/shared";
 
@@ -149,6 +150,22 @@ describe("tabs", () => {
     expect(getTab(db, "dead")!.lastAgentType).toBeUndefined();
   });
 
+  it("clearStaleTabStates preserves archived tabs' agent identity (empty live set)", () => {
+    const db = tmpDb();
+    insertTab(db, mkTab({ id: "live", lastAgentType: "claude", lastAgentState: "idle", lastAgentSessionId: "s1" }));
+    insertTab(db, mkTab({ id: "archived", lastAgentType: "codex", lastAgentState: "working", lastAgentSessionId: "s2" }));
+    setTabArchivedAt(db, "archived", 12345);
+    clearStaleTabStates(db, []);
+    const live = getTab(db, "live")!;
+    expect(live.lastAgentType).toBeUndefined();
+    expect(live.lastAgentState).toBeUndefined();
+    expect(live.lastAgentSessionId).toBeUndefined();
+    const archived = getTab(db, "archived")!;
+    expect(archived.lastAgentType).toBe("codex");
+    expect(archived.lastAgentState).toBe("working");
+    expect(archived.lastAgentSessionId).toBe("s2");
+  });
+
   it("updates the last-known presentation snapshot", () => {
     const db = tmpDb();
     insertTab(db, mkTab());
@@ -220,6 +237,16 @@ describe("tabs", () => {
     insertTab(db, mkTab({ id: "t1", directoryId: "d1", sortOrder: 3 }));
     moveTabToDirectory(db, "t1", "d2", "/tmp/d2");
     expect(getTab(db, "t1")!.sortOrder).toBe(0);
+  });
+
+  it("setTabArchivedAt round-trips; null clears; unset omits archivedAt", () => {
+    const db = tmpDb();
+    insertTab(db, mkTab());
+    expect(getTab(db, "t1")!.archivedAt).toBeUndefined();
+    setTabArchivedAt(db, "t1", 5000);
+    expect(getTab(db, "t1")!.archivedAt).toBe(5000);
+    setTabArchivedAt(db, "t1", null);
+    expect(getTab(db, "t1")!.archivedAt).toBeUndefined();
   });
 
   it("scope pin round-trips and defaults false", () => {
