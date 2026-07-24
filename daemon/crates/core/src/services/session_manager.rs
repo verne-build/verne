@@ -745,10 +745,6 @@ impl SessionManager {
 pub struct StartSessionOpts {
     pub working_dir: String,
     pub launch_command: Option<String>,
-    /// One-shot command written into the PTY after spawn (keystroke-style),
-    /// distinct from `launch_command` which replaces the shell's argv. Runs
-    /// inside the user's normal shell and falls back to it when done.
-    pub startup_command: Option<String>,
     pub cols: u16,
     pub rows: u16,
     /// Extra env vars merged into the spawned child's environment. Phase 5
@@ -762,7 +758,6 @@ impl StartSessionOpts {
         Self {
             working_dir,
             launch_command: None,
-            startup_command: None,
             cols,
             rows,
             env: HashMap::new(),

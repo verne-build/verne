@@ -5,9 +5,36 @@
 
 use std::sync::{Arc, Mutex};
 
-use crate::services::session_manager::{self, SessionManager, StartSessionOpts};
+use crate::services::session_manager::{self, Session, SessionManager, StartSessionOpts};
 use crate::state::EventBus;
 use crate::types::{GridSnapshotDump, TabSpawnPlan};
+
+/// Write the one-shot startup command into the just-registered tab's PTY,
+/// cleaning up (stopping) the session if the write fails so no live orphan
+/// session survives a failed injection. `writer` is injected so tests can
+/// force the failure branch deterministically without depending on a real
+/// PTY's failure mode.
+///
+/// Looks the session up fresh (rather than taking a `&Session`) because the
+/// caller must re-resolve it after registration anyway — mirrors the
+/// production call site exactly.
+fn inject_startup_command(
+    sm: &mut SessionManager,
+    tab_id: &str,
+    writer: impl FnOnce(&Session) -> Result<(), String>,
+) -> Result<(), String> {
+    let write_result = sm
+        .get_session_by_agent(tab_id)
+        .ok_or_else(|| "spawned session was not registered".to_string())
+        .and_then(writer);
+    if let Err(e) = write_result {
+        if let Some(sid) = sm.get_session_by_agent(tab_id).map(|s| s.id.clone()) {
+            sm.stop_session(&sid);
+        }
+        return Err(e);
+    }
+    Ok(())
+}
 
 /// Spawn (or reuse) the live PTY session for a tab, keyed by `tab_id`. Returns
 /// the session id. Idempotent: if a live session already exists for the tab
@@ -35,7 +62,6 @@ pub fn spawn_tab_pty(
     let start_opts = StartSessionOpts {
         working_dir: plan.cwd.clone(),
         launch_command: plan.launch_command.clone(),
-        startup_command: plan.startup_command.clone(),
         cols: 80,
         rows: 50,
         env: plan.env.clone(),
@@ -135,14 +161,10 @@ pub fn spawn_tab_pty(
         // shell survives once the injected command exits. Distinct from
         // `launch_command`, which replaces the shell's argv entirely.
         if let Some(command) = plan.startup_command.as_deref() {
-            let write_result = sm
-                .get_session_by_agent(&plan.tab_id)
-                .ok_or_else(|| "spawned session was not registered".to_string())
-                .and_then(|registered| registered.write(format!("{command}\n").as_bytes()));
-            if let Err(e) = write_result {
-                if let Some(sid) = sm.get_session_by_agent(&plan.tab_id).map(|s| s.id.clone()) {
-                    sm.stop_session(&sid);
-                }
+            let inject_result = inject_startup_command(&mut sm, &plan.tab_id, |registered| {
+                registered.write(format!("{command}\n").as_bytes())
+            });
+            if let Err(e) = inject_result {
                 SessionManager::release_spawn_slot(&spawn_slots);
                 return Err(e);
             }
@@ -305,5 +327,38 @@ mod startup_command_tests {
         // No session should have been spawned.
         let sm = sessions.lock().unwrap();
         assert!(sm.get_session_by_agent(&plan.tab_id).is_none());
+    }
+
+    /// Drives the post-registration write-failure branch of `spawn_tab_pty`
+    /// via the extracted `inject_startup_command` helper with a stubbed
+    /// writer, so the failure is deterministic (no reliance on ever forcing
+    /// a real PTY write to fail). Asserts the anti-orphan cleanup: the
+    /// session is removed and an `Err` is returned.
+    #[test]
+    fn inject_startup_command_write_failure_removes_session() {
+        let tab_id = "startup-cmd-tab-write-fail";
+        let cwd = std::env::temp_dir().to_string_lossy().to_string();
+
+        let (_session_id, mut session) =
+            session_manager::create_raw_session(tab_id, "sleep", &["30"], &cwd, 80, 50)
+                .expect("real raw session should spawn for this test");
+        // create_raw_session derives agent_id as "raw:<label>"; force it to
+        // match tab_id so get_session_by_agent finds it like the real
+        // spawn_tab_pty flow does.
+        session.agent_id = tab_id.to_string();
+
+        let mut sm = SessionManager::new();
+        sm.insert_session(session);
+        assert!(sm.get_session_by_agent(tab_id).is_some());
+
+        let result = inject_startup_command(&mut sm, tab_id, |_registered| {
+            Err("simulated write failure".to_string())
+        });
+
+        assert!(result.is_err(), "expected Err from failing writer stub");
+        assert!(
+            sm.get_session_by_agent(tab_id).is_none(),
+            "session must be removed (no orphan) after a failed injection write"
+        );
     }
 }
