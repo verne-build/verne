@@ -261,8 +261,9 @@ function registerTabOrchestration(d: DaemonClient, s: DaemonClient): void {
   registerNative("tabs_rename", (params: { id: string; label: string }) => {
     const db = getDb();
     renameTab(db, params.id, params.label);
-    const tab = getTab(db, params.id);
-    if (!tab) throw new Error("tab gone after rename");
+    const raw = getTab(db, params.id);
+    if (!raw) throw new Error("tab gone after rename");
+    const tab = decorateTab(raw);
     emit("tab-updated", { tab });
     return tab;
   });

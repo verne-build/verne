@@ -95,6 +95,51 @@ describe('gridStoreFromArchivedSnapshot', () => {
     expect(store.cursorShape).toBe('hidden');
   });
 
+  it('round-trips a real daemon-shaped dump: history_len >= 1, viewport screen-relative', () => {
+    // Mirrors terminal_emulator.rs snapshot_dump() output for a session with
+    // scrollback: historyRows keyed 0..history_len (absolute-in-history), viewport
+    // keyed 0..rows (screen-relative) — NOT offset by history_len. Regression
+    // guard for the daemon/renderer line-index contract (viewport.line ∈ [0, rows)).
+    const rows = 3;
+    const historyRows = [textRow(0, 'h0'), textRow(1, 'h1'), textRow(2, 'h2', true)];
+    const viewport = [textRow(0, 'v0'), textRow(1, 'v1'), textRow(2, 'v2')];
+    const dump: GridSnapshotDump = {
+      ...fixture(),
+      rows,
+      totalLines: historyRows.length + rows,
+      historyRows,
+      viewport,
+    };
+    expect(() => validateArchivedSnapshot(dump)).not.toThrow();
+
+    const store = gridStoreFromArchivedSnapshot(dump);
+    expect(store.totalLines).toBe(historyRows.length + rows);
+    expect(store.lineText(0)).toBe('h0');
+    expect(store.lineText(1)).toBe('h1');
+    expect(store.lineText(2)).toBe('h2');
+    expect(store.lineText(3)).toBe('v0');
+    expect(store.lineText(4)).toBe('v1');
+    expect(store.lineText(5)).toBe('v2');
+  });
+
+  it('rejects a dump whose viewport line is absolute (>= rows), locking the convention', () => {
+    const rows = 2;
+    const historyRows = [textRow(0, 'h0'), textRow(1, 'h1')];
+    // Wrong convention: viewport lines offset by history_len (2, 3) instead of (0, 1).
+    const badViewport = [
+      { ...textRow(0, 'v0'), line: historyRows.length },
+      { ...textRow(1, 'v1'), line: historyRows.length + 1 },
+    ];
+    const bad: GridSnapshotDump = {
+      ...fixture(),
+      rows,
+      totalLines: historyRows.length + rows,
+      historyRows,
+      viewport: badViewport,
+    };
+    expect(() => validateArchivedSnapshot(bad)).toThrow('archived snapshot unavailable');
+  });
+
   it('retains all history rows (capacity >= historyRows.length; 5000 coexist)', () => {
     const history = Array.from({ length: 5000 }, (_, i) => textRow(i, `h${i}`));
     const dump: GridSnapshotDump = {

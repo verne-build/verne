@@ -624,7 +624,7 @@ impl TerminalEmulator {
 
         let viewport: Vec<GridSnapshotRow> = (0..self.rows as i32)
             .map(|l| GridSnapshotRow {
-                line: (history_len as i32 + l) as usize,
+                line: l as usize,
                 start_col: 0,
                 cells: self.wire_row(l).iter().map(Self::wire_cell_to_dump).collect(),
                 wrapped: self.row_wrapped(l),
@@ -1283,6 +1283,15 @@ mod tests {
         assert_eq!(dump.history_rows[0].cells[0].cp, 'o' as u32);
         assert_eq!(dump.viewport[1].cells[0].cp, 't' as u32);
         assert_eq!((dump.cursor_row, dump.cursor_col), m.cursor());
+
+        // Viewport `line` must be screen-relative (0..rows), NOT absolute
+        // scrollback index — this is the contract the renderer's
+        // GridStore.applySync/archivedSnapshot validation depends on.
+        assert!(dump.history_rows.len() >= 1, "expected scrollback for this assertion");
+        for (k, row) in dump.viewport.iter().enumerate() {
+            assert_eq!(row.line, k, "viewport row {} must carry screen-relative line index", k);
+            assert!(row.line < dump.rows as usize);
+        }
     }
 
     #[test]
