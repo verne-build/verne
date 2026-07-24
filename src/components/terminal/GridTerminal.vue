@@ -747,6 +747,10 @@ function onCompositionEnd(e: CompositionEvent) {
   if (hiddenInput.value) hiddenInput.value.value = '';
 }
 function onWheel(e: WheelEvent) {
+  // Archived grids are frozen at capture width: a horizontal gesture scrolls the
+  // pane natively (don't preventDefault), while vertical still drives the virtual
+  // scrollback below.
+  if (archived.value && Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
   e.preventDefault();
   if (!controller) return;
   // Scrolling shifts cell positions → the hover underline would be stale.
@@ -984,9 +988,15 @@ defineExpose({
     @mousedown.prevent="focusInput"
     @wheel="onWheel"
   >
-    <!-- Mouse + webglcontextlost listeners are bound in JS (bindCanvasEvents) so
-         the element can be swapped on a context loss. -->
-    <canvas ref="canvas" class="block" />
+    <!-- Archived grids are frozen at capture width; wrap the canvas in a
+         horizontal scroller so a session wider than the pane can scroll sideways.
+         Live mode uses `contents` so the canvas stays a direct child (unchanged).
+         Overlays stay on the outer container so they don't drift when scrolled. -->
+    <div :class="archived ? 'h-full w-full overflow-x-auto overflow-y-hidden' : 'contents'">
+      <!-- Mouse + webglcontextlost listeners are bound in JS (bindCanvasEvents) so
+           the element can be swapped on a context loss. -->
+      <canvas ref="canvas" class="block" />
+    </div>
     <!-- Link hover underline (modifier held over a link). -->
     <div
       v-if="linkUnderline"

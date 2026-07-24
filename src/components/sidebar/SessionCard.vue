@@ -10,7 +10,6 @@ import {
   Pencil,
   RotateCcw,
   SquareTerminal,
-  Terminal,
   Trash2,
 } from "@lucide/vue";
 import StatusIndicator from "@/components/StatusIndicator.vue";
@@ -373,16 +372,10 @@ async function unarchive(resume: boolean) {
           <Archive />
           Archive Session
         </ContextMenuItem>
-        <template v-if="archived">
-          <ContextMenuItem v-if="row.tab.resumeAvailable" @select="unarchive(true)">
-            <ArchiveRestore />
-            Un-archive (Resume Agent)
-          </ContextMenuItem>
-          <ContextMenuItem @select="unarchive(false)">
-            <Terminal />
-            Un-archive (Fresh Shell)
-          </ContextMenuItem>
-        </template>
+        <ContextMenuItem v-if="archived && row.tab.resumeAvailable" @select="unarchive(true)">
+          <ArchiveRestore />
+          Resume Agent
+        </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem variant="destructive" @select="closeSession()">
           <Trash2 />

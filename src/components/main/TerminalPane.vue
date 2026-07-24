@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import { SquareTerminal, SplitSquareHorizontal, PanelRight, PanelLeft, PanelBottom, PanelTop, X, RotateCw } from "@lucide/vue";
+import { SquareTerminal, SplitSquareHorizontal, PanelRight, PanelLeft, PanelBottom, PanelTop, X, RotateCw, Play } from "@lucide/vue";
 import { ask } from "@/platform";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useRpc } from "@/composables/useRpc";
@@ -272,6 +272,18 @@ onUnmounted(() => {
       <img v-if="agentIconSrc" :src="agentIconSrc" class="size-3.5 shrink-0" :alt="panelLabel" />
       <SquareTerminal v-else class="size-3.5 shrink-0" />
       <span class="truncate flex-1" :class="isActive ? 'text-foreground' : ''">{{ panelLabel }}</span>
+      <Button
+        v-if="isArchived && tab?.resumeAvailable"
+        data-no-drag
+        size="xs"
+        variant="ghost"
+        class="text-primary hover:text-primary"
+        title="Resume agent (--resume)"
+        @click="unarchive(true)"
+      >
+        <Play class="size-3.5" />
+        Resume
+      </Button>
       <DropdownMenu>
         <DropdownMenuTrigger as-child>
           <Button data-no-drag size="icon-xs" variant="ghost" class="text-muted-foreground" title="Split">
@@ -374,6 +386,20 @@ onUnmounted(() => {
               Session exited — click to restart
             </span>
           </button>
+          <!-- Floating resume affordance for archived agents (mirrors the heading
+               Resume button). Overlay-only so scroll/select/copy underneath are
+               unaffected; offset to clear the horizontal scrollbar. -->
+          <button
+            v-if="isArchived && tab?.resumeAvailable"
+            type="button"
+            data-no-drag
+            class="absolute bottom-4 right-4 z-40 flex items-center gap-1.5 rounded-full bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground shadow hover:bg-primary/90"
+            title="Resume agent (--resume)"
+            @click="unarchive(true)"
+          >
+            <Play class="size-3.5" />
+            Resume agent
+          </button>
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent>
@@ -396,12 +422,9 @@ onUnmounted(() => {
           <ContextMenuShortcut>{{ shortcutText("split-pane-v") }}</ContextMenuShortcut>
         </ContextMenuItem>
         <ContextMenuItem v-if="multi" @select="removeFromView">Remove From View</ContextMenuItem>
-        <template v-if="isArchived">
-          <ContextMenuItem v-if="tab?.resumeAvailable" @select="unarchive(true)">
-            Un-archive (Resume Agent)
-          </ContextMenuItem>
-          <ContextMenuItem @select="unarchive(false)">Un-archive (Fresh Shell)</ContextMenuItem>
-        </template>
+        <ContextMenuItem v-if="isArchived && tab?.resumeAvailable" @select="unarchive(true)">
+          Resume Agent
+        </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem variant="destructive" @select="closeSession">Close Session</ContextMenuItem>
       </ContextMenuContent>
