@@ -1,7 +1,14 @@
 import { defineStore } from "pinia";
 import { ref, shallowRef, triggerRef, computed, watch } from "vue";
 import { toast } from "vue-sonner";
-import type { WorkingDirectory, TabUpdatedEvent, Tab, CreateTabOpts, AgentState } from "@/types";
+import type {
+  WorkingDirectory,
+  TabUpdatedEvent,
+  Tab,
+  CreateTabOpts,
+  AgentLaunchSelection,
+  AgentState,
+} from "@/types";
 import { useRpc } from "@/composables/useRpc";
 import { moveTabBetweenBuckets } from "@/lib/scopeMove";
 import { stopClient } from "@/composables/useLanguageClient";
@@ -273,14 +280,14 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
   async function newSession(
     directoryId: string,
-    opts: { cwd?: string; label?: string; launchCommand?: string } = {},
+    opts: { cwd?: string; label?: string; agentLaunch?: AgentLaunchSelection } = {},
   ): Promise<Tab> {
     const existing = terminalTabsByDirectory.value[directoryId] ?? [];
     const tab = await useRpc().request.tabsCreate({
       directoryId,
       cwd: opts.cwd,
       label: opts.label ?? String(existing.length + 1),
-      launchCommand: opts.launchCommand,
+      agentLaunch: opts.agentLaunch,
     });
     // Re-read post-await — a concurrent newSession in this directory may have
     // already appended its own tab; spreading the stale pre-await snapshot
@@ -296,12 +303,12 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     return tab;
   }
 
-  // Compat alias — App.vue/menu callers use the old CreateTabOpts shape.
+  // Compat alias — App.vue/menu callers use the CreateTabOpts shape.
   const createTab = (opts: CreateTabOpts): Promise<Tab> =>
     newSession(opts.directoryId, {
       cwd: opts.cwd,
       label: opts.label,
-      launchCommand: opts.launchCommand,
+      agentLaunch: opts.agentLaunch,
     });
 
   async function splitSessionWithNew(sessionId: string, direction: SplitDir, before = false): Promise<void> {

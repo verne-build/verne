@@ -29,7 +29,12 @@ const tabsCreateCalls: Array<{
   directoryId: string;
   label?: string;
   cwd?: string;
-  launchCommand?: string;
+  agentLaunch?: {
+    agentType: string;
+    modelId: string | null;
+    effort: string | null;
+    fast: boolean | null;
+  };
 }> = [];
 const {
   getLiveTabIds,
@@ -174,7 +179,12 @@ vi.mock("@/composables/useRpc", () => ({
         directoryId: string;
         label?: string;
         cwd?: string;
-        launchCommand?: string;
+        agentLaunch?: {
+          agentType: string;
+          modelId: string | null;
+          effort: string | null;
+          fast: boolean | null;
+        };
       }) => {
         tabsCreateCalls.push({ ...opts });
         const deferred = getTabsCreateDeferred();
@@ -668,13 +678,17 @@ describe("new-session picker", () => {
     expect(store.pendingPicker).toBeNull();
   });
 
-  it("threads launchCommand through createTab", async () => {
+  it("threads agentLaunch through createTab without a launchCommand", async () => {
     const store = useWorkspaceStore();
-    await store.createTab({ directoryId: "dir-1", launchCommand: "codex" });
+    await store.createTab({
+      directoryId: "dir-1",
+      agentLaunch: { agentType: "claude", modelId: "sonnet", effort: "medium", fast: null },
+    });
     expect(tabsCreateCalls.at(-1)).toMatchObject({
       directoryId: "dir-1",
-      launchCommand: "codex",
+      agentLaunch: { agentType: "claude", modelId: "sonnet", effort: "medium", fast: null },
     });
+    expect(tabsCreateCalls.at(-1)).not.toHaveProperty("launchCommand");
   });
 });
 

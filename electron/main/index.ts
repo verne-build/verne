@@ -39,6 +39,7 @@ import {
   defaultLabel,
 } from "./db/tabs";
 import type { Tab, CreateTabOpts } from "../../src/types/shared";
+import { resolveLaunchCommand } from "./agent-launch";
 import { writeMcpLauncher } from "./mcp/launcher";
 import {
   writeNotifyScript,
@@ -150,6 +151,7 @@ function registerTabOrchestration(d: DaemonClient, s: DaemonClient): void {
   registerNative("tabs_create", async (params: { opts: CreateTabOpts }) => {
     const db = getDb();
     const { opts } = params;
+    const launchCommand = resolveLaunchCommand(opts.agentLaunch);
     const dir = getDirectory(db, opts.directoryId);
     if (!dir) throw new Error("directory not found");
     const cwd = opts.cwd ?? dir.path;
@@ -167,7 +169,7 @@ function registerTabOrchestration(d: DaemonClient, s: DaemonClient): void {
       lastAgentSessionId: undefined,
       lastAgentState: undefined,
       userRenamed: false,
-      launchCommand: opts.launchCommand,
+      launchCommand,
     };
     const env: Record<string, string> = { VERNE_TAB_ID: tab.id };
     const root = resolveWorkspaceRoot(db, opts.directoryId);

@@ -1,4 +1,4 @@
-import type { AgentLaunchSelection, AgentType } from "@/types";
+import type { AgentLaunchSelection, AgentType } from "../types";
 
 export interface ModelDefinition {
   id: string;

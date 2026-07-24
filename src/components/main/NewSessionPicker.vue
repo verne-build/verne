@@ -12,7 +12,7 @@ import {
   loadAvailableAgents,
   type AgentDefinition,
 } from "@/lib/agentRegistry";
-import type { WorkingDirectory } from "@/types";
+import type { AgentLaunchSelection, WorkingDirectory } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
@@ -37,7 +37,7 @@ const launching = ref(false);
 const busy = computed(() => scopeLoading.value || launching.value);
 
 type RetryAction =
-  | { kind: "launch"; launchCommand?: string; label: string }
+  | { kind: "launch"; agentLaunch?: AgentLaunchSelection; label: string }
   | { kind: "scope" };
 
 interface PickerError {
@@ -166,7 +166,7 @@ async function loadCurrentScope(restoreRetryFocus = false): Promise<void> {
 }
 
 async function launch(
-  launchCommand: string | undefined,
+  agentLaunch: AgentLaunchSelection | undefined,
   label: string,
   { preserveError = false, restoreRetryFocus = false } = {},
 ): Promise<void> {
@@ -179,7 +179,7 @@ async function launch(
   if (!preserveError) clearError("launch");
   let refocusRetry = false;
   try {
-    await store.newSession(launchedScope, { launchCommand });
+    await store.newSession(launchedScope, { agentLaunch });
     if (
       isCurrentInstance()
       && launchRequestId === requestId
@@ -191,8 +191,8 @@ async function launch(
       console.error("[NewSessionPicker] create failed:", error);
       showError("launch", {
         title: "Couldn't Start Session",
-        message: `Verne couldn't start ${label}. Try again${launchCommand ? " or start a Terminal instead" : ""}.`,
-        retry: { kind: "launch", launchCommand, label },
+        message: `Verne couldn't start ${label}. Try again${agentLaunch ? " or start a Terminal instead" : ""}.`,
+        retry: { kind: "launch", agentLaunch, label },
       });
       refocusRetry = restoreRetryFocus;
     }
@@ -210,7 +210,7 @@ async function retryFailedAction(): Promise<void> {
   if (!action) return;
   if (action.kind === "scope") await loadCurrentScope(true);
   else {
-    await launch(action.launchCommand, action.label, {
+    await launch(action.agentLaunch, action.label, {
       preserveError: true,
       restoreRetryFocus: true,
     });
@@ -316,7 +316,7 @@ onUnmounted(() => {
             variant="outline"
             class="h-12 gap-2 px-4"
             :disabled="launching"
-            @click="launch(agent.bin, agent.label)"
+            @click="launch({ agentType: agent.type, modelId: null, effort: null, fast: null }, agent.label)"
           >
             <img v-if="agent.icon" :src="agent.icon" alt="" class="size-5" />
             <Bot v-else aria-hidden="true" class="size-5" />
