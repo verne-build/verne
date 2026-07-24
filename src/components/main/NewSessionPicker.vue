@@ -43,6 +43,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
+  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
@@ -98,9 +99,20 @@ const pendingStart = ref<StartSnapshot | null>(null);
 const current = computed<WorkingDirectory | null>(() =>
   store.directories.find((dir) => dir.id === props.dirId) ?? null,
 );
-const currentRoot = computed(() => current.value?.parentDirectoryId
-  ? store.directories.find((dir) => dir.id === current.value?.parentDirectoryId) ?? current.value
-  : current.value);
+const roots = computed(() => {
+  const ids = new Set(store.directories.map((dir) => dir.id));
+  return store.directories.filter((dir) => !dir.parentDirectoryId || !ids.has(dir.parentDirectoryId));
+});
+const worktreesByRoot = computed(() => {
+  const groups = new Map<string, WorkingDirectory[]>();
+  for (const dir of store.directories) {
+    if (!dir.parentDirectoryId) continue;
+    const children = groups.get(dir.parentDirectoryId) ?? [];
+    children.push(dir);
+    groups.set(dir.parentDirectoryId, children);
+  }
+  return groups;
+});
 const directoryId = computed(() => current.value?.id ?? null);
 const { settings: directorySettings } = useDirectorySettings(directoryId);
 const surface = computed(() => agentIconSurfaceForTheme(getActiveThemeSpec().type));
@@ -205,6 +217,14 @@ function selectFast(value: AcceptableValue): void {
 function selectBranch(value: AcceptableValue): void {
   if (typeof value !== "string") return;
   selectedBranch.value = branches.value.find((branch) => branch.fullRef === value) ?? null;
+}
+
+function selectPickerDirectory(directory: WorkingDirectory): void {
+  if (launching.value) return;
+  const target = store.directories.find((candidate) => candidate.id === directory.id);
+  if (!target) return;
+  store.selectDirectory(target);
+  store.openSessionPicker(target.id);
 }
 
 function preferredBranch(nextBranches: GitBranch[]): GitBranch | null {
@@ -418,9 +438,43 @@ onUnmounted(() => {
 <template>
   <div class="flex h-full min-h-0 items-center justify-center p-5 sm:p-8" @keydown.esc.stop="onEscape">
     <div class="w-full max-w-4xl">
-      <p id="new-session-picker-title" class="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-        New Session · {{ currentRoot?.name ?? "Workspace" }}
-      </p>
+      <h2 id="new-session-picker-title" class="mb-3 flex flex-wrap items-center gap-1 text-xl font-semibold tracking-tight text-foreground">
+        <span>Start New Session In</span>
+        <DropdownMenu>
+          <DropdownMenuTrigger as-child>
+            <Button type="button" variant="ghost" class="min-h-10 px-2 text-xl font-semibold" :disabled="launching" aria-label="Select Directory">
+              {{ current?.name ?? "Workspace" }}
+              <ChevronDown aria-hidden="true" class="size-4 text-muted-foreground" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" class="min-w-64">
+            <DropdownMenuLabel>Workspaces</DropdownMenuLabel>
+            <template v-for="(root, rootIndex) in roots" :key="root.id">
+              <DropdownMenuSeparator v-if="rootIndex > 0" />
+              <DropdownMenuGroup>
+                <DropdownMenuItem class="min-h-10" :disabled="launching" @select="selectPickerDirectory(root)">
+                  <span class="min-w-0">
+                    <span class="block truncate font-medium">{{ root.name }}</span>
+                    <span class="block truncate text-xs text-muted-foreground">{{ homePath(root.path) }}</span>
+                  </span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  v-for="worktree in worktreesByRoot.get(root.id) ?? []"
+                  :key="worktree.id"
+                  class="min-h-10 pl-6"
+                  :disabled="launching"
+                  @select="selectPickerDirectory(worktree)"
+                >
+                  <span class="min-w-0">
+                    <span class="block truncate font-medium">{{ root.name }} / {{ worktree.name }}</span>
+                    <span class="block truncate text-xs text-muted-foreground">{{ homePath(worktree.path) }}</span>
+                  </span>
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
+            </template>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </h2>
       <section aria-labelledby="new-session-picker-title" :aria-busy="busy" class="w-full max-w-4xl rounded-xl border bg-card shadow-sm">
         <div class="grid gap-3 p-5 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
           <DropdownMenu>

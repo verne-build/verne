@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp, h, nextTick } from "vue";
 import { createPinia } from "pinia";
 import { resetAgentAvailabilityCacheForTests } from "@/lib/agentRegistry";
+import type { WorkingDirectory } from "@/types";
 
 const rpc = vi.hoisted(() => ({
   agentBinsAvailable: vi.fn(),
@@ -19,12 +20,13 @@ const store = vi.hoisted(() => ({
     name: "Project",
     createdAt: 0,
     sortOrder: 0,
-  }],
+  }] as WorkingDirectory[],
   selectedDirectoryId: "dir-1" as string | null,
   pendingPicker: { dirId: "dir-1" } as { dirId: string } | null,
   terminalTabsByDirectory: { "dir-1": [] as unknown[] },
   loadTabsForDirectory: vi.fn(async () => []),
   selectDirectory: vi.fn(),
+  openSessionPicker: vi.fn(),
   closeSessionPicker: vi.fn(),
   startPickerSession: vi.fn(async (input: {
     mode: "current" | "worktree";
@@ -70,6 +72,13 @@ function menuItem(label: string): HTMLElement {
   return match;
 }
 
+function actionMenuItem(label: string): HTMLElement {
+  const match = Array.from(document.querySelectorAll<HTMLElement>("[data-slot=dropdown-menu-item]"))
+    .find((element) => element.textContent?.includes(label));
+  if (!match) throw new Error(`Missing action menu item: ${label}`);
+  return match;
+}
+
 function namedButton(name: string): HTMLButtonElement {
   const match = document.querySelector<HTMLButtonElement>(`button[aria-label="${name}"]`);
   if (!match) throw new Error(`Missing named button: ${name}`);
@@ -104,6 +113,14 @@ describe("NewSessionPicker", () => {
     store.pendingPicker = { dirId: "dir-1" };
     store.terminalTabsByDirectory = { "dir-1": [] };
     store.loadTabsForDirectory.mockClear();
+    store.selectDirectory.mockReset();
+    store.selectDirectory.mockImplementation((directory: { id: string }) => {
+      store.selectedDirectoryId = directory.id;
+    });
+    store.openSessionPicker.mockReset();
+    store.openSessionPicker.mockImplementation((dirId: string) => {
+      store.pendingPicker = { dirId };
+    });
     store.startPickerSession.mockClear();
     store.closeSessionPicker.mockClear();
     host = document.createElement("div");
@@ -139,6 +156,34 @@ describe("NewSessionPicker", () => {
 
     expect(button("Claude")).toBeTruthy();
     expect(namedButton("Select Agent").textContent).toContain("Claude");
+  });
+
+  it("retargets the picker from the directory heading dropdown", async () => {
+    app.unmount();
+    host.replaceChildren();
+    store.directories = [
+      { id: "dir-1", path: "/Users/verne/project", name: "Project", createdAt: 0, sortOrder: 0 },
+      { id: "wt-1", path: "/Users/verne/project-feature", name: "Feature", createdAt: 0, sortOrder: 1, parentDirectoryId: "dir-1" },
+      { id: "dir-2", path: "/Users/verne/other", name: "Other", createdAt: 0, sortOrder: 2 },
+    ];
+    store.selectedDirectoryId = "dir-1";
+    store.pendingPicker = { dirId: "dir-1" };
+    app = createApp({ render: () => h(NewSessionPicker, { dirId: "dir-1" }) });
+    app.use(createPinia());
+    app.mount(host);
+    await flush();
+
+    expect(document.querySelector("h2")?.textContent).toContain("Start New Session In");
+    expect(namedButton("Select Directory").textContent).toContain("Project");
+    await openMenu("Select Directory");
+    expect(document.body.textContent).toContain("Project / Feature");
+    expect(document.body.textContent).toContain("~/project-feature");
+
+    actionMenuItem("Project / Feature").click();
+
+    expect(store.selectDirectory).toHaveBeenCalledWith(expect.objectContaining({ id: "wt-1" }));
+    expect(store.openSessionPicker).toHaveBeenCalledWith("wt-1");
+    expect(store.pendingPicker).toEqual({ dirId: "wt-1" });
   });
 
   it("keeps a branch failure retryable when agent availability resolves later", async () => {
