@@ -861,6 +861,28 @@ describe("picker launch orchestration", () => {
     expect(store.pendingPicker).toEqual({ dirId: "dir-2" });
   });
 
+  it("restores the selection that was current when the created worktree took focus", async () => {
+    const store = useWorkspaceStore();
+    const created = { ...dir("wt-new"), parentDirectoryId: "dir-1" };
+    store.directories.push(dir("dir-1"), dir("dir-2"));
+    store.selectDirectory(dir("dir-1"));
+    store.openSessionPicker();
+    let resolveWorktree!: (directory: typeof created) => void;
+    rpc.worktreeCreate.mockImplementationOnce(() => new Promise<typeof created>((resolve) => {
+      resolveWorktree = resolve;
+    }));
+    rpc.tabsCreate.mockRejectedValueOnce(new Error("spawn failed"));
+
+    const launch = store.startPickerSession({ directoryId: "dir-1", mode: "worktree", branch: mainBranch });
+    await vi.waitFor(() => expect(rpc.worktreeCreate).toHaveBeenCalled());
+    store.selectDirectory(dir("dir-2"));
+    resolveWorktree(created);
+
+    await expect(launch).rejects.toThrow("spawn failed");
+    expect(store.selectedDirectoryId).toBe("dir-2");
+    expect(store.pendingPicker).toEqual({ dirId: "dir-2" });
+  });
+
   it("keeps the spawn failure visible when rollback also fails", async () => {
     const store = useWorkspaceStore();
     store.directories.push(dir("dir-1"));
