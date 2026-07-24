@@ -438,10 +438,21 @@ export interface TabGroup {
   createdAt: number;
 }
 
+export type AgentType = "claude" | "codex" | "copilot" | "opencode" | "agy" | "cursor";
+
+export interface AgentLaunchSelection {
+  agentType: AgentType;
+  modelId: string | null;
+  effort: string | null;
+  fast: boolean | null;
+}
+
 export interface CreateTabOpts {
   directoryId: string;
   label?: string;
   cwd?: string;
+  agentLaunch?: AgentLaunchSelection;
+  /** Legacy internal launch path; picker callers use `agentLaunch`. */
   launchCommand?: string;
 }
 

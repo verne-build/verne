@@ -1,24 +1,48 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AGENT_REGISTRY,
+  buildAgentArgv,
   filterAvailableAgents,
+  getModelDefinition,
   loadAvailableAgents,
   resetAgentAvailabilityCacheForTests,
+  serializeArgv,
 } from "./agentRegistry";
 import { findAgentIconForSurface } from "@/composables/useAgentIcon";
 
 describe("agent registry", () => {
   beforeEach(() => resetAgentAvailabilityCacheForTests());
 
-  it("defines the confirmed picker order and launch binaries", () => {
-    expect(AGENT_REGISTRY).toEqual([
-      { type: "claude", label: "Claude", bin: "claude" },
-      { type: "codex", label: "Codex", bin: "codex" },
-      { type: "copilot", label: "Copilot", bin: "copilot" },
-      { type: "opencode", label: "OpenCode", bin: "opencode" },
-      { type: "gemini", label: "Gemini", bin: "gemini" },
-      { type: "cursor", label: "Cursor", bin: "cursor-agent" },
+  it("uses the approved agents and replaces Gemini with Agy", () => {
+    expect(AGENT_REGISTRY.map(({ type, bin }) => [type, bin])).toEqual([
+      ["claude", "claude"], ["codex", "codex"], ["copilot", "copilot"],
+      ["opencode", "opencode"], ["agy", "agy"], ["cursor", "cursor-agent"],
     ]);
+  });
+
+  it("omits default categories", () => {
+    expect(buildAgentArgv({ agentType: "claude", modelId: null, effort: null, fast: null }))
+      .toEqual(["claude"]);
+  });
+
+  it("serializes representative commands", () => {
+    expect(buildAgentArgv({ agentType: "claude", modelId: "sonnet", effort: "medium", fast: null }))
+      .toEqual(["claude", "--model", "sonnet", "--effort", "medium"]);
+    expect(buildAgentArgv({ agentType: "agy", modelId: "Claude Sonnet 4.6 (Thinking)", effort: null, fast: null }))
+      .toEqual(["agy", "--model", "Claude Sonnet 4.6 (Thinking)"]);
+    expect(serializeArgv(["agy", "--model", "Claude Sonnet 4.6 (Thinking)"]))
+      .toBe("agy --model 'Claude Sonnet 4.6 (Thinking)'");
+  });
+
+  it("rejects stale and incompatible selections", () => {
+    expect(() => buildAgentArgv({ agentType: "agy", modelId: "missing", effort: null, fast: null })).toThrow("Unknown Agy model");
+    expect(() => buildAgentArgv({ agentType: "claude", modelId: "sonnet", effort: "medium", fast: true })).toThrow("Fast mode is unavailable");
+  });
+
+  it("exposes controls only for supported combinations", () => {
+    expect(getModelDefinition("agy", "Claude Sonnet 4.6 (Thinking)")?.efforts).toBeUndefined();
+    expect(getModelDefinition("claude", "sonnet")?.fast).toBeUndefined();
+    expect(getModelDefinition("claude", "opus")?.fast).toBe("claude-settings");
   });
 
   it("filters by binary while retaining registry order", () => {
@@ -35,7 +59,7 @@ describe("agent registry", () => {
   });
 
   it("returns no asset for iconless registry types", () => {
-    expect(findAgentIconForSurface("gemini", "dark")).toBeUndefined();
+    expect(findAgentIconForSurface("agy", "dark")).toBeUndefined();
     expect(findAgentIconForSurface("cursor", "light")).toBeUndefined();
   });
 });

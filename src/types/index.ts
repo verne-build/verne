@@ -36,6 +36,8 @@ export type {
   TabSessionRow,
   TabGroup,
   LayoutNode,
+  AgentType,
+  AgentLaunchSelection,
   CreateTabOpts,
   TabUpdatedEvent,
   TabTitleEvent,
