@@ -209,7 +209,6 @@ watch([sessionCount, query], () => nextTick(update));
 
 function select(d: WorkingDirectory) {
   store.selectDirectory(d);
-  void store.loadTabsForDirectory(d.id);
 }
 
 function onNewSession(d: WorkingDirectory) {
@@ -222,7 +221,6 @@ async function onCreateWorktree(parentDirId: string) {
     const dir = await store.createWorktree(parentDirId, "");
     store.selectDirectory(dir);
     store.openSessionPicker(dir.id);
-    void store.loadTabsForDirectory(dir.id);
   } catch (e) {
     window.alert(`Failed to create worktree: ${e}`);
   }

@@ -46,7 +46,17 @@ interface PickerError {
   retry: RetryAction;
 }
 
-const pickerError = ref<PickerError | null>(null);
+const scopeError = ref<PickerError | null>(null);
+const launchError = ref<PickerError | null>(null);
+const visibleErrorKind = ref<RetryAction["kind"] | null>(null);
+const pickerError = computed(() => {
+  const visible = visibleErrorKind.value === "launch" ? launchError.value : scopeError.value;
+  return visible ?? launchError.value ?? scopeError.value;
+});
+const retryAction = computed(() => pickerError.value?.retry ?? null);
+const retrying = computed(() => retryAction.value?.kind === "launch"
+  ? launching.value
+  : scopeLoading.value);
 let mounted = false;
 let scopeRequestId = 0;
 let launchRequestId = 0;
@@ -102,6 +112,22 @@ function resolveCurrentDirectory(): WorkingDirectory | null {
   return store.directories.find((dir) => dir.id === props.dirId) ?? null;
 }
 
+function showError(kind: RetryAction["kind"], error: PickerError): void {
+  const hasVisibleError = pickerError.value !== null;
+  if (kind === "launch") launchError.value = error;
+  else scopeError.value = error;
+  if (!hasVisibleError) visibleErrorKind.value = kind;
+}
+
+function clearError(kind: RetryAction["kind"]): void {
+  if (kind === "launch") launchError.value = null;
+  else scopeError.value = null;
+  if (visibleErrorKind.value !== kind) return;
+  const otherKind = kind === "launch" ? "scope" : "launch";
+  const otherError = otherKind === "launch" ? launchError.value : scopeError.value;
+  visibleErrorKind.value = otherError ? otherKind : null;
+}
+
 function selectScope(dir: WorkingDirectory): void {
   if (launching.value) return;
   const target = store.directories.find((candidate) => candidate.id === dir.id);
@@ -109,7 +135,7 @@ function selectScope(dir: WorkingDirectory): void {
 }
 
 async function loadCurrentScope(restoreRetryFocus = false): Promise<void> {
-  if (scopeLoading.value || launching.value) return;
+  if (scopeLoading.value) return;
   const dir = resolveCurrentDirectory();
   if (!dir) return;
   const requestId = ++scopeRequestId;
@@ -117,17 +143,17 @@ async function loadCurrentScope(restoreRetryFocus = false): Promise<void> {
   let refocusRetry = false;
   try {
     await store.loadTabsForDirectory(dir.id);
-    if (isCurrentInstance() && scopeRequestId === requestId) pickerError.value = null;
+    if (isCurrentInstance() && scopeRequestId === requestId) clearError("scope");
   } catch (error) {
     if (isCurrentInstance() && scopeRequestId === requestId) {
       console.error("[NewSessionPicker] scope load failed:", error);
       const currentDir = resolveCurrentDirectory();
       if (!currentDir) return;
-      pickerError.value = {
+      showError("scope", {
         title: "Couldn't Load Scope",
         message: `Verne couldn't load ${scopeLabel(currentDir)}. Try again.`,
         retry: { kind: "scope" },
-      };
+      });
       refocusRetry = restoreRetryFocus;
     }
   } finally {
@@ -144,13 +170,13 @@ async function launch(
   label: string,
   { preserveError = false, restoreRetryFocus = false } = {},
 ): Promise<void> {
-  if (busy.value) return;
+  if (launching.value) return;
   const dir = resolveCurrentDirectory();
   if (!dir) return;
   const launchedScope = dir.id;
   const requestId = ++launchRequestId;
   launching.value = true;
-  if (!preserveError) pickerError.value = null;
+  if (!preserveError) clearError("launch");
   let refocusRetry = false;
   try {
     await store.newSession(launchedScope, { launchCommand });
@@ -163,11 +189,11 @@ async function launch(
   } catch (error) {
     if (isCurrentInstance() && launchRequestId === requestId) {
       console.error("[NewSessionPicker] create failed:", error);
-      pickerError.value = {
+      showError("launch", {
         title: "Couldn't Start Session",
         message: `Verne couldn't start ${label}. Try again${launchCommand ? " or start a Terminal instead" : ""}.`,
         retry: { kind: "launch", launchCommand, label },
-      };
+      });
       refocusRetry = restoreRetryFocus;
     }
   } finally {
@@ -180,7 +206,7 @@ async function launch(
 }
 
 async function retryFailedAction(): Promise<void> {
-  const action = pickerError.value?.retry;
+  const action = retryAction.value;
   if (!action) return;
   if (action.kind === "scope") await loadCurrentScope(true);
   else {
@@ -289,7 +315,7 @@ onUnmounted(() => {
             type="button"
             variant="outline"
             class="h-12 gap-2 px-4"
-            :disabled="busy"
+            :disabled="launching"
             @click="launch(agent.bin, agent.label)"
           >
             <img v-if="agent.icon" :src="agent.icon" alt="" class="size-5" />
@@ -301,7 +327,7 @@ onUnmounted(() => {
             type="button"
             variant="outline"
             class="h-12 gap-2 px-4"
-            :disabled="busy"
+            :disabled="launching"
             @click="launch(undefined, 'Terminal')"
           >
             <SquareTerminal aria-hidden="true" class="size-5" />
@@ -323,7 +349,7 @@ onUnmounted(() => {
             variant="outline"
             class="h-10 shrink-0"
             aria-describedby="new-session-picker-error-description"
-            :disabled="busy"
+            :disabled="retrying"
             @click="retryFailedAction"
           >
             Retry

@@ -65,7 +65,11 @@ const store = useWorkspaceStore();
 watch(
   () => store.selectedDirectoryId,
   (dirId) => {
-    if (dirId) void store.loadTabsForDirectory(dirId);
+    if (dirId) {
+      void store.loadTabsForDirectory(dirId).catch((error) => {
+        console.error("[App] scope load failed:", error);
+      });
+    }
   },
   { immediate: true },
 );

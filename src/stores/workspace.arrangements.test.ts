@@ -45,6 +45,7 @@ const {
   setFailArrangementGets,
   takeArrangementGetFailure,
   tabsListByDir,
+  tabsListCalls,
   agentStates,
   getDirectoriesResult,
   setDirectoriesResult,
@@ -56,6 +57,7 @@ const {
   const tabsListQueue: Array<{
     promise: Promise<unknown[]>;
     resolve: (tabs: unknown[]) => void;
+    reject: (error: unknown) => void;
   }> = [];
   function makeDeferred() {
     let resolve!: (ids: string[]) => void;
@@ -74,12 +76,14 @@ const {
   // Mutable app_state + tabs_list fixtures + injectable arrangement-get failures.
   const appState = new Map<string, string>();
   const tabsListByDir: Record<string, unknown[]> = {};
+  const tabsListCalls: Array<string | undefined> = [];
   const agentStates: unknown[] = [];
   let directoriesResult: unknown[] = [];
   let failArrangementGets = 0;
   return {
     appState,
     tabsListByDir,
+    tabsListCalls,
     agentStates,
     setDirectoriesResult: (directories: unknown[]) => {
       directoriesResult = directories;
@@ -117,10 +121,12 @@ const {
     getTabsListDeferred: () => tabsListQueue.shift() ?? null,
     queueTabsListDeferred: () => {
       let resolve!: (tabs: unknown[]) => void;
-      const promise = new Promise<unknown[]>((r) => {
+      let reject!: (error: unknown) => void;
+      const promise = new Promise<unknown[]>((r, j) => {
         resolve = r;
+        reject = j;
       });
-      const d = { promise, resolve };
+      const d = { promise, resolve, reject };
       tabsListQueue.push(d);
       return d;
     },
@@ -155,6 +161,7 @@ vi.mock("@/composables/useRpc", () => ({
       }),
       groupsList: vi.fn(async () => []),
       tabsList: vi.fn(async (p: { directoryId?: string }) => {
+        tabsListCalls.push(p.directoryId);
         const deferred = getTabsListDeferred();
         if (deferred) return deferred.promise;
         return p.directoryId ? tabsListByDir[p.directoryId] ?? [] : Object.values(tabsListByDir).flat();
@@ -570,6 +577,44 @@ describe("new-session picker", () => {
     expect(store.pendingPicker).toEqual({ dirId: "dir-1" });
     expect(store.terminalTabsByDirectory["dir-1"]).toEqual([]);
     expect(tabsCreateCalls).toEqual([]);
+  });
+
+  it("shares one in-flight tabs load and its result across concurrent callers", async () => {
+    tabsListCalls.length = 0;
+    const store = useWorkspaceStore();
+    const deferred = queueTabsListDeferred();
+    const loadedTab = { id: "tab-a", directoryId: "dir-1", label: "1", cwd: null };
+
+    const first = store.loadTabsForDirectory("dir-1");
+    const second = store.loadTabsForDirectory("dir-1");
+    deferred.resolve([loadedTab]);
+    const [firstTabs, secondTabs] = await Promise.all([first, second]);
+
+    expect(tabsListCalls).toEqual(["dir-1"]);
+    expect(firstTabs).toEqual([loadedTab]);
+    expect(secondTabs).toBe(firstTabs);
+  });
+
+  it("shares an in-flight tabs load failure and evicts it for retry", async () => {
+    tabsListCalls.length = 0;
+    const store = useWorkspaceStore();
+    const deferred = queueTabsListDeferred();
+    const failure = new Error("tabs unavailable");
+
+    const first = store.loadTabsForDirectory("dir-1");
+    const second = store.loadTabsForDirectory("dir-1");
+    deferred.reject(failure);
+    const results = await Promise.allSettled([first, second]);
+
+    expect(tabsListCalls).toEqual(["dir-1"]);
+    expect(results).toEqual([
+      { status: "rejected", reason: failure },
+      { status: "rejected", reason: failure },
+    ]);
+
+    tabsListByDir["dir-1"] = [];
+    await store.loadTabsForDirectory("dir-1");
+    expect(tabsListCalls).toEqual(["dir-1", "dir-1"]);
   });
 
   it("preserves a session created while an older empty tabs load is pending", async () => {

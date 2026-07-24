@@ -154,6 +154,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   // Terminal tab state per directory + the active tab in each.
   const terminalTabsByDirectory = ref<Record<string, Tab[]>>({});
   const activeTabIdByDirectory = ref<Record<string, string | undefined>>({});
+  const tabsLoadInFlight = new Map<string, Promise<Tab[]>>();
   // Per-directory activation history (most-recent-last) so closing the active
   // tab falls back to the previously-active tab, not index 0.
   const tabActivationHistory: Record<string, string[]> = {};
@@ -563,7 +564,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     }
   }
 
-  async function loadTabsForDirectory(directoryId: string) {
+  async function performTabsLoad(directoryId: string): Promise<Tab[]> {
     const rpc = useRpc();
     const bucketAtRequest = terminalTabsByDirectory.value[directoryId];
     const loadedTabs = await rpc.request.tabsList({ directoryId });
@@ -586,6 +587,20 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     void hydrateAgentStatesFromDaemon();
     void hydrateSessionLifecycle();
     return tabs;
+  }
+
+  function loadTabsForDirectory(directoryId: string): Promise<Tab[]> {
+    const existing = tabsLoadInFlight.get(directoryId);
+    if (existing) return existing;
+
+    const request = performTabsLoad(directoryId);
+    tabsLoadInFlight.set(directoryId, request);
+    const clear = () => {
+      if (tabsLoadInFlight.get(directoryId) === request)
+        tabsLoadInFlight.delete(directoryId);
+    };
+    void request.then(clear, clear);
+    return request;
   }
 
   async function loadAllTabs() {
@@ -1052,7 +1067,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     }
   }
 
-  /** Pick a folder, register + select it, load its tabs, and dismiss the
+  /** Pick a folder, register + select it, and dismiss the
    *  welcome hero. The single entry point for every "open folder" affordance
    *  (App menu, Workspaces panel, welcome hero). Auto-selecting the new dir is
    *  what fixes the old add→nothing-selected dead-end. */
@@ -1070,7 +1085,6 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         return null;
       }
       selectDirectory(dir);
-      void loadTabsForDirectory(dir.id);
       markWelcomeSeen();
       return dir;
     } catch (e) {
