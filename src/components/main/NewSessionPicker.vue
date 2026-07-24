@@ -99,20 +99,7 @@ const pendingStart = ref<StartSnapshot | null>(null);
 const current = computed<WorkingDirectory | null>(() =>
   store.directories.find((dir) => dir.id === props.dirId) ?? null,
 );
-const roots = computed(() => {
-  const ids = new Set(store.directories.map((dir) => dir.id));
-  return store.directories.filter((dir) => !dir.parentDirectoryId || !ids.has(dir.parentDirectoryId));
-});
-const worktreesByRoot = computed(() => {
-  const groups = new Map<string, WorkingDirectory[]>();
-  for (const dir of store.directories) {
-    if (!dir.parentDirectoryId) continue;
-    const children = groups.get(dir.parentDirectoryId) ?? [];
-    children.push(dir);
-    groups.set(dir.parentDirectoryId, children);
-  }
-  return groups;
-});
+const roots = computed(() => store.directories.filter((dir) => !dir.parentDirectoryId));
 const directoryId = computed(() => current.value?.id ?? null);
 const { settings: directorySettings } = useDirectorySettings(directoryId);
 const surface = computed(() => agentIconSurfaceForTheme(getActiveThemeSpec().type));
@@ -442,7 +429,7 @@ onUnmounted(() => {
         <span>Start New Session In</span>
         <DropdownMenu>
           <DropdownMenuTrigger as-child>
-            <Button type="button" variant="ghost" class="min-h-10 px-2 text-xl font-semibold" :disabled="launching" aria-label="Select Directory">
+            <Button type="button" variant="ghost" class="min-h-10 px-2 text-xl font-semibold underline decoration-dotted underline-offset-4" :disabled="launching" aria-label="Select Directory">
               {{ current?.name ?? "Workspace" }}
               <ChevronDown aria-hidden="true" class="size-4 text-muted-foreground" />
             </Button>
@@ -456,18 +443,6 @@ onUnmounted(() => {
                   <span class="min-w-0">
                     <span class="block truncate font-medium">{{ root.name }}</span>
                     <span class="block truncate text-xs text-muted-foreground">{{ homePath(root.path) }}</span>
-                  </span>
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  v-for="worktree in worktreesByRoot.get(root.id) ?? []"
-                  :key="worktree.id"
-                  class="min-h-10 pl-6"
-                  :disabled="launching"
-                  @select="selectPickerDirectory(worktree)"
-                >
-                  <span class="min-w-0">
-                    <span class="block truncate font-medium">{{ root.name }} / {{ worktree.name }}</span>
-                    <span class="block truncate text-xs text-muted-foreground">{{ homePath(worktree.path) }}</span>
                   </span>
                 </DropdownMenuItem>
               </DropdownMenuGroup>

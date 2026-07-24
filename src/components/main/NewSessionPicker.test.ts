@@ -176,14 +176,16 @@ describe("NewSessionPicker", () => {
     expect(document.querySelector("h2")?.textContent).toContain("Start New Session In");
     expect(namedButton("Select Directory").textContent).toContain("Project");
     await openMenu("Select Directory");
-    expect(document.body.textContent).toContain("Project / Feature");
-    expect(document.body.textContent).toContain("~/project-feature");
+    expect(document.body.textContent).toContain("Project");
+    expect(document.body.textContent).toContain("Other");
+    expect(document.body.textContent).not.toContain("Feature");
+    expect(document.body.textContent).toContain("~/other");
 
-    actionMenuItem("Project / Feature").click();
+    actionMenuItem("Other").click();
 
-    expect(store.selectDirectory).toHaveBeenCalledWith(expect.objectContaining({ id: "wt-1" }));
-    expect(store.openSessionPicker).toHaveBeenCalledWith("wt-1");
-    expect(store.pendingPicker).toEqual({ dirId: "wt-1" });
+    expect(store.selectDirectory).toHaveBeenCalledWith(expect.objectContaining({ id: "dir-2" }));
+    expect(store.openSessionPicker).toHaveBeenCalledWith("dir-2");
+    expect(store.pendingPicker).toEqual({ dirId: "dir-2" });
   });
 
   it("keeps a branch failure retryable when agent availability resolves later", async () => {
