@@ -66,6 +66,16 @@ pub struct AppState {
     /// hook server starts.
     pub hook_secret: Mutex<String>,
     pub agent_bin_cache: Mutex<HashMap<String, bool>>,
+    /// Serializes worktree creation per canonical repository root.
+    pub worktree_create_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+}
+
+pub(crate) fn keyed_lock(
+    locks: &Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    key: &str,
+) -> Arc<Mutex<()>> {
+    let mut locks = locks.lock().unwrap_or_else(|p| p.into_inner());
+    locks.entry(key.to_string()).or_insert_with(|| Arc::new(Mutex::new(()))).clone()
 }
 
 /// State retained in the persistent `verne --server` daemon. The daemon's
@@ -154,7 +164,12 @@ impl AppState {
             hook_port: AtomicU16::new(0),
             hook_secret: Mutex::new(String::new()),
             agent_bin_cache: Mutex::new(HashMap::new()),
+            worktree_create_locks: Mutex::new(HashMap::new()),
         }
+    }
+
+    pub fn worktree_create_lock(&self, repo_root: &str) -> Arc<Mutex<()>> {
+        keyed_lock(&self.worktree_create_locks, repo_root)
     }
 
     /// Tear down watchers/workers/shadow trees for a removed directory subtree.

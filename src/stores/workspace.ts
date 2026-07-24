@@ -854,8 +854,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     void parentId;
   }
 
-  async function createWorktree(parentDirectoryId: string, branch: string) {
-    const dir = await useRpc().request.worktreeCreate({ parentDirectoryId, branch });
+  async function createWorktree(parentDirectoryId: string, branch?: string, baseRef?: string) {
+    const dir = await useRpc().request.worktreeCreate({ parentDirectoryId, branch, baseRef });
     if (!directories.value.find((d) => d.id === dir.id)) {
       directories.value = [...directories.value, dir];
     }

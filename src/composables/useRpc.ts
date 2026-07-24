@@ -120,8 +120,8 @@ const request = {
     invoke("update_directory_settings", p),
 
   // Worktrees
-  worktreeCreate: (p: { parentDirectoryId: string; branch: string }): Promise<WorkingDirectory> =>
-    invoke("worktree_create", { parentDirectoryId: p.parentDirectoryId, branch: p.branch }),
+  worktreeCreate: (p: { parentDirectoryId: string; branch?: string; baseRef?: string }): Promise<WorkingDirectory> =>
+    invoke("worktree_create", { parentDirectoryId: p.parentDirectoryId, branch: p.branch, baseRef: p.baseRef }),
   worktreeRemove: (p: { id: string; force?: boolean }): Promise<boolean> =>
     invoke("worktree_remove", { id: p.id, force: p.force ?? false }),
   worktreeRename: (p: { id: string; branch: string }): Promise<WorkingDirectory> =>

@@ -5,11 +5,15 @@ use std::path::{Path, PathBuf};
 /// A trait so the git logic stays decoupled.
 pub trait WorktreeHost {
     fn settings(&self) -> &crate::settings::SettingsManager;
+    fn worktree_create_lock(&self, repo_root: &str) -> std::sync::Arc<std::sync::Mutex<()>>;
     fn evict_directory_resources(&self, id: &str, all_dirs: &[crate::types::WorkingDirectory]);
 }
 
 impl WorktreeHost for crate::state::AppState {
     fn settings(&self) -> &crate::settings::SettingsManager { &self.settings }
+    fn worktree_create_lock(&self, repo_root: &str) -> std::sync::Arc<std::sync::Mutex<()>> {
+        crate::state::AppState::worktree_create_lock(self, repo_root)
+    }
     fn evict_directory_resources(&self, id: &str, all_dirs: &[crate::types::WorkingDirectory]) {
         crate::state::AppState::evict_directory_resources(self, id, all_dirs)
     }
@@ -38,6 +42,20 @@ pub const WORKTREE_NAME_POOL: &[&str] = &[
 pub enum BaseRef {
     Ref(String),
     HeadFallback,
+}
+
+#[derive(Debug)]
+enum WorktreeCreateError {
+    Collision(String),
+    Other(String),
+}
+
+impl std::fmt::Display for WorktreeCreateError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Collision(message) | Self::Other(message) => f.write_str(message),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -198,6 +216,13 @@ pub fn taken_worktree_names(root: &Path, dir_id: &str, repo: &git2::Repository) 
             }
         }
     }
+    if let Ok(branches) = repo.branches(Some(git2::BranchType::Local)) {
+        for item in branches.flatten() {
+            if let Some(name) = item.0.name().ok().flatten() {
+                taken.insert(name.to_string());
+            }
+        }
+    }
     taken
 }
 
@@ -208,19 +233,14 @@ use crate::types::DirectorySettings;
 pub fn resolve_base_ref(
     repo: &git2::Repository,
     dir_settings: &DirectorySettings,
+    selected: Option<&str>,
 ) -> BaseRef {
-    let candidates: Vec<String> = std::iter::once(dir_settings.default_base_ref.clone())
-        .flatten()
-        .filter(|s| !s.trim().is_empty())
-        .chain(["origin/main".to_string(), "origin/master".to_string()])
-        .collect();
-
-    for candidate in &candidates {
-        if revparse_exists(repo, candidate) {
-            return BaseRef::Ref(candidate.clone());
-        }
-    }
-    BaseRef::HeadFallback
+    let mut candidates = selected.into_iter().map(str::to_owned)
+        .chain(dir_settings.default_base_ref.clone())
+        .chain(["main", "origin/main", "master", "origin/master"].map(str::to_owned));
+    candidates.find(|name| revparse_exists(repo, name))
+        .map(BaseRef::Ref)
+        .unwrap_or(BaseRef::HeadFallback)
 }
 
 fn revparse_exists(repo: &git2::Repository, refname: &str) -> bool {
@@ -236,21 +256,31 @@ pub fn create(
     name: &str,
     base: &BaseRef,
 ) -> Result<WorktreeCreated, String> {
+    create_typed(repo, root, dir_id, name, base).map_err(|e| e.to_string())
+}
+
+fn create_typed(
+    repo: &git2::Repository,
+    root: &Path,
+    dir_id: &str,
+    name: &str,
+    base: &BaseRef,
+) -> Result<WorktreeCreated, WorktreeCreateError> {
     let dir_root = root.join(dir_id);
-    fs::create_dir_all(&dir_root).map_err(|e| format!("create worktrees dir: {e}"))?;
+    fs::create_dir_all(&dir_root).map_err(|e| WorktreeCreateError::Other(format!("create worktrees dir: {e}")))?;
     let path = dir_root.join(name);
 
     if path.exists() {
-        return Err(format!("worktree path already exists: {}", path.display()));
+        return Err(WorktreeCreateError::Collision(format!("worktree path already exists: {}", path.display())));
     }
 
     if let Some(workdir) = repo.workdir() {
         let canon_path = path.parent().map(|p| p.to_path_buf()).unwrap_or(path.clone());
         if canon_path.starts_with(workdir) {
-            return Err(
+            return Err(WorktreeCreateError::Other(
                 "Worktrees root cannot live inside the repository — pick another location"
                     .to_string(),
-            );
+            ));
         }
     }
 
@@ -258,24 +288,30 @@ pub fn create(
         BaseRef::Ref(r) => {
             let obj = repo
                 .revparse_single(r)
-                .map_err(|e| format!("revparse {r}: {e}"))?;
+                .map_err(|e| WorktreeCreateError::Other(format!("revparse {r}: {e}")))?;
             let c = obj
                 .peel_to_commit()
-                .map_err(|e| format!("peel {r}: {e}"))?;
+                .map_err(|e| WorktreeCreateError::Other(format!("peel {r}: {e}")))?;
             (c, false)
         }
         BaseRef::HeadFallback => {
-            let head = repo.head().map_err(|e| format!("head: {e}"))?;
+            let head = repo.head().map_err(|e| WorktreeCreateError::Other(format!("head: {e}")))?;
             let c = head
                 .peel_to_commit()
-                .map_err(|e| format!("peel HEAD: {e}"))?;
+                .map_err(|e| WorktreeCreateError::Other(format!("peel HEAD: {e}")))?;
             (c, true)
         }
     };
 
     let branch = repo
         .branch(name, &commit, false)
-        .map_err(|e| format!("create branch {name}: {e}"))?;
+        .map_err(|e| {
+            if e.code() == git2::ErrorCode::Exists {
+                WorktreeCreateError::Collision(format!("create branch {name}: {e}"))
+            } else {
+                WorktreeCreateError::Other(format!("create branch {name}: {e}"))
+            }
+        })?;
     let branch_ref = branch.into_reference();
 
     let mut opts = git2::WorktreeAddOptions::new();
@@ -286,7 +322,11 @@ pub fn create(
         if let Ok(mut b) = repo.find_branch(name, git2::BranchType::Local) {
             let _ = b.delete();
         }
-        return Err(format!("worktree add: {e}"));
+        return Err(if e.code() == git2::ErrorCode::Exists {
+            WorktreeCreateError::Collision(format!("worktree add: {e}"))
+        } else {
+            WorktreeCreateError::Other(format!("worktree add: {e}"))
+        });
     }
 
     Ok(WorktreeCreated {
@@ -295,6 +335,25 @@ pub fn create(
         branch: name.to_string(),
         used_head_fallback: used_fallback,
     })
+}
+
+fn create_with_retry<T, Next, Create>(
+    first: String,
+    mut next_candidate: Next,
+    mut create_candidate: Create,
+) -> Result<T, WorktreeCreateError>
+where
+    Next: FnMut(&str) -> String,
+    Create: FnMut(&str) -> Result<T, WorktreeCreateError>,
+{
+    let mut candidate = first;
+    loop {
+        match create_candidate(&candidate) {
+            Ok(value) => return Ok(value),
+            Err(WorktreeCreateError::Collision(_)) => candidate = next_candidate(&candidate),
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 /// Create a worktree from a workspace via git2 and return the resolved fields.
@@ -306,6 +365,7 @@ pub fn create_workspace_worktree_git(
     default_base_ref: Option<&str>,
     parent_dir_id: &str,
     branch_input: &str,
+    base_ref_override: Option<&str>,
 ) -> Result<WorktreeGitResult, String> {
     let dir_settings = DirectorySettings {
         default_base_ref: default_base_ref.map(str::to_string),
@@ -313,24 +373,38 @@ pub fn create_workspace_worktree_git(
 
     let repo = git2::Repository::discover(parent_path)
         .map_err(|e| format!("not a git repo: {e}"))?;
-    let repo_root = repo
+    let repo_root_path = repo
         .workdir()
-        .map(|p| p.to_string_lossy().trim_end_matches('/').to_string())
-        .ok_or_else(|| "bare repo".to_string())?;
+        .ok_or_else(|| "bare repo".to_string())?
+        .canonicalize()
+        .map_err(|e| format!("canonicalize repo root: {e}"))?;
+    let repo_root = repo_root_path.to_string_lossy().trim_end_matches('/').to_string();
 
     let worktrees_root_override = state.settings().get().worktrees_root;
     let root = resolve_root(worktrees_root_override.as_deref());
+    // This function is called only from the RPC handler's spawn_blocking work.
+    // Keep the per-repository mutex entirely in that blocking section.
+    let lock = state.worktree_create_lock(&repo_root);
+    let _guard = lock.lock().unwrap_or_else(|p| p.into_inner());
     fs::create_dir_all(root.join(parent_dir_id))
         .map_err(|e| format!("create worktrees dir: {e}"))?;
 
-    let base = resolve_base_ref(&repo, &dir_settings);
-    let taken = taken_worktree_names(&root, parent_dir_id, &repo);
-    let name = if branch_input.trim().is_empty() {
+    let base = resolve_base_ref(&repo, &dir_settings, base_ref_override);
+    let mut taken = taken_worktree_names(&root, parent_dir_id, &repo);
+    let first = if branch_input.trim().is_empty() {
         pick_pool_name(&taken)
     } else {
         pick_branch_name_from_slug(&slugify(branch_input), &taken)
     };
-    let created = create(&repo, &root, parent_dir_id, &name, &base)?;
+    let created = create_with_retry(first, |prior| {
+        taken.insert(prior.to_string());
+        if branch_input.trim().is_empty() {
+            pick_pool_name(&taken)
+        } else {
+            pick_branch_name_from_slug(&slugify(branch_input), &taken)
+        }
+    }, |name| create_typed(&repo, &root, parent_dir_id, name, &base))
+    .map_err(|e| e.to_string())?;
 
     Ok(WorktreeGitResult {
         path: created.path.to_string_lossy().into_owned(),
@@ -440,4 +514,128 @@ pub fn prune(repo: &git2::Repository, name: &str, path: &Path) -> Result<(), Str
         let _ = fs::remove_dir_all(path);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    struct Fixture {
+        _temp: tempfile::TempDir,
+        root: PathBuf,
+        repo: git2::Repository,
+        settings: DirectorySettings,
+    }
+
+    fn commit(repo: &git2::Repository, message: &str) -> git2::Oid {
+        let mut index = repo.index().unwrap();
+        let file = repo.workdir().unwrap().join("fixture.txt");
+        std::fs::write(&file, message).unwrap();
+        index.add_path(Path::new("fixture.txt")).unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let signature = git2::Signature::now("Verne", "verne@example.com").unwrap();
+        let parent = repo.head().ok().and_then(|head| head.peel_to_commit().ok());
+        repo.commit(
+            Some("HEAD"),
+            &signature,
+            &signature,
+            message,
+            &tree,
+            &parent.iter().collect::<Vec<_>>(),
+        )
+        .unwrap()
+    }
+
+    fn worktree_fixture() -> Fixture {
+        let temp = tempfile::tempdir().unwrap();
+        let repo_path = temp.path().join("repo");
+        let repo = git2::Repository::init(&repo_path).unwrap();
+        let initial_oid = commit(&repo, "initial");
+        {
+            let initial = repo.find_commit(initial_oid).unwrap();
+            let mut index = repo.index().unwrap();
+            std::fs::write(repo.workdir().unwrap().join("fixture.txt"), "feature").unwrap();
+            index.add_path(Path::new("fixture.txt")).unwrap();
+            let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+            let signature = git2::Signature::now("Verne", "verne@example.com").unwrap();
+            let feature_oid = repo.commit(None, &signature, &signature, "feature", &tree, &[&initial]).unwrap();
+            let feature = repo.find_commit(feature_oid).unwrap();
+            repo.branch("feature", &feature, false).unwrap();
+        }
+        Fixture {
+            root: temp.path().join("worktrees"),
+            _temp: temp,
+            repo,
+            settings: DirectorySettings { default_base_ref: Some("main".into()) },
+        }
+    }
+
+    #[test]
+    fn explicit_base_ref_wins() {
+        let fixture = worktree_fixture();
+        let base = resolve_base_ref(&fixture.repo, &fixture.settings, Some("feature"));
+        assert!(matches!(base, BaseRef::Ref(ref name) if name == "feature"));
+    }
+
+    #[test]
+    fn local_branches_are_name_conflicts() {
+        let fixture = worktree_fixture();
+        let head_oid = fixture.repo.head().unwrap().target().unwrap();
+        let head = fixture.repo.find_commit(head_oid).unwrap();
+        fixture.repo.branch("magellan", &head, false).unwrap();
+        let taken = taken_worktree_names(&fixture.root, "dir", &fixture.repo);
+        assert!(taken.contains("magellan"));
+    }
+
+    #[test]
+    fn folders_and_registered_worktrees_are_name_conflicts() {
+        let fixture = worktree_fixture();
+        std::fs::create_dir_all(fixture.root.join("dir").join("folder-only")).unwrap();
+        create(&fixture.repo, &fixture.root, "dir", "registered-only", &BaseRef::HeadFallback).unwrap();
+        let taken = taken_worktree_names(&fixture.root, "dir", &fixture.repo);
+        assert!(taken.contains("folder-only"));
+        assert!(taken.contains("registered-only"));
+    }
+
+    #[test]
+    fn created_worktree_head_matches_explicit_base() {
+        let fixture = worktree_fixture();
+        let feature_oid = fixture.repo.revparse_single("feature").unwrap().peel_to_commit().unwrap().id();
+        let created = create(&fixture.repo, &fixture.root, "dir", "explicit-base", &BaseRef::Ref("feature".into())).unwrap();
+        let worktree_repo = git2::Repository::open(created.path).unwrap();
+        assert_eq!(worktree_repo.head().unwrap().target(), Some(feature_oid));
+    }
+
+    #[test]
+    fn collision_retry_uses_next_available_name() {
+        let mut taken = HashSet::from(["feature".to_string(), "feature-2".to_string()]);
+        assert_eq!(pick_branch_name_from_slug("feature", &taken), "feature-3");
+        taken.insert("feature-3".into());
+        assert_eq!(pick_branch_name_from_slug("feature", &taken), "feature-4");
+    }
+
+    #[test]
+    fn repository_creation_locks_are_keyed() {
+        let locks = Mutex::new(HashMap::new());
+        let first = crate::state::keyed_lock(&locks, "/repo/a");
+        let same = crate::state::keyed_lock(&locks, "/repo/a");
+        let other = crate::state::keyed_lock(&locks, "/repo/b");
+        assert!(Arc::ptr_eq(&first, &same));
+        assert!(!Arc::ptr_eq(&first, &other));
+    }
+
+    #[test]
+    fn atomic_collision_retries_with_a_new_candidate() {
+        let mut attempts = Vec::new();
+        let result = create_with_retry("feature".into(), |prior| format!("{prior}-2"), |name| {
+            attempts.push(name.to_string());
+            if attempts.len() == 1 { Err(WorktreeCreateError::Collision(name.into())) }
+            else { Ok(name.to_string()) }
+        }).unwrap();
+        assert_eq!(attempts, ["feature", "feature-2"]);
+        assert_eq!(result, "feature-2");
+    }
 }

@@ -567,11 +567,12 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
             let parent_directory_id = s(req.params.get("parentDirectoryId"));
             let branch = s(req.params.get("branch"));
             let default_base_ref = opt_s(req.params.get("defaultBaseRef"));
+            let base_ref = opt_s(req.params.get("baseRef"));
             let state = state.clone();
             let result = tokio::task::spawn_blocking(move || {
                 crate::services::worktrees::create_workspace_worktree_git(
                     &*state, &parent_path, default_base_ref.as_deref(),
-                    &parent_directory_id, &branch,
+                    &parent_directory_id, &branch, base_ref.as_deref(),
                 )
             })
             .await

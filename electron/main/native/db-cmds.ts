@@ -85,7 +85,7 @@ export function registerDbCommands(
   });
 
   // ---- worktrees (git2 in sidecar; rows owned here) ----
-  registerNative("worktree_create", async (p: { parentDirectoryId: string; branch: string }, win) => {
+  registerNative("worktree_create", async (p: { parentDirectoryId: string; branch?: string; baseRef?: string }, win) => {
     const db = getDb();
     const parent = getDirectory(db, p.parentDirectoryId);
     if (!parent) throw new Error("parent directory not found");
@@ -93,7 +93,8 @@ export function registerDbCommands(
     const r = (await getSidecar()!.request("worktree_create_git", {
       parentPath: parent.path,
       parentDirectoryId: p.parentDirectoryId,
-      branch: p.branch,
+      branch: p.branch ?? "",
+      baseRef: p.baseRef ?? null,
       defaultBaseRef: settings?.defaultBaseRef ?? null,
     })) as { path: string; branch: string; repoRoot: string };
     const dir: WorkingDirectory = {
