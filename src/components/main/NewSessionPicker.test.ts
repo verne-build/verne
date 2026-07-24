@@ -296,6 +296,31 @@ describe("NewSessionPicker", () => {
     expect(rpc.gitCheckoutBranch).toHaveBeenCalledOnce();
   });
 
+  it("filters branch names and refs in the branch menu", async () => {
+    app.unmount();
+    host.replaceChildren();
+    rpc.gitListBranches.mockReset();
+    rpc.gitListBranches.mockResolvedValue([
+      { name: "main", fullRef: "refs/heads/main", isRemote: false, isHead: true },
+      { name: "feature", fullRef: "refs/heads/feature", isRemote: false, isHead: false },
+      { name: "release", fullRef: "refs/remotes/origin/release", isRemote: true, isHead: false },
+    ]);
+    app = createApp({ render: () => h(NewSessionPicker, { dirId: "dir-1" }) });
+    app.use(createPinia());
+    app.mount(host);
+    await flush();
+
+    await openMenu("Select Branch");
+    const filter = document.querySelector<HTMLInputElement>('input[placeholder="Filter Branches…"]');
+    if (!filter) throw new Error("Missing branch filter");
+    filter.value = "ORIGIN/RE";
+    filter.dispatchEvent(new Event("input", { bubbles: true }));
+    await flush();
+
+    expect(document.body.textContent).toContain("release");
+    expect(document.body.textContent).not.toContain("feature");
+  });
+
   it("keeps the active start request valid through rapid repeated clicks", async () => {
     let resolveStart!: () => void;
     store.startPickerSession.mockImplementationOnce(() => new Promise<void>((resolve) => { resolveStart = resolve; }));

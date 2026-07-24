@@ -8,6 +8,7 @@ import {
   Cloud,
   ArrowRight,
   GitBranch as GitBranchIcon,
+  Search,
   SquareTerminal,
   Zap,
 } from "@lucide/vue";
@@ -26,6 +27,7 @@ import {
 } from "@/lib/agentRegistry";
 import type { AgentLaunchSelection, AgentType, GitBranch, WorkingDirectory } from "@/types";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   AlertDialog,
@@ -62,6 +64,8 @@ const fast = ref(false);
 const checkoutMode = ref<"current" | "worktree">("current");
 const branches = ref<GitBranch[]>([]);
 const selectedBranch = ref<GitBranch | null>(null);
+const branchMenuOpen = ref(false);
+const branchQuery = ref("");
 const dirtyWarningOpen = ref(false);
 const launching = ref(false);
 const loadingBranches = ref(false);
@@ -142,6 +146,14 @@ const checkoutModeLabel = computed(() => checkoutMode.value === "current"
 const branchLabel = computed(() => checkoutMode.value === "worktree" ? "Create From" : "Branch");
 const localBranches = computed(() => branches.value.filter((branch) => !branch.isRemote));
 const remoteBranches = computed(() => branches.value.filter((branch) => branch.isRemote));
+const normalizedBranchQuery = computed(() => branchQuery.value.trim().toLowerCase());
+function matchesBranchQuery(branch: GitBranch): boolean {
+  const query = normalizedBranchQuery.value;
+  return !query || branch.name.toLowerCase().includes(query) || branch.fullRef.toLowerCase().includes(query);
+}
+const filteredLocalBranches = computed(() => localBranches.value.filter(matchesBranchQuery));
+const filteredRemoteBranches = computed(() => remoteBranches.value.filter(matchesBranchQuery));
+const hasFilteredBranches = computed(() => filteredLocalBranches.value.length > 0 || filteredRemoteBranches.value.length > 0);
 const busy = computed(() => launching.value || loadingBranches.value);
 const canStart = computed(() => !!current.value && !!selectedBranch.value && !busy.value);
 const pickerError = computed(() => launchError.value ?? branchError.value ?? agentError.value ?? scopeError.value);
@@ -195,6 +207,11 @@ function selectFast(value: "on" | "off"): void {
 
 function selectBranch(value: string): void {
   selectedBranch.value = branches.value.find((branch) => branch.fullRef === value) ?? null;
+}
+
+function setBranchMenuOpen(open: boolean): void {
+  branchMenuOpen.value = open;
+  branchQuery.value = "";
 }
 
 function errorMessage(error: unknown, fallback: string): string {
@@ -555,7 +572,7 @@ onUnmounted(() => {
             </DropdownMenuContent>
           </DropdownMenu>
 
-          <DropdownMenu>
+          <DropdownMenu :open="branchMenuOpen" @update:open="setBranchMenuOpen">
             <DropdownMenuTrigger as-child>
               <Button type="button" variant="ghost" class="min-h-10 min-w-0 justify-start px-2 sm:justify-end" :disabled="launching || loadingBranches || !branches.length" aria-label="Select Branch">
                 <GitBranchIcon aria-hidden="true" class="size-4 text-muted-foreground" />
@@ -564,25 +581,34 @@ onUnmounted(() => {
                 <ChevronDown aria-hidden="true" class="size-4 text-muted-foreground" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" class="min-w-56">
-              <DropdownMenuLabel class="text-xs font-normal text-muted-foreground">{{ branchLabel }}</DropdownMenuLabel>
-              <DropdownMenuGroup v-if="localBranches.length">
-                <DropdownMenuLabel class="text-xs font-normal text-muted-foreground">Local</DropdownMenuLabel>
-                <DropdownMenuItem v-for="branch in localBranches" :key="branch.fullRef" @select="selectBranch(branch.fullRef)">
-                  <GitBranchIcon aria-hidden="true" class="size-4" />
-                  <span class="flex-1 truncate">{{ branch.name }}</span>
-                  <Check :class="['ml-auto size-3.5', selectedBranch?.fullRef === branch.fullRef ? 'opacity-100' : 'opacity-0']" />
-                </DropdownMenuItem>
-              </DropdownMenuGroup>
-              <DropdownMenuSeparator v-if="localBranches.length && remoteBranches.length" />
-              <DropdownMenuGroup v-if="remoteBranches.length">
-                <DropdownMenuLabel class="text-xs font-normal text-muted-foreground">Remote</DropdownMenuLabel>
-                <DropdownMenuItem v-for="branch in remoteBranches" :key="branch.fullRef" @select="selectBranch(branch.fullRef)">
-                  <Cloud aria-hidden="true" class="size-4" />
-                  <span class="flex-1 truncate">{{ branch.name }}</span>
-                  <Check :class="['ml-auto size-3.5', selectedBranch?.fullRef === branch.fullRef ? 'opacity-100' : 'opacity-0']" />
-                </DropdownMenuItem>
-              </DropdownMenuGroup>
+            <DropdownMenuContent align="end" class="min-w-56 p-0">
+              <div class="border-b p-2">
+                <div class="relative">
+                  <Search aria-hidden="true" class="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                  <Input v-model="branchQuery" placeholder="Filter Branches…" class="h-8 pl-8 text-xs" @keydown.stop />
+                </div>
+              </div>
+              <div class="max-h-64 overflow-y-auto p-1">
+                <DropdownMenuLabel class="text-xs font-normal text-muted-foreground">{{ branchLabel }}</DropdownMenuLabel>
+                <DropdownMenuGroup v-if="filteredLocalBranches.length">
+                  <DropdownMenuLabel class="text-xs font-normal text-muted-foreground">Local</DropdownMenuLabel>
+                  <DropdownMenuItem v-for="branch in filteredLocalBranches" :key="branch.fullRef" @select="selectBranch(branch.fullRef)">
+                    <GitBranchIcon aria-hidden="true" class="size-4" />
+                    <span class="flex-1 truncate">{{ branch.name }}</span>
+                    <Check :class="['ml-auto size-3.5', selectedBranch?.fullRef === branch.fullRef ? 'opacity-100' : 'opacity-0']" />
+                  </DropdownMenuItem>
+                </DropdownMenuGroup>
+                <DropdownMenuSeparator v-if="filteredLocalBranches.length && filteredRemoteBranches.length" />
+                <DropdownMenuGroup v-if="filteredRemoteBranches.length">
+                  <DropdownMenuLabel class="text-xs font-normal text-muted-foreground">Remote</DropdownMenuLabel>
+                  <DropdownMenuItem v-for="branch in filteredRemoteBranches" :key="branch.fullRef" @select="selectBranch(branch.fullRef)">
+                    <Cloud aria-hidden="true" class="size-4" />
+                    <span class="flex-1 truncate">{{ branch.name }}</span>
+                    <Check :class="['ml-auto size-3.5', selectedBranch?.fullRef === branch.fullRef ? 'opacity-100' : 'opacity-0']" />
+                  </DropdownMenuItem>
+                </DropdownMenuGroup>
+                <p v-if="!hasFilteredBranches" class="px-2 py-1.5 text-xs text-muted-foreground">No Branches Found</p>
+              </div>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
