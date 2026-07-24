@@ -49,6 +49,14 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     localStorage.getItem("selectedDirectoryId")
   );
   const pendingPicker = ref<{ dirId: string } | null>(null);
+  let selectionRevision = 0;
+  let pickerRevision = 0;
+  watch(selectedDirectoryId, () => {
+    selectionRevision += 1;
+  }, { flush: "sync" });
+  watch(pendingPicker, () => {
+    pickerRevision += 1;
+  }, { flush: "sync" });
 
   function openSessionPicker(dirId = selectedDirectoryId.value ?? undefined): void {
     if (!dirId || !directories.value.some((dir) => dir.id === dirId)) return;
@@ -905,7 +913,9 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     const root = worktreeRoot(source.id);
     let created: WorkingDirectory | null = null;
     let selectionBeforeSelection: string | null = null;
+    let selectionRevisionAfterSelection = 0;
     let pendingPickerBeforeSelection: { dirId: string } | null = null;
+    let pickerRevisionAfterSelection = 0;
     try {
       created = await createWorktree(root.id, "", input.branch.name);
       selectionBeforeSelection = selectedDirectoryId.value;
@@ -913,21 +923,27 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         ? { ...pendingPicker.value }
         : null;
       selectDirectory(created);
+      selectionRevisionAfterSelection = selectionRevision;
+      pickerRevisionAfterSelection = pickerRevision;
       return await newSession(created.id, { agentLaunch: input.agentLaunch });
     } catch (error) {
       if (!created) throw error;
       let cleanupError: unknown;
+      let cleanupSucceeded = false;
       try {
         await useRpc().request.worktreeRemove({ id: created.id, force: true });
+        cleanupSucceeded = true;
       } catch (cleanup) {
         cleanupError = cleanup;
       }
-      dropFilePanelScope(created.id);
-      sweepRemovedScopes([created.id]);
-      directories.value = directories.value.filter((directory) => directory.id !== created!.id);
-      if (pendingPicker.value?.dirId === created.id)
+      if (cleanupSucceeded) {
+        dropFilePanelScope(created.id);
+        sweepRemovedScopes([created.id]);
+        directories.value = directories.value.filter((directory) => directory.id !== created!.id);
+      }
+      if (cleanupSucceeded && pickerRevision === pickerRevisionAfterSelection)
         pendingPicker.value = pendingPickerBeforeSelection;
-      if (selectedDirectoryId.value === created.id)
+      if (cleanupSucceeded && selectionRevision === selectionRevisionAfterSelection)
         selectedDirectoryId.value = selectionBeforeSelection;
       if (cleanupError) {
         const launchMessage = error instanceof Error ? error.message : String(error);
