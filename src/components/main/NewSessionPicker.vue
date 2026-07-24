@@ -69,7 +69,16 @@ const dirtyWarningOpen = ref(false);
 const launching = ref(false);
 const loadingBranches = ref(false);
 const agentLoading = ref(false);
-const pickerError = ref<{ title: string; message: string; retry: () => void } | null>(null);
+interface PickerError {
+  title: string;
+  message: string;
+  retry: () => void;
+}
+
+const scopeError = ref<PickerError | null>(null);
+const agentError = ref<PickerError | null>(null);
+const branchError = ref<PickerError | null>(null);
+const launchError = ref<PickerError | null>(null);
 let mounted = false;
 let agentRequestId = 0;
 let branchRequestId = 0;
@@ -140,6 +149,7 @@ const localBranches = computed(() => branches.value.filter((branch) => !branch.i
 const remoteBranches = computed(() => branches.value.filter((branch) => branch.isRemote));
 const busy = computed(() => launching.value || loadingBranches.value);
 const canStart = computed(() => !!current.value && !!selectedBranch.value && !busy.value);
+const pickerError = computed(() => launchError.value ?? branchError.value ?? agentError.value ?? scopeError.value);
 
 function isCurrentInstance(): boolean {
   return mounted
@@ -149,10 +159,6 @@ function isCurrentInstance(): boolean {
 
 function homePath(path: string): string {
   return path.replace(/^\/Users\/[^/]+(?=\/|$)/, "~");
-}
-
-function clearError(): void {
-  pickerError.value = null;
 }
 
 function compatibleModel(): void {
@@ -221,10 +227,11 @@ async function loadCurrentScope(): Promise<void> {
   if (!dir || !isCurrentInstance()) return;
   try {
     await store.loadTabsForDirectory(dir.id);
+    if (isCurrentInstance()) scopeError.value = null;
   } catch (error) {
     if (!isCurrentInstance()) return;
     console.error("[NewSessionPicker] scope load failed:", error);
-    pickerError.value = {
+    scopeError.value = {
       title: "Couldn't Load Scope",
       message: `Verne couldn't load ${dir.name}. Try again.`,
       retry: () => void loadCurrentScope(),
@@ -241,13 +248,13 @@ async function loadAgentChoices(): Promise<void> {
     agents.value = available;
     if (!agentSelectionTouched.value)
       selectedAgentType.value = available[0]?.type ?? "terminal";
-    clearError();
+    agentError.value = null;
   } catch (error) {
     if (!isCurrentInstance() || requestId !== agentRequestId) return;
     console.warn("[NewSessionPicker] agent availability failed:", error);
     agents.value = [];
     if (!agentSelectionTouched.value) selectedAgentType.value = "terminal";
-    pickerError.value = {
+    agentError.value = {
       title: "Couldn't Load Agents",
       message: "Verne couldn't check installed agents. Terminal is still available.",
       retry: () => void loadAgentChoices(),
@@ -270,14 +277,14 @@ async function loadBranches(): Promise<void> {
       return;
     branches.value = nextBranches;
     selectedBranch.value = preferredBranch(nextBranches);
-    clearError();
+    branchError.value = null;
   } catch (error) {
     if (!isCurrentInstance() || requestId !== branchRequestId || path !== current.value?.path || mode !== checkoutMode.value)
       return;
     console.error("[NewSessionPicker] branch load failed:", error);
     branches.value = [];
     selectedBranch.value = null;
-    pickerError.value = {
+    branchError.value = {
       title: "Couldn't Load Branches",
       message: "Verne couldn't load branches for this workspace. Try again.",
       retry: () => void loadBranches(),
@@ -316,7 +323,7 @@ function snapshotStart(): StartSnapshot | null {
 async function continueStart(snapshot: StartSnapshot): Promise<void> {
   if (!isCurrentInstance() || snapshot.requestId !== startRequestId) return;
   launching.value = true;
-  clearError();
+  launchError.value = null;
   try {
     await store.startPickerSession({
       directoryId: snapshot.directoryId,
@@ -329,7 +336,7 @@ async function continueStart(snapshot: StartSnapshot): Promise<void> {
   } catch (error) {
     if (!isCurrentInstance() || snapshot.requestId !== startRequestId) return;
     console.error("[NewSessionPicker] create failed:", error);
-    pickerError.value = {
+    launchError.value = {
       title: "Couldn't Start Session",
       message: "Verne couldn't start this session. Try again.",
       retry: () => void continueStart(snapshot),
@@ -341,14 +348,15 @@ async function continueStart(snapshot: StartSnapshot): Promise<void> {
 }
 
 async function start(): Promise<void> {
+  if (launching.value) return;
   const snapshot = snapshotStart();
-  if (!snapshot || launching.value) return;
+  if (!snapshot) return;
   if (snapshot.mode === "worktree" || snapshot.branch.isHead) {
     await continueStart(snapshot);
     return;
   }
   launching.value = true;
-  clearError();
+  launchError.value = null;
   try {
     const status = await rpc.request.gitStatus({ path: snapshot.path });
     if (!isCurrentInstance() || snapshot.requestId !== startRequestId || snapshot.branchRequestId !== branchRequestId)
@@ -362,7 +370,7 @@ async function start(): Promise<void> {
   } catch (error) {
     if (!isCurrentInstance() || snapshot.requestId !== startRequestId) return;
     console.error("[NewSessionPicker] status failed:", error);
-    pickerError.value = {
+    launchError.value = {
       title: "Couldn't Check Changes",
       message: "Verne couldn't check local changes. Try again.",
       retry: () => void start(),
@@ -430,13 +438,13 @@ onUnmounted(() => {
             <DropdownMenuContent align="start" class="w-[var(--reka-dropdown-menu-trigger-width)]">
               <DropdownMenuLabel>Agents</DropdownMenuLabel>
               <DropdownMenuRadioGroup :model-value="selectedAgentType ?? 'terminal'" @update:model-value="selectAgent">
-                <DropdownMenuRadioItem v-for="agent in agentChoices" :key="agent.type" :value="agent.type">
+                <DropdownMenuRadioItem v-for="agent in agentChoices" :key="agent.type" :value="agent.type" class="min-h-10">
                   <img v-if="agent.icon" :src="agent.icon" alt="" class="size-4" />
                   <Bot v-else aria-hidden="true" class="size-4 text-muted-foreground" />
                   {{ agent.label }}
                 </DropdownMenuRadioItem>
                 <DropdownMenuSeparator v-if="agentChoices.length" />
-                <DropdownMenuRadioItem value="terminal">
+                <DropdownMenuRadioItem value="terminal" class="min-h-10">
                   <SquareTerminal aria-hidden="true" class="size-4 text-muted-foreground" />
                   Terminal
                 </DropdownMenuRadioItem>
@@ -454,8 +462,8 @@ onUnmounted(() => {
             <DropdownMenuContent align="start" class="w-[var(--reka-dropdown-menu-trigger-width)]">
               <DropdownMenuLabel>Model</DropdownMenuLabel>
               <DropdownMenuRadioGroup :model-value="selectedModelId ?? 'default'" @update:model-value="selectModel">
-                <DropdownMenuRadioItem value="default">Default</DropdownMenuRadioItem>
-                <DropdownMenuRadioItem v-for="model in selectedAgent?.models ?? []" :key="model.id" :value="model.id">
+                <DropdownMenuRadioItem value="default" class="min-h-10">Default</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem v-for="model in selectedAgent?.models ?? []" :key="model.id" :value="model.id" class="min-h-10">
                   {{ model.label }}
                 </DropdownMenuRadioItem>
               </DropdownMenuRadioGroup>
@@ -473,8 +481,8 @@ onUnmounted(() => {
               <template v-if="availableEfforts.length">
                 <DropdownMenuLabel>Effort</DropdownMenuLabel>
                 <DropdownMenuRadioGroup :model-value="selectedEffort ?? 'default'" @update:model-value="selectEffort">
-                  <DropdownMenuRadioItem value="default">Default</DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem v-for="effort in availableEfforts" :key="effort" :value="effort">
+                  <DropdownMenuRadioItem value="default" class="min-h-10">Default</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem v-for="effort in availableEfforts" :key="effort" :value="effort" class="min-h-10">
                     {{ effort[0]?.toUpperCase() }}{{ effort.slice(1) }}
                   </DropdownMenuRadioItem>
                 </DropdownMenuRadioGroup>
@@ -483,8 +491,8 @@ onUnmounted(() => {
               <template v-if="supportsFast">
                 <DropdownMenuLabel>Fast Mode</DropdownMenuLabel>
                 <DropdownMenuRadioGroup :model-value="fast ? 'on' : 'off'" @update:model-value="selectFast">
-                  <DropdownMenuRadioItem value="on"><Zap aria-hidden="true" class="size-4" />On</DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="off">Off</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="on" class="min-h-10"><Zap aria-hidden="true" class="size-4" />On</DropdownMenuRadioItem>
+                  <DropdownMenuRadioItem value="off" class="min-h-10">Off</DropdownMenuRadioItem>
                 </DropdownMenuRadioGroup>
               </template>
             </DropdownMenuContent>
@@ -509,8 +517,8 @@ onUnmounted(() => {
             <DropdownMenuContent align="start">
               <DropdownMenuLabel>Checkout Mode</DropdownMenuLabel>
               <DropdownMenuRadioGroup v-model="checkoutMode">
-                <DropdownMenuRadioItem value="current">Current Checkout</DropdownMenuRadioItem>
-                <DropdownMenuRadioItem value="worktree">Create New Worktree</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="current" class="min-h-10">Current Checkout</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="worktree" class="min-h-10">Create New Worktree</DropdownMenuRadioItem>
               </DropdownMenuRadioGroup>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -529,7 +537,7 @@ onUnmounted(() => {
               <DropdownMenuRadioGroup :model-value="selectedBranch?.fullRef" @update:model-value="selectBranch">
                 <DropdownMenuGroup v-if="localBranches.length">
                   <DropdownMenuLabel>Local</DropdownMenuLabel>
-                  <DropdownMenuRadioItem v-for="branch in localBranches" :key="branch.fullRef" :value="branch.fullRef">
+                  <DropdownMenuRadioItem v-for="branch in localBranches" :key="branch.fullRef" :value="branch.fullRef" class="min-h-10">
                     <GitBranchIcon aria-hidden="true" class="size-4" />
                     <span class="flex-1 truncate">{{ branch.name }}</span>
                     <Check v-if="branch.isHead" aria-label="Current Branch" class="size-4 text-muted-foreground" />
@@ -538,7 +546,7 @@ onUnmounted(() => {
                 <DropdownMenuSeparator v-if="localBranches.length && remoteBranches.length" />
                 <DropdownMenuGroup v-if="remoteBranches.length">
                   <DropdownMenuLabel>Remote</DropdownMenuLabel>
-                  <DropdownMenuRadioItem v-for="branch in remoteBranches" :key="branch.fullRef" :value="branch.fullRef">
+                  <DropdownMenuRadioItem v-for="branch in remoteBranches" :key="branch.fullRef" :value="branch.fullRef" class="min-h-10">
                     <Cloud aria-hidden="true" class="size-4" />
                     <span class="truncate">{{ branch.name }}</span>
                   </DropdownMenuRadioItem>
@@ -572,8 +580,8 @@ onUnmounted(() => {
         </AlertDialogDescription>
       </AlertDialogHeader>
       <AlertDialogFooter>
-        <AlertDialogCancel>Cancel</AlertDialogCancel>
-        <AlertDialogAction @click="confirmDirtyStart">Switch And Start</AlertDialogAction>
+        <AlertDialogCancel class="min-h-10">Cancel</AlertDialogCancel>
+        <AlertDialogAction class="min-h-10" @click="confirmDirtyStart">Switch And Start</AlertDialogAction>
       </AlertDialogFooter>
     </AlertDialogContent>
   </AlertDialog>

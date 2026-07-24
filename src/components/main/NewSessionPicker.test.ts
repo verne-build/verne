@@ -141,6 +141,34 @@ describe("NewSessionPicker", () => {
     expect(namedButton("Select Agent").textContent).toContain("Claude");
   });
 
+  it("keeps a branch failure retryable when agent availability resolves later", async () => {
+    let resolveAgents!: (value: { available: string[] }) => void;
+    app.unmount();
+    host.replaceChildren();
+    resetAgentAvailabilityCacheForTests();
+    rpc.agentBinsAvailable.mockReset();
+    rpc.gitListBranches.mockReset();
+    rpc.agentBinsAvailable.mockImplementationOnce(() => new Promise((resolve) => { resolveAgents = resolve; }));
+    rpc.gitListBranches.mockRejectedValueOnce(new Error("branches unavailable"));
+    app = createApp({ render: () => h(NewSessionPicker, { dirId: "dir-1" }) });
+    app.use(createPinia());
+    app.mount(host);
+    await flush();
+
+    expect(document.body.textContent).toContain("Couldn't Load Branches");
+    resolveAgents({ available: ["agy"] });
+    await flush();
+
+    expect(document.body.textContent).toContain("Couldn't Load Branches");
+    rpc.gitListBranches.mockResolvedValue([
+      { name: "main", fullRef: "refs/heads/main", isRemote: false, isHead: true },
+    ]);
+    button("Retry").click();
+    await flush();
+
+    expect(rpc.gitListBranches).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps an explicit Terminal selection when availability resolves late", async () => {
     let resolveBins!: (value: { available: string[] }) => void;
     app.unmount();
@@ -219,5 +247,23 @@ describe("NewSessionPicker", () => {
 
     expect(store.startPickerSession).toHaveBeenCalledOnce();
     expect(rpc.gitCheckoutBranch).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the active start request valid through rapid repeated clicks", async () => {
+    let resolveStart!: () => void;
+    store.startPickerSession.mockImplementationOnce(() => new Promise<void>((resolve) => { resolveStart = resolve; }));
+    await flush();
+
+    const start = button("Start");
+    start.click();
+    start.click();
+    await flush();
+
+    expect(store.startPickerSession).toHaveBeenCalledOnce();
+    resolveStart();
+    await flush();
+
+    expect(store.closeSessionPicker).toHaveBeenCalledOnce();
+    expect(button("Start").disabled).toBe(false);
   });
 });
