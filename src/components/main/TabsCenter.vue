@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, onUnmounted, type Ref } from "vue";
-import { PanelRight, SquareTerminal } from "@lucide/vue";
+import { Folder, PanelRight } from "@lucide/vue";
 import { ask } from "@/platform";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useRpc } from "@/composables/useRpc";
@@ -121,8 +121,10 @@ onUnmounted(() => {
         class="flex flex-1 min-h-0 flex-col"
       >
         <div class="flex h-11.5 shrink-0 items-center gap-1.5 overflow-hidden border-b bg-sidebar pl-4 text-xs text-muted-foreground">
-          <SquareTerminal aria-hidden="true" class="size-4" />
-          <span class="truncate">{{ pickerDirectoryName }} &gt; New Session</span>
+          <Folder aria-hidden="true" class="size-4 text-muted-foreground" />
+          <span class="truncate text-muted-foreground">{{ pickerDirectoryName }}</span>
+          <span aria-hidden="true" class="text-muted-foreground">/</span>
+          <span class="truncate font-medium text-foreground">New Session</span>
         </div>
         <NewSessionPicker
           :key="store.pendingPicker.dirId"
