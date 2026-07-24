@@ -8,6 +8,7 @@ import type {
   CreateTabOpts,
   AgentLaunchSelection,
   AgentState,
+  GitBranch,
 } from "@/types";
 import { useRpc } from "@/composables/useRpc";
 import { moveTabBetweenBuckets } from "@/lib/scopeMove";
@@ -34,6 +35,13 @@ import {
 } from "@/lib/arrangement";
 
 const LSP_LANGUAGES = ["typescript"];
+
+export interface PickerSessionStart {
+  directoryId: string;
+  mode: "current" | "worktree";
+  branch: GitBranch;
+  agentLaunch?: AgentLaunchSelection;
+}
 
 export const useWorkspaceStore = defineStore("workspace", () => {
   const directories = ref<WorkingDirectory[]>([]);
@@ -862,6 +870,65 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     return dir;
   }
 
+  function worktreeRoot(directoryId: string): WorkingDirectory {
+    const byId = new Map(directories.value.map((directory) => [directory.id, directory]));
+    let current = byId.get(directoryId);
+    if (!current) throw new Error("directory not found");
+    const seen = new Set<string>();
+    while (current.parentDirectoryId) {
+      if (seen.has(current.id)) throw new Error("worktree parent cycle");
+      seen.add(current.id);
+      const parent = byId.get(current.parentDirectoryId);
+      if (!parent) throw new Error("worktree parent not found");
+      current = parent;
+    }
+    return current;
+  }
+
+  async function startPickerSession(input: PickerSessionStart): Promise<Tab> {
+    const source = directories.value.find((directory) => directory.id === input.directoryId);
+    if (!source) throw new Error("directory not found");
+
+    if (input.mode === "current") {
+      if (!input.branch.isHead)
+        await useRpc().request.gitCheckoutBranch({
+          path: source.path,
+          name: input.branch.name,
+          isRemote: input.branch.isRemote,
+          remoteRef: input.branch.isRemote
+            ? input.branch.fullRef.replace(/^refs\/remotes\//, "")
+            : undefined,
+        });
+      return newSession(source.id, { agentLaunch: input.agentLaunch });
+    }
+
+    const originalSelection = selectedDirectoryId.value;
+    const root = worktreeRoot(source.id);
+    let created: WorkingDirectory | null = null;
+    try {
+      created = await createWorktree(root.id, "", input.branch.name);
+      selectDirectory(created);
+      return await newSession(created.id, { agentLaunch: input.agentLaunch });
+    } catch (error) {
+      if (!created) throw error;
+      let cleanupError: unknown;
+      try {
+        await useRpc().request.worktreeRemove({ id: created.id, force: true });
+      } catch (cleanup) {
+        cleanupError = cleanup;
+      }
+      sweepRemovedScopes([created.id]);
+      directories.value = directories.value.filter((directory) => directory.id !== created!.id);
+      selectedDirectoryId.value = originalSelection;
+      if (cleanupError) {
+        const launchMessage = error instanceof Error ? error.message : String(error);
+        const cleanupMessage = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+        throw new Error(`${launchMessage}; cleanup failed: ${cleanupMessage}`);
+      }
+      throw error;
+    }
+  }
+
   async function removeWorktree(id: string) {
     const subtree = collectSubtreeIds(id);
     await useRpc().request.worktreeRemove({ id });
@@ -1175,6 +1242,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     selectSession,
     hydrateArrangements,
     createWorktree,
+    startPickerSession,
     removeWorktree,
     renameWorktree,
     applyDirectoryAdded,

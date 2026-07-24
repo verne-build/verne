@@ -36,6 +36,19 @@ const tabsCreateCalls: Array<{
     fast: boolean | null;
   };
 }> = [];
+const rpc = vi.hoisted(() => ({
+  gitCheckoutBranch: vi.fn(),
+  worktreeCreate: vi.fn(async () => ({
+    id: "wt-new",
+    path: "/wt-new",
+    name: "wt-new",
+    createdAt: 0,
+    sortOrder: 1,
+    parentDirectoryId: "dir-1",
+  })),
+  worktreeRemove: vi.fn(async () => true),
+  tabsCreate: vi.fn(),
+}));
 const {
   getLiveTabIds,
   setLiveTabIds,
@@ -146,6 +159,30 @@ const {
   };
 });
 
+const defaultTabsCreate = async (opts: {
+  directoryId: string;
+  label?: string;
+  cwd?: string;
+  agentLaunch?: {
+    agentType: string;
+    modelId: string | null;
+    effort: string | null;
+    fast: boolean | null;
+  };
+}) => {
+  tabsCreateCalls.push({ ...opts });
+  const deferred = getTabsCreateDeferred();
+  if (deferred) await deferred.promise;
+  return {
+    id: freshId("tab"),
+    directoryId: opts.directoryId,
+    label: opts.label ?? "shell",
+    cwd: opts.cwd ?? null,
+  };
+};
+
+rpc.tabsCreate.mockImplementation(defaultTabsCreate);
+
 vi.mock("@/composables/useLanguageClient", () => ({
   stopClient: vi.fn(),
 }));
@@ -174,28 +211,10 @@ vi.mock("@/composables/useRpc", () => ({
       getDirectories: vi.fn(async () => getDirectoriesResult()),
       getAgentStates: vi.fn(async () => agentStates),
       deleteDirectory: vi.fn(async () => true),
-      worktreeRemove: vi.fn(async () => true),
-      tabsCreate: vi.fn(async (opts: {
-        directoryId: string;
-        label?: string;
-        cwd?: string;
-        agentLaunch?: {
-          agentType: string;
-          modelId: string | null;
-          effort: string | null;
-          fast: boolean | null;
-        };
-      }) => {
-        tabsCreateCalls.push({ ...opts });
-        const deferred = getTabsCreateDeferred();
-        if (deferred) await deferred.promise;
-        return {
-          id: freshId("tab"),
-          directoryId: opts.directoryId,
-          label: opts.label ?? "shell",
-          cwd: opts.cwd ?? null,
-        };
-      }),
+      gitCheckoutBranch: rpc.gitCheckoutBranch,
+      worktreeCreate: rpc.worktreeCreate,
+      worktreeRemove: rpc.worktreeRemove,
+      tabsCreate: rpc.tabsCreate,
       tabsClose: vi.fn(async (p: { id: string }) => {
         tabsClosedIds.push(p.id);
         return true;
@@ -689,6 +708,132 @@ describe("new-session picker", () => {
       agentLaunch: { agentType: "claude", modelId: "sonnet", effort: "medium", fast: null },
     });
     expect(tabsCreateCalls.at(-1)).not.toHaveProperty("launchCommand");
+  });
+});
+
+describe("picker launch orchestration", () => {
+  const mainBranch = { name: "main", fullRef: "refs/heads/main", isRemote: false, isHead: false };
+  const remoteBranch = { name: "origin/feature", fullRef: "refs/remotes/origin/feature", isRemote: true, isHead: false };
+
+  beforeEach(() => {
+    localStorage.clear();
+    setActivePinia(createPinia());
+    tabsCreateCalls.length = 0;
+    nextId = 0;
+    rpc.gitCheckoutBranch.mockClear();
+    rpc.worktreeCreate.mockClear();
+    rpc.worktreeRemove.mockClear();
+    rpc.tabsCreate.mockClear();
+  });
+
+  afterEach(() => {
+    rpc.gitCheckoutBranch.mockReset();
+    rpc.worktreeCreate.mockReset();
+    rpc.worktreeCreate.mockResolvedValue({
+      id: "wt-new",
+      path: "/wt-new",
+      name: "wt-new",
+      createdAt: 0,
+      sortOrder: 1,
+      parentDirectoryId: "dir-1",
+    });
+    rpc.worktreeRemove.mockReset();
+    rpc.worktreeRemove.mockResolvedValue(true);
+    rpc.tabsCreate.mockReset();
+    rpc.tabsCreate.mockImplementation(defaultTabsCreate);
+  });
+
+  it("checks out the selected current branch before launch", async () => {
+    const store = useWorkspaceStore();
+    store.directories.push(dir("dir-1"));
+
+    await store.startPickerSession({
+      directoryId: "dir-1",
+      mode: "current",
+      branch: remoteBranch,
+      agentLaunch: { agentType: "claude", modelId: "sonnet", effort: "medium", fast: null },
+    });
+
+    expect(rpc.gitCheckoutBranch).toHaveBeenCalledWith({
+      path: "/dir-1",
+      name: "origin/feature",
+      isRemote: true,
+      remoteRef: "origin/feature",
+    });
+    expect(rpc.gitCheckoutBranch.mock.invocationCallOrder[0])
+      .toBeLessThan(rpc.tabsCreate.mock.invocationCallOrder[0]);
+    expect(rpc.tabsCreate).toHaveBeenCalledWith(expect.objectContaining({ directoryId: "dir-1" }));
+  });
+
+  it("skips checkout for the branch already at HEAD", async () => {
+    const store = useWorkspaceStore();
+    store.directories.push(dir("dir-1"));
+
+    await store.startPickerSession({
+      directoryId: "dir-1",
+      mode: "current",
+      branch: { ...mainBranch, isHead: true },
+    });
+
+    expect(rpc.gitCheckoutBranch).not.toHaveBeenCalled();
+    expect(rpc.tabsCreate).toHaveBeenCalledWith(expect.objectContaining({ directoryId: "dir-1" }));
+  });
+
+  it("creates a sibling worktree from the selected ref", async () => {
+    const store = useWorkspaceStore();
+    store.directories.push(dir("dir-1"), { ...dir("wt-1"), parentDirectoryId: "dir-1" });
+
+    await store.startPickerSession({ directoryId: "wt-1", mode: "worktree", branch: mainBranch });
+
+    expect(rpc.worktreeCreate).toHaveBeenCalledWith({
+      parentDirectoryId: "dir-1",
+      branch: "",
+      baseRef: "main",
+    });
+    expect(rpc.tabsCreate).toHaveBeenCalledWith(expect.objectContaining({ directoryId: "wt-new" }));
+    expect(store.selectedDirectoryId).toBe("wt-new");
+  });
+
+  it("resolves nested linked directories to their root for worktree creation", async () => {
+    const store = useWorkspaceStore();
+    store.directories.push(
+      dir("dir-1"),
+      { ...dir("wt-1"), parentDirectoryId: "dir-1" },
+      { ...dir("wt-2"), parentDirectoryId: "wt-1" },
+    );
+
+    await store.startPickerSession({ directoryId: "wt-2", mode: "worktree", branch: remoteBranch });
+
+    expect(rpc.worktreeCreate).toHaveBeenCalledWith({
+      parentDirectoryId: "dir-1",
+      branch: "",
+      baseRef: "origin/feature",
+    });
+  });
+
+  it("rolls back only a new worktree when PTY creation fails", async () => {
+    const store = useWorkspaceStore();
+    store.directories.push(dir("dir-1"), { ...dir("wt-existing"), parentDirectoryId: "dir-1" });
+    store.selectDirectory(dir("dir-1"));
+    rpc.tabsCreate.mockRejectedValueOnce(new Error("spawn failed"));
+
+    await expect(store.startPickerSession({ directoryId: "dir-1", mode: "worktree", branch: mainBranch }))
+      .rejects.toThrow("spawn failed");
+
+    expect(rpc.worktreeRemove).toHaveBeenCalledWith({ id: "wt-new", force: true });
+    expect(store.directories.map((directory) => directory.id)).toEqual(["dir-1", "wt-existing"]);
+    expect(store.selectedDirectoryId).toBe("dir-1");
+  });
+
+  it("keeps the spawn failure visible when rollback also fails", async () => {
+    const store = useWorkspaceStore();
+    store.directories.push(dir("dir-1"));
+    rpc.tabsCreate.mockRejectedValueOnce(new Error("spawn failed"));
+    rpc.worktreeRemove.mockRejectedValueOnce(new Error("cleanup failed"));
+
+    await expect(store.startPickerSession({ directoryId: "dir-1", mode: "worktree", branch: mainBranch }))
+      .rejects.toThrow(/spawn failed.*cleanup failed/);
+    expect(store.selectedDirectoryId).toBeNull();
   });
 });
 
