@@ -435,18 +435,12 @@ onUnmounted(() => {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" class="min-w-64">
-            <DropdownMenuLabel>Workspaces</DropdownMenuLabel>
-            <template v-for="(root, rootIndex) in roots" :key="root.id">
-              <DropdownMenuSeparator v-if="rootIndex > 0" />
-              <DropdownMenuGroup>
-                <DropdownMenuItem class="min-h-10" :disabled="launching" @select="selectPickerDirectory(root)">
-                  <span class="min-w-0">
-                    <span class="block truncate font-medium">{{ root.name }}</span>
-                    <span class="block truncate text-xs text-muted-foreground">{{ homePath(root.path) }}</span>
-                  </span>
-                </DropdownMenuItem>
-              </DropdownMenuGroup>
-            </template>
+            <DropdownMenuItem v-for="root in roots" :key="root.id" class="min-h-10" :disabled="launching" @select="selectPickerDirectory(root)">
+              <span class="min-w-0">
+                <span class="block truncate font-medium">{{ root.name }}</span>
+                <span class="block truncate text-xs text-muted-foreground">{{ homePath(root.path) }}</span>
+              </span>
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </h2>
@@ -465,7 +459,7 @@ onUnmounted(() => {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" class="w-[var(--reka-dropdown-menu-trigger-width)]">
-              <DropdownMenuLabel>Agents</DropdownMenuLabel>
+              <DropdownMenuLabel class="text-xs font-normal text-muted-foreground">Agents</DropdownMenuLabel>
               <DropdownMenuRadioGroup :model-value="selectedAgentType ?? 'terminal'" @update:model-value="selectAgent">
                 <DropdownMenuRadioItem v-for="agent in agentChoices" :key="agent.type" :value="agent.type" class="min-h-10">
                   <img v-if="agent.icon" :src="agent.icon" alt="" class="size-4" />
@@ -489,7 +483,7 @@ onUnmounted(() => {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" class="w-[var(--reka-dropdown-menu-trigger-width)]">
-              <DropdownMenuLabel>Model</DropdownMenuLabel>
+              <DropdownMenuLabel class="text-xs font-normal text-muted-foreground">Model</DropdownMenuLabel>
               <DropdownMenuRadioGroup :model-value="selectedModelId ?? 'default'" @update:model-value="selectModel">
                 <DropdownMenuRadioItem value="default" class="min-h-10">Default</DropdownMenuRadioItem>
                 <DropdownMenuRadioItem v-for="model in selectedAgent?.models ?? []" :key="model.id" :value="model.id" class="min-h-10">
@@ -508,7 +502,7 @@ onUnmounted(() => {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" class="w-[var(--reka-dropdown-menu-trigger-width)]">
               <template v-if="availableEfforts.length">
-                <DropdownMenuLabel>Effort</DropdownMenuLabel>
+                <DropdownMenuLabel class="text-xs font-normal text-muted-foreground">Effort</DropdownMenuLabel>
                 <DropdownMenuRadioGroup :model-value="selectedEffort ?? 'default'" @update:model-value="selectEffort">
                   <DropdownMenuRadioItem value="default" class="min-h-10">Default</DropdownMenuRadioItem>
                   <DropdownMenuRadioItem v-for="effort in availableEfforts" :key="effort" :value="effort" class="min-h-10">
@@ -518,7 +512,7 @@ onUnmounted(() => {
               </template>
               <DropdownMenuSeparator v-if="availableEfforts.length && supportsFast" />
               <template v-if="supportsFast">
-                <DropdownMenuLabel>Fast Mode</DropdownMenuLabel>
+                <DropdownMenuLabel class="text-xs font-normal text-muted-foreground">Fast Mode</DropdownMenuLabel>
                 <DropdownMenuRadioGroup :model-value="fast ? 'on' : 'off'" @update:model-value="selectFast">
                   <DropdownMenuRadioItem value="on" class="min-h-10"><Zap aria-hidden="true" class="size-4" />On</DropdownMenuRadioItem>
                   <DropdownMenuRadioItem value="off" class="min-h-10">Off</DropdownMenuRadioItem>
@@ -544,7 +538,7 @@ onUnmounted(() => {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start">
-              <DropdownMenuLabel>Checkout Mode</DropdownMenuLabel>
+              <DropdownMenuLabel class="text-xs font-normal text-muted-foreground">Checkout Mode</DropdownMenuLabel>
               <DropdownMenuRadioGroup v-model="checkoutMode">
                 <DropdownMenuRadioItem value="current" class="min-h-10">Current Checkout</DropdownMenuRadioItem>
                 <DropdownMenuRadioItem value="worktree" class="min-h-10">Create New Worktree</DropdownMenuRadioItem>
@@ -562,10 +556,10 @@ onUnmounted(() => {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" class="min-w-56">
-              <DropdownMenuLabel>{{ branchLabel }}</DropdownMenuLabel>
+              <DropdownMenuLabel class="text-xs font-normal text-muted-foreground">{{ branchLabel }}</DropdownMenuLabel>
               <DropdownMenuRadioGroup :model-value="selectedBranch?.fullRef" @update:model-value="selectBranch">
                 <DropdownMenuGroup v-if="localBranches.length">
-                  <DropdownMenuLabel>Local</DropdownMenuLabel>
+                  <DropdownMenuLabel class="text-xs font-normal text-muted-foreground">Local</DropdownMenuLabel>
                   <DropdownMenuRadioItem v-for="branch in localBranches" :key="branch.fullRef" :value="branch.fullRef" class="min-h-10">
                     <GitBranchIcon aria-hidden="true" class="size-4" />
                     <span class="flex-1 truncate">{{ branch.name }}</span>
@@ -574,7 +568,7 @@ onUnmounted(() => {
                 </DropdownMenuGroup>
                 <DropdownMenuSeparator v-if="localBranches.length && remoteBranches.length" />
                 <DropdownMenuGroup v-if="remoteBranches.length">
-                  <DropdownMenuLabel>Remote</DropdownMenuLabel>
+                  <DropdownMenuLabel class="text-xs font-normal text-muted-foreground">Remote</DropdownMenuLabel>
                   <DropdownMenuRadioItem v-for="branch in remoteBranches" :key="branch.fullRef" :value="branch.fullRef" class="min-h-10">
                     <Cloud aria-hidden="true" class="size-4" />
                     <span class="truncate">{{ branch.name }}</span>
