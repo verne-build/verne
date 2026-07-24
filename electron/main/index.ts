@@ -151,7 +151,7 @@ function registerExtraNatives(): void {
 // the daemon spawn plan can't drift between the three paths. `startupCommand` is
 // the one-shot line written into the PTY after the shell spawns (un-archive
 // resume). `launchCommand` (the live agent-launch field) is always preserved.
-function buildTabSpawnPlan(db: DatabaseSync, tab: Tab, startupCommand?: string) {
+function buildTabSpawnPlan(db: DatabaseSync, tab: Tab, launchOverride?: string) {
   const env: Record<string, string> = { VERNE_TAB_ID: tab.id };
   const root = resolveWorkspaceRoot(db, tab.directoryId);
   if (root) env.VERNE_WORKSPACE_DIR = root;
@@ -160,10 +160,12 @@ function buildTabSpawnPlan(db: DatabaseSync, tab: Tab, startupCommand?: string) 
     tabId: tab.id,
     cwd: tab.cwd,
     env,
-    startupCommand,
     directoryName: labels.directoryName,
     tabLabel: labels.tabLabel,
-    launchCommand: tab.launchCommand,
+    // launchOverride (e.g. `claude --resume <id>` on un-archive) runs AS the
+    // shell's exec'd command, REPLACING the tab's own launch_command — otherwise
+    // resume would launch the agent twice (original launch_command + the resume).
+    launchCommand: launchOverride ?? tab.launchCommand,
   };
 }
 
@@ -188,7 +190,7 @@ function registerTabOrchestration(d: DaemonClient, s: DaemonClient): void {
     setArchivedAt: (id, archivedAt) => setTabArchivedAt(getDb(), id, archivedAt),
     deleteSnapshot: (id) => deleteTabSnapshot(getDb(), id),
     dbExec: (sql) => getDb().exec(sql),
-    buildPlan: (tab, startupCommand) => buildTabSpawnPlan(getDb(), tab, startupCommand),
+    buildPlan: (tab, launchOverride) => buildTabSpawnPlan(getDb(), tab, launchOverride),
     now: () => Date.now(),
   });
 
