@@ -703,8 +703,10 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       // Only refocus when the closed session actually held focus — a
       // background/non-focused pane closing shouldn't steal focus.
       if (arr && wasFocused) focusSession(firstLeaf(arr.layout));
-      if (!remaining.length && dirId === selectedDirectoryId.value)
-        openSessionPicker(dirId);
+      if (!remaining.length) {
+        clearFocusForScope(dirId);
+        if (dirId === selectedDirectoryId.value) openSessionPicker(dirId);
+      }
     }
   }
 

@@ -456,21 +456,31 @@ pub fn remove_workspace_worktree_git(
 
     // Remove on-disk working tree first so libgit2 stops considering the
     // worktree "valid" — then prune cleans the .git/worktrees/<name> metadata.
+    let mut cleanup_errors = Vec::new();
     if Path::new(dir_path).exists() {
-        let _ = fs::remove_dir_all(dir_path);
+        if let Err(error) = fs::remove_dir_all(dir_path) {
+            cleanup_errors.push(format!("remove worktree directory: {error}"));
+        }
     }
     if let Ok(wt) = repo.find_worktree(&name) {
         let mut prune_opts = git2::WorktreePruneOptions::new();
         prune_opts.valid(true).locked(force).working_tree(true);
-        wt.prune(Some(&mut prune_opts))
-            .map_err(|e| format!("prune worktree: {e}"))?;
+        if let Err(error) = wt.prune(Some(&mut prune_opts)) {
+            cleanup_errors.push(format!("prune worktree: {error}"));
+        }
     }
     if let Some(bn) = branch_name {
         if let Ok(mut b) = repo.find_branch(&bn, git2::BranchType::Local) {
-            let _ = b.delete();
+            if let Err(error) = b.delete() {
+                cleanup_errors.push(format!("delete worktree branch {bn}: {error}"));
+            }
         }
     }
-    Ok(())
+    if cleanup_errors.is_empty() {
+        Ok(())
+    } else {
+        Err(cleanup_errors.join("; "))
+    }
 }
 
 /// Rename a worktree workspace's git branch via git2 and return the resolved
@@ -630,6 +640,33 @@ mod tests {
         let created = create(&fixture.repo, &fixture.root, "dir", "explicit-base", &BaseRef::Ref("feature".into())).unwrap();
         let worktree_repo = git2::Repository::open(created.path).unwrap();
         assert_eq!(worktree_repo.head().unwrap().target(), Some(feature_oid));
+    }
+
+    #[test]
+    fn remove_worktree_reports_directory_cleanup_failure() {
+        let fixture = worktree_fixture();
+        let created = create(
+            &fixture.repo,
+            &fixture.root,
+            "dir",
+            "cleanup-failure",
+            &BaseRef::HeadFallback,
+        )
+        .unwrap();
+        let displaced = created.path.with_extension("displaced");
+        std::fs::rename(&created.path, &displaced).unwrap();
+        std::fs::write(&created.path, "not a directory").unwrap();
+
+        let error = remove_workspace_worktree_git(
+            fixture.repo.workdir().unwrap().to_str().unwrap(),
+            created.path.to_str().unwrap(),
+            true,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("remove worktree directory"));
+        std::fs::remove_file(&created.path).unwrap();
+        std::fs::rename(displaced, &created.path).unwrap();
     }
 
     #[test]

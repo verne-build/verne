@@ -690,6 +690,8 @@ describe("new-session picker", () => {
     await store.closeSession(tab.id);
     expect(store.pendingPicker).toEqual({ dirId: "dir-1" });
     expect(store.terminalTabsByDirectory["dir-1"]).toEqual([]);
+    expect(store.activeTabIdByDirectory["dir-1"]).toBeUndefined();
+    expect(store.focusedSessionId).toBeUndefined();
   });
 
   it("retargets on scope selection and dismisses on session selection", async () => {
