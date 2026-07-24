@@ -229,7 +229,7 @@ pub fn taken_worktree_names(root: &Path, dir_id: &str, repo: &git2::Repository) 
 use crate::types::DirectorySettings;
 
 /// Resolve the base ref to branch a new worktree from.
-/// Precedence: per-directory override → origin/main → origin/master → HEAD fallback.
+/// Precedence: selected ref → per-directory override → standard refs → HEAD fallback.
 pub fn resolve_base_ref(
     repo: &git2::Repository,
     dir_settings: &DirectorySettings,
@@ -245,6 +245,13 @@ pub fn resolve_base_ref(
 
 fn revparse_exists(repo: &git2::Repository, refname: &str) -> bool {
     repo.revparse_single(refname).is_ok()
+}
+
+fn repository_lock_key(repo: &git2::Repository) -> Result<String, String> {
+    repo.commondir()
+        .canonicalize()
+        .map(|path| path.to_string_lossy().trim_end_matches('/').to_string())
+        .map_err(|e| format!("canonicalize repository common dir: {e}"))
 }
 
 /// Create a new worktree at `<root>/<dir_id>/<name>` on a new branch named the
@@ -379,12 +386,13 @@ pub fn create_workspace_worktree_git(
         .canonicalize()
         .map_err(|e| format!("canonicalize repo root: {e}"))?;
     let repo_root = repo_root_path.to_string_lossy().trim_end_matches('/').to_string();
+    let lock_key = repository_lock_key(&repo)?;
 
     let worktrees_root_override = state.settings().get().worktrees_root;
     let root = resolve_root(worktrees_root_override.as_deref());
     // This function is called only from the RPC handler's spawn_blocking work.
     // Keep the per-repository mutex entirely in that blocking section.
-    let lock = state.worktree_create_lock(&repo_root);
+    let lock = state.worktree_create_lock(&lock_key);
     let _guard = lock.lock().unwrap_or_else(|p| p.into_inner());
     fs::create_dir_all(root.join(parent_dir_id))
         .map_err(|e| format!("create worktrees dir: {e}"))?;
@@ -625,6 +633,21 @@ mod tests {
         let other = crate::state::keyed_lock(&locks, "/repo/b");
         assert!(Arc::ptr_eq(&first, &same));
         assert!(!Arc::ptr_eq(&first, &other));
+    }
+
+    #[test]
+    fn linked_worktree_uses_the_main_repository_lock_key() {
+        let fixture = worktree_fixture();
+        let created = create(
+            &fixture.repo,
+            &fixture.root,
+            "dir",
+            "linked-checkout",
+            &BaseRef::HeadFallback,
+        )
+        .unwrap();
+        let linked = git2::Repository::open(created.path).unwrap();
+        assert_eq!(repository_lock_key(&fixture.repo).unwrap(), repository_lock_key(&linked).unwrap());
     }
 
     #[test]
