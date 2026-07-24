@@ -234,13 +234,20 @@ pub fn resolve_base_ref(
     repo: &git2::Repository,
     dir_settings: &DirectorySettings,
     selected: Option<&str>,
-) -> BaseRef {
-    let mut candidates = selected.into_iter().map(str::to_owned)
-        .chain(dir_settings.default_base_ref.clone())
+) -> Result<BaseRef, String> {
+    if let Some(selected) = selected {
+        return if revparse_exists(repo, selected) {
+            Ok(BaseRef::Ref(selected.to_string()))
+        } else {
+            Err(format!("explicit base ref not found: {selected}"))
+        };
+    }
+
+    let mut candidates = dir_settings.default_base_ref.clone().into_iter()
         .chain(["main", "origin/main", "master", "origin/master"].map(str::to_owned));
-    candidates.find(|name| revparse_exists(repo, name))
+    Ok(candidates.find(|name| revparse_exists(repo, name))
         .map(BaseRef::Ref)
-        .unwrap_or(BaseRef::HeadFallback)
+        .unwrap_or(BaseRef::HeadFallback))
 }
 
 fn revparse_exists(repo: &git2::Repository, refname: &str) -> bool {
@@ -397,7 +404,7 @@ pub fn create_workspace_worktree_git(
     fs::create_dir_all(root.join(parent_dir_id))
         .map_err(|e| format!("create worktrees dir: {e}"))?;
 
-    let base = resolve_base_ref(&repo, &dir_settings, base_ref_override);
+    let base = resolve_base_ref(&repo, &dir_settings, base_ref_override)?;
     let mut taken = taken_worktree_names(&root, parent_dir_id, &repo);
     let first = if branch_input.trim().is_empty() {
         pick_pool_name(&taken)
@@ -584,8 +591,16 @@ mod tests {
     #[test]
     fn explicit_base_ref_wins() {
         let fixture = worktree_fixture();
-        let base = resolve_base_ref(&fixture.repo, &fixture.settings, Some("feature"));
+        let base = resolve_base_ref(&fixture.repo, &fixture.settings, Some("feature")).unwrap();
         assert!(matches!(base, BaseRef::Ref(ref name) if name == "feature"));
+    }
+
+    #[test]
+    fn explicit_base_ref_deleted_before_creation_is_an_error() {
+        let fixture = worktree_fixture();
+        fixture.repo.find_branch("feature", git2::BranchType::Local).unwrap().delete().unwrap();
+        let error = resolve_base_ref(&fixture.repo, &fixture.settings, Some("feature")).unwrap_err();
+        assert!(error.contains("feature"));
     }
 
     #[test]

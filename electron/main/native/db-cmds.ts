@@ -46,6 +46,61 @@ function broadcast(win: BrowserWindow, name: string, payload: unknown): void {
   win.webContents.send("daemon-event", name, payload);
 }
 
+type WorktreeCreateParams = { parentDirectoryId: string; branch?: string; baseRef?: string };
+
+type WorktreeCreateDeps = {
+  request: (method: string, params: Record<string, unknown>) => Promise<unknown>;
+  insert: (directory: WorkingDirectory) => void;
+  makeId: () => string;
+  now: () => number;
+};
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+export async function createWorktreeDirectory(
+  p: WorktreeCreateParams,
+  parent: WorkingDirectory,
+  defaultBaseRef: string | null,
+  deps: WorktreeCreateDeps,
+): Promise<WorkingDirectory> {
+  const r = (await deps.request("worktree_create_git", {
+    parentPath: parent.path,
+    parentDirectoryId: p.parentDirectoryId,
+    branch: p.branch ?? "",
+    baseRef: p.baseRef ?? null,
+    defaultBaseRef,
+  })) as { path: string; branch: string; repoRoot: string };
+  const dir: WorkingDirectory = {
+    id: deps.makeId(),
+    path: r.path,
+    name: r.branch,
+    repoRoot: r.repoRoot,
+    createdAt: deps.now(),
+    sortOrder: parent.sortOrder + 1,
+    parentDirectoryId: p.parentDirectoryId,
+  };
+  try {
+    deps.insert(dir);
+  } catch (insertError) {
+    try {
+      await deps.request("worktree_remove_git", {
+        parentPath: parent.path,
+        dirPath: r.path,
+        force: true,
+      });
+    } catch (cleanupError) {
+      throw new Error(
+        `${errorMessage(insertError)}; worktree cleanup failed: ${errorMessage(cleanupError)}`,
+        { cause: insertError },
+      );
+    }
+    throw insertError;
+  }
+  return dir;
+}
+
 export function registerDbCommands(
   getWindow: () => BrowserWindow,
   getSidecar: () => DaemonClient | null,
@@ -85,28 +140,19 @@ export function registerDbCommands(
   });
 
   // ---- worktrees (git2 in sidecar; rows owned here) ----
-  registerNative("worktree_create", async (p: { parentDirectoryId: string; branch?: string; baseRef?: string }, win) => {
+  registerNative("worktree_create", async (p: WorktreeCreateParams, win) => {
     const db = getDb();
     const parent = getDirectory(db, p.parentDirectoryId);
     if (!parent) throw new Error("parent directory not found");
     const settings = getDirectorySettings(db, p.parentDirectoryId);
-    const r = (await getSidecar()!.request("worktree_create_git", {
-      parentPath: parent.path,
-      parentDirectoryId: p.parentDirectoryId,
-      branch: p.branch ?? "",
-      baseRef: p.baseRef ?? null,
-      defaultBaseRef: settings?.defaultBaseRef ?? null,
-    })) as { path: string; branch: string; repoRoot: string };
-    const dir: WorkingDirectory = {
-      id: randomUUID(),
-      path: r.path,
-      name: r.branch,
-      repoRoot: r.repoRoot,
-      createdAt: Date.now(),
-      sortOrder: parent.sortOrder + 1,
-      parentDirectoryId: p.parentDirectoryId,
-    };
-    insertDirectory(db, dir);
+    const sidecar = getSidecar();
+    if (!sidecar) throw new Error("sidecar unavailable");
+    const dir = await createWorktreeDirectory(p, parent, settings?.defaultBaseRef ?? null, {
+      request: (method, params) => sidecar.request(method, params),
+      insert: (directory) => insertDirectory(db, directory),
+      makeId: randomUUID,
+      now: Date.now,
+    });
     broadcast(win, "directory-added", { directory: dir });
     return dir;
   });
