@@ -803,6 +803,42 @@ describe("picker launch orchestration", () => {
     expect(store.selectedDirectoryId).toBe("wt-new");
   });
 
+  it("keeps the original picker mounted until the worktree session launches", async () => {
+    const store = useWorkspaceStore();
+    store.directories.push(dir("dir-1"));
+    store.selectDirectory(dir("dir-1"));
+    store.openSessionPicker();
+    const deferred = queueTabsCreateDeferred();
+
+    const launch = store.startPickerSession({ directoryId: "dir-1", mode: "worktree", branch: mainBranch });
+    await vi.waitFor(() => expect(rpc.tabsCreate).toHaveBeenCalled());
+
+    expect(store.selectedDirectoryId).toBe("dir-1");
+    expect(store.pendingPicker).toEqual({ dirId: "dir-1" });
+
+    deferred.resolve();
+    await launch;
+    expect(store.selectedDirectoryId).toBe("wt-new");
+    expect(store.pendingPicker).toBeNull();
+  });
+
+  it("does not clobber newer navigation when the worktree session launches", async () => {
+    const store = useWorkspaceStore();
+    store.directories.push(dir("dir-1"), dir("dir-2"));
+    store.selectDirectory(dir("dir-1"));
+    store.openSessionPicker();
+    const deferred = queueTabsCreateDeferred();
+
+    const launch = store.startPickerSession({ directoryId: "dir-1", mode: "worktree", branch: mainBranch });
+    await vi.waitFor(() => expect(rpc.tabsCreate).toHaveBeenCalled());
+    store.selectDirectory(dir("dir-2"));
+
+    deferred.resolve();
+    await launch;
+    expect(store.selectedDirectoryId).toBe("dir-2");
+    expect(store.pendingPicker).toEqual({ dirId: "dir-2" });
+  });
+
   it("resolves nested linked directories to their root for worktree creation", async () => {
     const store = useWorkspaceStore();
     store.directories.push(
@@ -944,8 +980,8 @@ describe("picker launch orchestration", () => {
       .rejects.toThrow(/spawn failed.*cleanup failed/);
     expect(store.directories.map((directory) => directory.id)).toEqual(["dir-1", "wt-new"]);
     expect(filePanel.dropFilePanelScope).not.toHaveBeenCalled();
-    expect(store.selectedDirectoryId).toBe("wt-new");
-    expect(store.pendingPicker).toEqual({ dirId: "wt-new" });
+    expect(store.selectedDirectoryId).toBe("dir-1");
+    expect(store.pendingPicker).toEqual({ dirId: "dir-1" });
   });
 });
 

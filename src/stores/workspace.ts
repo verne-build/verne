@@ -911,21 +911,24 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     }
 
     const root = worktreeRoot(source.id);
+    const selectionBeforeLaunch = selectedDirectoryId.value;
+    const pendingPickerBeforeLaunch = pendingPicker.value
+      ? { ...pendingPicker.value }
+      : null;
+    const selectionRevisionBeforeLaunch = selectionRevision;
+    const pickerRevisionBeforeLaunch = pickerRevision;
     let created: WorkingDirectory | null = null;
-    let selectionBeforeSelection: string | null = null;
-    let selectionRevisionAfterSelection = 0;
-    let pendingPickerBeforeSelection: { dirId: string } | null = null;
-    let pickerRevisionAfterSelection = 0;
     try {
       created = await createWorktree(root.id, "", input.branch.name);
-      selectionBeforeSelection = selectedDirectoryId.value;
-      pendingPickerBeforeSelection = pendingPicker.value
-        ? { ...pendingPicker.value }
-        : null;
-      selectDirectory(created);
-      selectionRevisionAfterSelection = selectionRevision;
-      pickerRevisionAfterSelection = pickerRevision;
-      return await newSession(created.id, { agentLaunch: input.agentLaunch });
+      const tab = await newSession(created.id, { agentLaunch: input.agentLaunch });
+      const ownsNavigation =
+        selectionRevision === selectionRevisionBeforeLaunch
+        && pickerRevision === pickerRevisionBeforeLaunch;
+      if (ownsNavigation) {
+        selectedDirectoryId.value = created.id;
+        pendingPicker.value = null;
+      }
+      return tab;
     } catch (error) {
       if (!created) throw error;
       let cleanupError: unknown;
@@ -942,21 +945,15 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         directories.value = directories.value.filter((directory) => directory.id !== created!.id);
         const hasLiveDirectory = (id: string | null): id is string =>
           id !== null && directories.value.some((directory) => directory.id === id);
-        const selectionFallback = [selectionBeforeSelection, root.id, source.id]
+        const selectionFallback = [selectionBeforeLaunch, root.id, source.id]
           .find(hasLiveDirectory) ?? null;
-        const pickerFallback = pendingPickerBeforeSelection
-          && hasLiveDirectory(pendingPickerBeforeSelection.dirId)
-          ? pendingPickerBeforeSelection
+        const pickerFallback = pendingPickerBeforeLaunch
+          && hasLiveDirectory(pendingPickerBeforeLaunch.dirId)
+          ? pendingPickerBeforeLaunch
           : null;
-        if (
-          selectionRevision === selectionRevisionAfterSelection
-          || selectedDirectoryId.value === created.id
-        )
+        if (selectedDirectoryId.value === created.id)
           selectedDirectoryId.value = selectionFallback;
-        if (
-          pickerRevision === pickerRevisionAfterSelection
-          || pendingPicker.value?.dirId === created.id
-        )
+        if (pendingPicker.value?.dirId === created.id)
           pendingPicker.value = pickerFallback;
       }
       if (cleanupError) {
