@@ -8,6 +8,20 @@ export interface SessionRow {
   agentType: string | null;
 }
 
+/** Split sessions into live vs archived, preserving input order in both
+ *  buckets. A row is archived iff its tab carries an `archivedAt` stamp. */
+export function partitionSessions(
+  rows: readonly SessionRow[],
+): { live: SessionRow[]; archived: SessionRow[] } {
+  const live: SessionRow[] = [];
+  const archived: SessionRow[] = [];
+  for (const r of rows) {
+    if (r.tab.archivedAt != null) archived.push(r);
+    else live.push(r);
+  }
+  return { live, archived };
+}
+
 export function buildSessionsList(
   directories: readonly WorkingDirectory[],
   tabsByDirectory: Record<string, Tab[]>,

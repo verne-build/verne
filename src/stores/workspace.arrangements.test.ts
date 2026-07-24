@@ -25,6 +25,11 @@ function freshId(prefix: string) {
 const setAppStateCalls: Array<{ key: string; value: string | null }> = [];
 const tabsClosedIds: string[] = [];
 const tabsSessionIdCalls: string[] = [];
+const tabsArchiveCalls: string[] = [];
+let tabsArchiveNext: unknown = null;
+function setTabsArchiveResult(tab: unknown) {
+  tabsArchiveNext = tab;
+}
 const tabsCreateCalls: Array<{
   directoryId: string;
   label?: string;
@@ -229,6 +234,10 @@ vi.mock("@/composables/useRpc", () => ({
       tabsSessionId: vi.fn(async (p: { id: string }) => {
         tabsSessionIdCalls.push(p.id);
         return null;
+      }),
+      tabsArchive: vi.fn(async (p: { id: string }) => {
+        tabsArchiveCalls.push(p.id);
+        return tabsArchiveNext;
       }),
       tabsReorder: vi.fn(async () => true),
       listLiveTabIds: vi.fn(async () => getLiveTabIds()),
@@ -1177,5 +1186,86 @@ describe("sessionActivityAt snapshot", () => {
     const tab = await store.newSession("dir-1");
     await store.closeSession(tab.id);
     expect(store.sessionActivityAt.get(tab.id)).toBeUndefined();
+  });
+});
+
+describe("archive session lifecycle", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    setActivePinia(createPinia());
+    setAppStateCalls.length = 0;
+    tabsClosedIds.length = 0;
+    tabsSessionIdCalls.length = 0;
+    tabsArchiveCalls.length = 0;
+    tabsArchiveNext = null;
+    nextId = 0;
+    setLiveTabIds([]);
+    appState.clear();
+    for (const k of Object.keys(tabsListByDir)) delete tabsListByDir[k];
+    setFailArrangementGets(0);
+  });
+
+  it("archiveSession calls tabsArchive once and replaces the tab without disturbing its arrangement leaf", async () => {
+    const store = useWorkspaceStore();
+    const tab = await store.newSession("dir-1");
+    const arrBefore = store.arrangementByScope["dir-1"];
+    setAppStateCalls.length = 0;
+    setTabsArchiveResult({ ...tab, archivedAt: 111 });
+
+    await store.archiveSession(tab.id);
+
+    expect(tabsArchiveCalls).toEqual([tab.id]);
+    expect(store.terminalTabsByDirectory["dir-1"]?.find((t) => t.id === tab.id)?.archivedAt).toBe(111);
+    expect(store.arrangementByScope["dir-1"]).toEqual(arrBefore);
+    expect(lastArrangementWrite()).toBeUndefined();
+    expect(tabsSessionIdCalls).not.toContain(tab.id);
+    expect(tabsClosedIds).not.toContain(tab.id);
+  });
+
+  it("hydrateSessionLifecycle skips archived tabs instead of marking them exited", async () => {
+    const store = useWorkspaceStore();
+    const tab = await store.newSession("dir-1");
+    setTabsArchiveResult({ ...tab, archivedAt: 111 });
+    await store.archiveSession(tab.id);
+
+    setLiveTabIds([]);
+    await store.hydrateSessionLifecycle();
+
+    expect(store.sessionLifecycle.has(tab.id)).toBe(false);
+  });
+
+  it("applying a duplicate archive local-response/event is idempotent", async () => {
+    const store = useWorkspaceStore();
+    const tab = await store.newSession("dir-1");
+    const archivedTab = { ...tab, archivedAt: 222 };
+
+    store.applyArchivedTab(archivedTab);
+    store.applyArchivedTab(archivedTab);
+    window.dispatchEvent(new CustomEvent("tab-archived", { detail: { tab: archivedTab } }));
+
+    const matches = store.terminalTabsByDirectory["dir-1"]?.filter((t) => t.id === tab.id) ?? [];
+    expect(matches).toHaveLength(1);
+    expect(matches[0].archivedAt).toBe(222);
+    expect(store.sessionLifecycle.has(tab.id)).toBe(false);
+  });
+
+  it("a tab-archived window event updates the store without a local archiveSession call", async () => {
+    const store = useWorkspaceStore();
+    const tab = await store.newSession("dir-1");
+
+    window.dispatchEvent(new CustomEvent("tab-archived", { detail: { tab: { ...tab, archivedAt: 333 } } }));
+
+    expect(store.terminalTabsByDirectory["dir-1"]?.find((t) => t.id === tab.id)?.archivedAt).toBe(333);
+  });
+
+  it("closing/deleting an archived tab closes the PTY directly and never respawns it", async () => {
+    const store = useWorkspaceStore();
+    const tab = await store.newSession("dir-1");
+    store.applyArchivedTab({ ...tab, archivedAt: 444 });
+
+    await store.closeSession(tab.id);
+
+    expect(tabsSessionIdCalls).not.toContain(tab.id);
+    expect(tabsClosedIds).toEqual([tab.id]);
   });
 });

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, onUnmounted, ref, shallowRef, watch } from "vue";
-import { FolderOpen, Plus } from "@lucide/vue";
+import { Archive, ChevronRight, FolderOpen, Plus } from "@lucide/vue";
 import { ask } from "@/platform";
 import StatusIndicator from "@/components/StatusIndicator.vue";
 import { useWorkspaceStore } from "@/stores/workspace";
@@ -9,11 +9,12 @@ import { useProjectIcons } from "@/composables/useProjectIcons";
 import { listen, type UnlistenFn } from "@/platform";
 import { aggregateGroupState, resolveDisplayState, stripSpinner } from "@/lib/agentStatus";
 import type { DisplayState } from "@/lib/agentStatus";
-import type { SessionRow as SessionRowModel } from "@/lib/sessionsView";
+import { partitionSessions, type SessionRow as SessionRowModel } from "@/lib/sessionsView";
 import { sortSessionCards, type CardSortInputs } from "@/lib/sessionSort";
 import SessionCard from "./SessionCard.vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Empty, EmptyContent, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import {
   ContextMenu,
@@ -83,13 +84,17 @@ const sortInputs = computed<CardSortInputs>(() => ({
   activityAt: (tabId) => store.sessionActivityAt.get(tabId) ?? 0,
 }));
 
-const cards = shallowRef<SessionRowModel[]>([]);
+const liveCards = shallowRef<SessionRowModel[]>([]);
+const archivedCards = shallowRef<SessionRowModel[]>([]);
+const archivedOpen = ref(true);
 function recomputeCards() {
   let rows = store.sessionsList("all");
   if (activeChip.value !== "all")
     rows = rows.filter((r) => rootOf(r.directory).id === activeChip.value);
   if (query.value) rows = rows.filter(matches); // existing matches()
-  cards.value = sortSessionCards(rows, sortInputs.value);
+  const { live, archived } = partitionSessions(rows);
+  liveCards.value = sortSessionCards(live, sortInputs.value);
+  archivedCards.value = sortSessionCards(archived, sortInputs.value);
 }
 
 watch(
@@ -108,6 +113,7 @@ watch(
 const chipStates = computed(() => {
   const byRoot = new Map<string, ReturnType<typeof resolveDisplayState>[]>();
   for (const r of store.sessionsList("all")) {
+    if (r.tab.archivedAt != null) continue; // archived sessions don't count toward the chip dot
     const rid = rootOf(r.directory).id;
     const rt = store.tabRuntime.get(r.tab.id);
     const s = resolveDisplayState({
@@ -408,7 +414,7 @@ async function onRemoveDirectory(dirId: string) {
     <!-- Card list -->
     <div ref="bodyEl" class="app-scrollbar min-h-0 flex-1 overflow-y-auto pb-3 pt-1" @scroll="update">
       <TransitionGroup name="session-move">
-        <SessionCard v-for="row in cards" :key="row.tab.id"
+        <SessionCard v-for="row in liveCards" :key="row.tab.id"
           :row="row"
           :branch="branches.get(row.directory.id)"
           :root-name="rootOf(row.directory).name"
@@ -416,9 +422,28 @@ async function onRemoveDirectory(dirId: string) {
           :is-worktree="!!row.directory.parentDirectoryId"
           :now="now" />
       </TransitionGroup>
-      <div v-if="cards.length === 0 && rootDirs.length" class="flex h-24 items-center justify-center px-4 text-center text-xs text-muted-foreground">
+      <div v-if="liveCards.length === 0 && archivedCards.length === 0 && rootDirs.length" class="flex h-24 items-center justify-center px-4 text-center text-xs text-muted-foreground">
         No sessions — right-click the chip or press ⌘T
       </div>
+      <Collapsible v-if="archivedCards.length" v-model:open="archivedOpen" class="mt-1">
+        <CollapsibleTrigger class="flex w-full items-center gap-1.5 px-3 py-1 text-[10px] uppercase tracking-wide text-muted-foreground/70">
+          <ChevronRight class="size-3 shrink-0 transition-transform" :class="archivedOpen ? 'rotate-90' : ''" />
+          <Archive class="size-3 shrink-0" />
+          <span>Archived</span>
+          <span class="tabular-nums">({{ archivedCards.length }})</span>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <TransitionGroup name="session-move">
+            <SessionCard v-for="row in archivedCards" :key="row.tab.id"
+              :row="row"
+              :branch="branches.get(row.directory.id)"
+              :root-name="rootOf(row.directory).name"
+              :root-dir-id="rootOf(row.directory).id"
+              :is-worktree="!!row.directory.parentDirectoryId"
+              :now="now" />
+          </TransitionGroup>
+        </CollapsibleContent>
+      </Collapsible>
     </div>
     </template>
   </div>

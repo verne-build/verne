@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { ref, shallowRef, triggerRef, computed, watch } from "vue";
+import { ref, shallowRef, triggerRef, computed, watch, onScopeDispose } from "vue";
 import { toast } from "vue-sonner";
 import type {
   WorkingDirectory,
@@ -9,6 +9,7 @@ import type {
   AgentLaunchSelection,
   AgentState,
   GitBranch,
+  TabArchivedEvent,
 } from "@/types";
 import { useRpc } from "@/composables/useRpc";
 import { moveTabBetweenBuckets } from "@/lib/scopeMove";
@@ -148,8 +149,12 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       const live = new Set(await useRpc().request.listLiveTabIds());
       const next = new Map(sessionLifecycle.value);
       for (const tabs of Object.values(terminalTabsByDirectory.value))
-        for (const t of tabs)
+        for (const t of tabs) {
+          // Archived tabs have no PTY to track — leave them out of lifecycle
+          // entirely instead of marking them exited.
+          if (t.archivedAt != null) continue;
           if (!mine.has(t.id)) next.set(t.id, live.has(t.id) ? "running" : "exited");
+        }
       sessionLifecycle.value = next;
     } catch {
     } finally {
@@ -649,9 +654,12 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   // id BEFORE closing — tabsSessionId/ensure_tab_session would otherwise respawn
   // a fresh PTY after the close.
   async function destroyPane(id: string) {
-    // Exited session: no PTY to resolve — tabsSessionId would pointlessly
-    // respawn a shell just to kill it. Straight to tabsClose.
-    if (sessionLifecycle.value.get(id) === "exited") {
+    const dirId = tabDirId(id);
+    const tab = dirId ? (terminalTabsByDirectory.value[dirId] ?? []).find((t) => t.id === id) : undefined;
+    // Exited or archived session: no live PTY to resolve — tabsSessionId
+    // would pointlessly respawn a shell (or resurrect an archived one) just
+    // to kill it. Straight to tabsClose, never respawn.
+    if (sessionLifecycle.value.get(id) === "exited" || tab?.archivedAt != null) {
       await useRpc().request.tabsClose({ id }).catch(() => {});
       return;
     }
@@ -812,6 +820,39 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     };
     return tab;
   }
+
+  /** Replace a tab in its directory bucket, keyed by id. Idempotent — safe to
+   *  apply the same (or a stale-duplicate) tab twice. Never touches the
+   *  arrangement, so a session's pane leaf survives the swap untouched. */
+  function replaceTab(tab: Tab): void {
+    const list = terminalTabsByDirectory.value[tab.directoryId] ?? [];
+    const next = list.map((t) => (t.id === tab.id ? tab : t));
+    terminalTabsByDirectory.value = { ...terminalTabsByDirectory.value, [tab.directoryId]: next };
+  }
+
+  /** Apply a tab that just finished archiving (from the RPC response or the
+   *  daemon's `tab-archived` broadcast). Idempotent: replaceTab is a keyed
+   *  swap and dropping an already-absent lifecycle entry is a no-op. */
+  function applyArchivedTab(tab: Tab): void {
+    replaceTab(tab);
+    sessionLifecycle.value.delete(tab.id);
+    triggerRef(sessionLifecycle);
+  }
+
+  /** Archive a live session: snapshot + kill the PTY server-side, then mirror
+   *  the resulting (now-archived) tab locally. Never call tabsSessionId/
+   *  tabsClose here — that's the daemon's job inside tabs_archive. */
+  async function archiveSession(id: string): Promise<void> {
+    const tab = await useRpc().request.tabsArchive({ id });
+    applyArchivedTab(tab);
+  }
+
+  function handleTabArchivedEvent(e: Event) {
+    const detail = (e as CustomEvent<TabArchivedEvent>).detail;
+    if (detail?.tab) applyArchivedTab(detail.tab);
+  }
+  window.addEventListener("tab-archived", handleTabArchivedEvent as EventListener);
+  onScopeDispose(() => window.removeEventListener("tab-archived", handleTabArchivedEvent as EventListener));
 
   async function reorderTabsInDirectory(directoryId: string, ids: string[]) {
     const current = terminalTabsByDirectory.value[directoryId] ?? [];
@@ -1286,5 +1327,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     applyDirectoryAdded,
     applyScopeChange,
     setTabScopePinnedLocal,
+    replaceTab,
+    applyArchivedTab,
+    archiveSession,
   };
 });

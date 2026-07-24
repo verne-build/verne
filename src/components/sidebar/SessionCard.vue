@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, onBeforeUnmount, ref, type Ref } from "vue";
 import {
+  Archive,
   Columns2,
   Folder,
   FolderInput,
@@ -66,6 +67,7 @@ const state = computed<DisplayState>(() => {
 // Match the terminal panes (raw session name, spinner glyphs stripped).
 const title = computed(() => stripSpinner(store.sessionName(id.value)));
 const exited = computed(() => store.sessionLifecycle.get(id.value) === "exited");
+const archived = computed(() => props.row.tab.archivedAt != null);
 const focused = computed(
   () => !store.pendingPicker && id.value === store.focusedSessionId && props.row.directory.id === store.selectedDirectoryId,
 );
@@ -227,6 +229,11 @@ function restartSession() {
 }
 
 async function closeSession() {
+  // Archived sessions have no live process to warn about — delete outright.
+  if (archived.value) {
+    await store.closeSession(id.value);
+    return;
+  }
   const running = await rpc.request.tabsHasRunningChild({ id: id.value }).catch(() => false);
   if (running) {
     const ok = await ask("Close Session?", {
@@ -236,6 +243,23 @@ async function closeSession() {
     if (!ok) return;
   }
   await store.closeSession(id.value);
+}
+
+// -- archive (Task 5: live action only; un-archive lands in Task 7) --
+async function archiveSession() {
+  const shouldConfirm = state.value === "working" || state.value === "blocked";
+  if (shouldConfirm) {
+    const ok = await ask("Archive Session?", {
+      detail: "This stops the running agent and keeps a read-only terminal snapshot.",
+      confirmLabel: "Archive",
+    });
+    if (!ok) return;
+  }
+  try {
+    await store.archiveSession(id.value);
+  } catch (e) {
+    window.alert(`Failed to archive session: ${e}`);
+  }
 }
 </script>
 
@@ -247,7 +271,7 @@ async function closeSession() {
           :as="'div'"
           :variant="focused ? 'secondary' : 'ghost'"
           class="rounded-md px-2.5 py-2 w-full h-auto flex flex-col items-stretch gap-0.5 text-left"
-          :class="exited ? 'opacity-60' : ''"
+          :class="(exited || archived) ? 'opacity-60' : ''"
           @click="focus"
           @dblclick="startRename()"
         >
@@ -257,7 +281,11 @@ async function closeSession() {
             <span class="truncate text-xs font-medium text-muted-foreground">{{ rootName }}</span>
             <GitBranch v-if="isWorktree" class="size-3 shrink-0 text-muted-foreground/70" />
             <span class="ml-auto shrink-0 flex items-center gap-1">
-              <template v-if="row.agentType && !exited">
+              <template v-if="archived">
+                <Archive class="size-3 text-muted-foreground" />
+                <span class="text-[11px] text-muted-foreground">Archived</span>
+              </template>
+              <template v-else-if="row.agentType && !exited">
                 <StatusIndicator :state="state" class="size-3" />
                 <SlotText
                   :text="stateWord(state)"
@@ -305,31 +333,37 @@ async function closeSession() {
           <RotateCcw />
           Restart
         </ContextMenuItem>
-        <ContextMenuSub v-if="otherScopes.length">
-          <ContextMenuSubTrigger>
-            <FolderInput />
-            Move to Scope…
-          </ContextMenuSubTrigger>
-          <ContextMenuSubContent>
-            <ContextMenuItem
-              v-for="scope in otherScopes"
-              :key="scope.id"
-              @select="moveToScope(scope.id)"
-            >
-              {{ scope.name }}
-            </ContextMenuItem>
-          </ContextMenuSubContent>
-        </ContextMenuSub>
-        <ContextMenuCheckboxItem
-          :model-value="followingAgent"
-          @update:model-value="toggleFollowAgent"
-        >
-          Follow Agent
-        </ContextMenuCheckboxItem>
+        <template v-if="!archived">
+          <ContextMenuSub v-if="otherScopes.length">
+            <ContextMenuSubTrigger>
+              <FolderInput />
+              Move to Scope…
+            </ContextMenuSubTrigger>
+            <ContextMenuSubContent>
+              <ContextMenuItem
+                v-for="scope in otherScopes"
+                :key="scope.id"
+                @select="moveToScope(scope.id)"
+              >
+                {{ scope.name }}
+              </ContextMenuItem>
+            </ContextMenuSubContent>
+          </ContextMenuSub>
+          <ContextMenuCheckboxItem
+            :model-value="followingAgent"
+            @update:model-value="toggleFollowAgent"
+          >
+            Follow Agent
+          </ContextMenuCheckboxItem>
+        </template>
+        <ContextMenuItem v-if="!exited && !archived" @select="archiveSession()">
+          <Archive />
+          Archive Session
+        </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem variant="destructive" @select="closeSession()">
           <Trash2 />
-          Close Session
+          {{ archived ? "Delete Session" : "Close Session" }}
         </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
