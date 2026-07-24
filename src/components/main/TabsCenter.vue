@@ -7,6 +7,7 @@ import { useRpc } from "@/composables/useRpc";
 import { useShortcuts } from "@/composables/useShortcuts";
 import { paneCount } from "@/lib/paneLayout";
 import { firstRunView } from "@/lib/firstRunView";
+import NewSessionPicker from "./NewSessionPicker.vue";
 import SplitLayout from "./SplitLayout.vue";
 import WelcomeHero from "./WelcomeHero.vue";
 import { Button } from "@/components/ui/button";
@@ -111,6 +112,11 @@ onUnmounted(() => {
       <div v-if="!dirId" class="flex-1 min-h-0 flex items-center justify-center">
         <WelcomeHero v-if="welcome !== 'none'" :mode="welcome === 'hero' ? 'hero' : 'picker'" />
       </div>
+      <NewSessionPicker
+        v-else-if="store.pendingPicker"
+        :key="store.pendingPicker.dirId"
+        :dir-id="store.pendingPicker.dirId"
+      />
       <SplitLayout
         v-else-if="arrangement"
         :key="dirId"
@@ -120,9 +126,8 @@ onUnmounted(() => {
         :multi="paneCount(arrangement.layout) > 1"
         :reserve-right-overlay="showRightOverlay"
       />
-      <!-- Transient: the scope has no arrangement yet — the empty-scope
-           auto-session (ensureLayoutModel2 / selectDirectory / closeSession)
-           is creating one. Blank frame keeps the chrome from flashing. -->
+      <!-- A selected scope without an arrangement intentionally reaches the
+           picker branch above; keep this fallback for incomplete hydration. -->
       <div v-else class="flex-1 min-h-0 bg-[var(--editor-bg)]" />
     </div>
   </div>
