@@ -322,6 +322,13 @@ fn merge_paths(probed: Option<&str>) -> String {
 fn apply_terminal_env(cmd: &mut CommandBuilder) {
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
+    // Strip an inherited NO_COLOR. The daemon is spawned detached and survives
+    // app restarts, so if it was launched from an env that sets NO_COLOR (e.g. a
+    // Claude Code subprocess) it leaks into EVERY terminal — agents like Claude
+    // then honor it and render monochrome ("all white"). A real terminal never
+    // imposes NO_COLOR; a user who genuinely wants it can still set it in their
+    // shell rc, which runs after this.
+    cmd.env_remove("NO_COLOR");
     cmd.env(
         "LANG",
         std::env::var("LANG").unwrap_or_else(|_| "en_US.UTF-8".to_string()),
@@ -1260,5 +1267,16 @@ mod shell_launch_args_tests {
             shell_launch_args(Some("codex")),
             vec!["-ilc", "exec codex"]
         );
+    }
+
+    #[test]
+    fn apply_terminal_env_strips_inherited_no_color() {
+        // Simulate a daemon launched from an env that set NO_COLOR (leaks into
+        // every terminal and makes color-aware agents render monochrome).
+        let mut cmd = CommandBuilder::new("/bin/zsh");
+        cmd.env("NO_COLOR", "1");
+        apply_terminal_env(&mut cmd);
+        assert_eq!(cmd.get_env("NO_COLOR"), None);
+        assert_eq!(cmd.get_env("COLORTERM").and_then(|v| v.to_str()), Some("truecolor"));
     }
 }
