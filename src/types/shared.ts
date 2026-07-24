@@ -542,3 +542,8 @@ export interface TabTitleEvent {
   tabId: string;
   title: string;
 }
+
+/** Emitted once a tab finishes archiving (snapshot durable + PTY confirmed dead). */
+export interface TabArchivedEvent {
+  tab: Tab;
+}

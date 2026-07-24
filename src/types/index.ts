@@ -41,6 +41,8 @@ export type {
   CreateTabOpts,
   TabUpdatedEvent,
   TabTitleEvent,
+  TabArchivedEvent,
+  ArchivedSnapshotBlob,
   AgentState,
   ReviewComment,
   ReviewContext,

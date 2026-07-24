@@ -37,7 +37,10 @@ import {
   clearStaleTabStates,
   tabDisplayLabels,
   defaultLabel,
+  setTabArchivedAt,
 } from "./db/tabs";
+import { writeTabSnapshot, readTabSnapshotBlob } from "./db/tabSnapshots";
+import { createArchiveSessionOperations, assertRespawnable } from "./archive-session";
 import type { Tab, CreateTabOpts } from "../../src/types/shared";
 import { resolveLaunchCommand } from "./agent-launch";
 import { writeMcpLauncher } from "./mcp/launcher";
@@ -146,6 +149,18 @@ function registerTabOrchestration(d: DaemonClient, s: DaemonClient): void {
   const emit = (name: string, payload: unknown) =>
     getWindow().webContents.send("daemon-event", name, payload);
 
+  // Archive: durably snapshot the live grid before killing the PTY, then flip
+  // archived_at only once the daemon confirms the kill (see archive-session.ts
+  // for the strict ordering + failure semantics).
+  const archiveOps = createArchiveSessionOperations({
+    getTab: (id) => getTab(getDb(), id),
+    daemonRequest: (method, params) => d.request(method, params),
+    writeSnapshot: (id, dump, capturedAt) => writeTabSnapshot(getDb(), id, dump, capturedAt),
+    readSnapshot: (id) => readTabSnapshotBlob(getDb(), id),
+    setArchivedAt: (id, archivedAt) => setTabArchivedAt(getDb(), id, archivedAt),
+    now: () => Date.now(),
+  });
+
   // create: Electron inserts the row + assembles the spawn plan → daemon spawns
   // the PTY. Roll the row back on failure.
   registerNative("tabs_create", async (params: { opts: CreateTabOpts }) => {
@@ -213,6 +228,9 @@ function registerTabOrchestration(d: DaemonClient, s: DaemonClient): void {
     const db = getDb();
     const tab = getTab(db, params.id);
     if (!tab) throw new Error("tab not found");
+    // Archived rows must never spawn via this legacy live-session seam — see
+    // assertRespawnable in archive-session.ts. Only tabs_unarchive may respawn.
+    assertRespawnable(tab);
     const env: Record<string, string> = { VERNE_TAB_ID: tab.id };
     const root = resolveWorkspaceRoot(db, tab.directoryId);
     if (root) env.VERNE_WORKSPACE_DIR = root;
@@ -246,6 +264,14 @@ function registerTabOrchestration(d: DaemonClient, s: DaemonClient): void {
     emit("tabs-reordered", { ids: params.ids });
     return true;
   });
+
+  // archive: durable snapshot -> daemon kill -> flip archived_at (see archive-session.ts).
+  registerNative("tabs_archive", async ({ id }: { id: string }) => {
+    const tab = await archiveOps.archive(id);
+    emit("tab-archived", { tab });
+    return tab;
+  });
+  registerNative("tab_snapshot_read", ({ id }: { id: string }) => archiveOps.read(id));
 }
 
 app.whenReady().then(async () => {

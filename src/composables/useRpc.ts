@@ -16,6 +16,8 @@ import type {
   SidebarState,
   TabUpdatedEvent,
   TabTitleEvent,
+  TabArchivedEvent,
+  ArchivedSnapshotBlob,
   Tab,
   CreateTabOpts,
   TabGroup,
@@ -85,6 +87,9 @@ listen<string>("file-deleted", (e) => {
     listen<{ tabId: string }>("tab-exited", (e) => {
       window.dispatchEvent(new CustomEvent("tab-exited", { detail: e.payload }));
     }),
+    listen<TabArchivedEvent>("tab-archived", (e) => {
+      window.dispatchEvent(new CustomEvent("tab-archived", { detail: e.payload }));
+    }),
     listen<{ tabId: string; fromDirectoryId: string; toDirectoryId: string; cwd: string }>(
       "session-scope-changed",
       (e) => window.dispatchEvent(new CustomEvent("session-scope-changed", { detail: e.payload })),
@@ -152,6 +157,10 @@ const request = {
     invoke("tabs_rename", { id: p.id, label: p.label }),
   tabsClose: (p: { id: string }): Promise<boolean> =>
     invoke("tabs_close", { id: p.id }),
+  tabsArchive: (p: { id: string }): Promise<Tab> =>
+    invoke("tabs_archive", { id: p.id }),
+  tabSnapshotRead: (p: { id: string }): Promise<ArchivedSnapshotBlob | null> =>
+    invoke("tab_snapshot_read", { id: p.id }),
   tabsReorder: (p: { ids: string[] }): Promise<boolean> =>
     invoke("tabs_reorder", { ids: p.ids }),
   tabsSessionId: (p: { id: string }): Promise<string | null> =>
