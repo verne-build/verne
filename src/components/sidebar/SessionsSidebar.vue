@@ -242,11 +242,11 @@ watch([sessionCount, query], () => nextTick(update));
             <ChevronDown class="ml-auto size-3.5 shrink-0 text-muted-foreground" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" class="min-w-56 p-0">
-          <div class="border-b p-2">
+        <DropdownMenuContent align="start" class="w-[var(--reka-dropdown-menu-trigger-width)] p-0">
+          <div class="border-b p-1.5">
             <div class="relative">
-              <Search aria-hidden="true" class="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input v-model="workspaceQuery" placeholder="Filter Workspaces…" class="h-8 pl-8 text-xs" @keydown="onWorkspaceFilterKeydown" />
+              <Search aria-hidden="true" class="pointer-events-none absolute left-2 top-1/2 size-3 -translate-y-1/2 text-muted-foreground" />
+              <Input v-model="workspaceQuery" placeholder="Filter Workspaces…" class="h-7 pl-7 text-xs" @keydown="onWorkspaceFilterKeydown" />
             </div>
           </div>
           <div class="max-h-64 overflow-y-auto p-1">
