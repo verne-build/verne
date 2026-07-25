@@ -93,6 +93,66 @@ fn hook_display_title(agent_type: &str, event: &str, payload: &serde_json::Value
     None
 }
 
+/// True when this agent's manifest asks for a generated title AND this event is
+/// one of its declared prompt events.
+fn wants_generated_title(agent_type: &str, event: &str) -> bool {
+    use crate::services::agent_status::manifest::TitleStrategy;
+    let config = crate::services::agent_status::manifest::title_config(agent_type);
+    matches!(
+        config.strategy,
+        TitleStrategy::Generated | TitleStrategy::GeneratedThenHookPrompt
+    ) && config.prompt_events.iter().any(|candidate| candidate == event)
+}
+
+/// The prompt text to summarize: RAW and untruncated (unlike a title, the
+/// generator wants the whole request). Trimmed only.
+fn hook_prompt_text(agent_type: &str, payload: &serde_json::Value) -> Option<String> {
+    let config = crate::services::agent_status::manifest::title_config(agent_type);
+    for path in &config.prompt_fields {
+        if let Some(value) = value_at_path(payload, path).and_then(value_to_title) {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// The title to use if generation fails. Computed HERE, with the manifest's own
+/// normalize_title + max_length, so Electron main never reimplements truncation
+/// in TypeScript and the two can't drift. None under bare `Generated`.
+fn generated_fallback_title(
+    agent_type: &str,
+    event: &str,
+    payload: &serde_json::Value,
+) -> Option<String> {
+    use crate::services::agent_status::manifest::TitleStrategy;
+    let config = crate::services::agent_status::manifest::title_config(agent_type);
+    if config.strategy != TitleStrategy::GeneratedThenHookPrompt {
+        return None;
+    }
+    if !config.prompt_events.iter().any(|candidate| candidate == event) {
+        return None;
+    }
+    for path in &config.prompt_fields {
+        if let Some(value) = value_at_path(payload, path).and_then(value_to_title) {
+            return normalize_title(&value, config.max_length);
+        }
+    }
+    None
+}
+
+/// The agent binary path the hook resolved in its own environment. Empty string
+/// and absent header both mean "unknown" — main then falls back to its own
+/// layered resolution.
+fn header_agent_bin(headers: &HashMap<String, String>) -> Option<String> {
+    headers
+        .get("x-verne-agent-bin")
+        .cloned()
+        .filter(|s| !s.is_empty())
+}
+
 fn value_at_path<'a>(value: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
     let mut current = value;
     for part in path.split('.') {
@@ -272,6 +332,7 @@ async fn handle_connection(
         .get("x-verne-seq")
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or_else(|| FALLBACK_SEQUENCE.fetch_add(1, Ordering::Relaxed));
+    let agent_bin = header_agent_bin(&headers);
 
     let payload: serde_json::Value =
         serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
@@ -358,6 +419,25 @@ async fn handle_connection(
                 eprintln!(
                     "[hook] event={} sid={} — no X-Verne-Tab-Id, dropping",
                     event, session_id,
+                );
+            }
+        }
+    }
+
+    // Generated titles: hand the raw prompt to Electron main, which owns the
+    // subprocess + the DB. Tab-keyed, so a hook with no X-Verne-Tab-Id is dropped.
+    if let Some(tab_id) = tab_id_header.as_deref().filter(|s| !s.is_empty()) {
+        if wants_generated_title(&agent_type, &event) {
+            if let Some(prompt) = hook_prompt_text(&agent_type, &payload) {
+                event_bus.emit(
+                    "agent-title-requested",
+                    serde_json::json!({
+                        "tabId": tab_id,
+                        "agentType": agent_type,
+                        "agentBin": agent_bin,
+                        "prompt": prompt,
+                        "fallbackTitle": generated_fallback_title(&agent_type, &event, &payload),
+                    }),
                 );
             }
         }
@@ -480,5 +560,45 @@ mod tests {
         // become the live title — main supplies the title instead.
         let payload = serde_json::json!({ "prompt": "add a retry to the uploader" });
         assert_eq!(hook_display_title("codex", "UserPromptSubmit", &payload), None);
+    }
+
+    #[test]
+    fn generated_fallback_title_is_normalized_for_then_hook_prompt() {
+        // codex = generated_then_hook_prompt, so the fallback is the same
+        // normalized string hook_prompt would have produced.
+        let payload = serde_json::json!({ "prompt": "  add   a retry\nto the uploader " });
+        assert_eq!(
+            generated_fallback_title("codex", "UserPromptSubmit", &payload).as_deref(),
+            Some("add a retry to the uploader"),
+        );
+    }
+
+    #[test]
+    fn hook_prompt_text_is_raw_and_untruncated() {
+        // The generator wants the WHOLE prompt, not the 120-char title form.
+        let long = "x".repeat(400);
+        let payload = serde_json::json!({ "prompt": long.clone() });
+        assert_eq!(hook_prompt_text("codex", &payload).as_deref(), Some(long.as_str()));
+    }
+
+    #[test]
+    fn wants_generated_title_only_for_declared_events_and_agents() {
+        assert!(wants_generated_title("codex", "UserPromptSubmit"));
+        assert!(!wants_generated_title("codex", "PostToolUse"));
+        // claude is strategy = "osc" — must not opt in.
+        assert!(!wants_generated_title("claude", "UserPromptSubmit"));
+    }
+
+    #[test]
+    fn header_agent_bin_treats_absent_and_empty_alike() {
+        let mut headers = std::collections::HashMap::new();
+        assert_eq!(header_agent_bin(&headers), None);
+        headers.insert("x-verne-agent-bin".to_string(), String::new());
+        assert_eq!(header_agent_bin(&headers), None);
+        headers.insert(
+            "x-verne-agent-bin".to_string(),
+            "/Users/me/.local/bin/codex".to_string(),
+        );
+        assert_eq!(header_agent_bin(&headers).as_deref(), Some("/Users/me/.local/bin/codex"));
     }
 }
