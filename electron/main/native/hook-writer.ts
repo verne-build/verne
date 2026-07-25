@@ -36,6 +36,7 @@ curl -s -X POST "http://127.0.0.1:${port}/hook" \\
   -H "X-Verne-Event: $1" \\
   -H "X-Verne-Agent-Id: $VERNE_AGENT_ID" \\
   -H "X-Verne-Agent-Type: $AGENT_TYPE" \\
+  -H "X-Verne-Agent-Bin: $(command -v "$AGENT_TYPE" 2>/dev/null)" \\
   -H "X-Verne-Tab-Id: $VERNE_TAB_ID" \\
   -H "X-Verne-Source: $SOURCE" \\
   -H "X-Verne-Seq: $SEQ" \\

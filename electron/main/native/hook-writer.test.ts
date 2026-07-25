@@ -32,6 +32,15 @@ describe("writeNotifyScript", () => {
     const mode = statSync(path).mode;
     expect(mode & 0o111).toBeGreaterThan(0); // executable bits set
   });
+
+  it("reports the agent's own resolved binary path as a header", () => {
+    const dir = mkdtempSync(join(tmpdir(), "verne-hook-"));
+    const path = writeNotifyScript(dir, 9610, "test-secret-abc");
+    const content = readFileSync(path, "utf8");
+    // Resolved inside the PTY/login-shell env the agent is actually running in —
+    // main cannot resolve this reliably itself (a GUI app's PATH lacks ~/.local/bin).
+    expect(content).toContain('X-Verne-Agent-Bin: $(command -v "$AGENT_TYPE" 2>/dev/null)');
+  });
 });
 
 describe("ensureHooksForClaude / removeHooksForClaude", () => {
