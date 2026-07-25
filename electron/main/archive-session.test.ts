@@ -40,7 +40,7 @@ interface Harness {
   calls: string[];
   tabs: Map<string, Tab>;
   blobs: Map<string, ArchivedSnapshotBlob>;
-  plans: Array<{ tab: Tab; startupCommand?: string }>;
+  plans: Array<{ tab: Tab; launchOverride?: string }>;
 }
 
 function makeHarness(opts: {
@@ -57,7 +57,7 @@ function makeHarness(opts: {
   const tabs = new Map<string, Tab>();
   tabs.set("t1", opts.initialTab ?? baseTab());
   const blobs = new Map<string, ArchivedSnapshotBlob>();
-  const plans: Array<{ tab: Tab; startupCommand?: string }> = [];
+  const plans: Array<{ tab: Tab; launchOverride?: string }> = [];
   if (opts.seedBlob) {
     blobs.set("t1", {
       cols: 80, rows: 24, cursorRow: 0, cursorCol: 0, capturedAt: 12345,
@@ -119,9 +119,9 @@ function makeHarness(opts: {
         blobs.clear(); for (const [k, v] of tx.blobs) blobs.set(k, v);
       }
     },
-    buildPlan: (tab, startupCommand) => {
-      plans.push({ tab, startupCommand });
-      return { tabId: tab.id, startupCommand };
+    buildPlan: (tab, launchOverride) => {
+      plans.push({ tab, launchOverride });
+      return { tabId: tab.id, launchOverride };
     },
     now: () => 12345,
   };
@@ -211,32 +211,32 @@ describe("unarchive", () => {
     return baseTab({ archivedAt: 12345, ...overrides });
   }
 
-  it("resume + claude + session id passes the resume startupCommand", async () => {
+  it("resume + claude + session id passes the resume launchOverride", async () => {
     const { ops, plans } = makeHarness({
       initialTab: archivedTab({ lastAgentType: "claude", lastAgentSessionId: "abc-123" }),
       seedBlob: true,
     });
     await ops.unarchive("t1", true);
     expect(plans).toHaveLength(1);
-    expect(plans[0].startupCommand).toBe("claude --resume 'abc-123'");
+    expect(plans[0].launchOverride).toBe("claude --resume 'abc-123'");
   });
 
-  it("fresh shell passes undefined startupCommand", async () => {
+  it("fresh shell passes undefined launchOverride", async () => {
     const { ops, plans } = makeHarness({
       initialTab: archivedTab({ lastAgentType: "claude", lastAgentSessionId: "abc-123" }),
       seedBlob: true,
     });
     await ops.unarchive("t1", false);
-    expect(plans[0].startupCommand).toBeUndefined();
+    expect(plans[0].launchOverride).toBeUndefined();
   });
 
   it("resume with an unknown agent falls back to a fresh shell (undefined)", async () => {
     const { ops, plans } = makeHarness({
-      initialTab: archivedTab({ lastAgentType: "codex", lastAgentSessionId: "abc-123" }),
+      initialTab: archivedTab({ lastAgentType: "definitely-not-an-agent", lastAgentSessionId: "abc-123" }),
       seedBlob: true,
     });
     await ops.unarchive("t1", true);
-    expect(plans[0].startupCommand).toBeUndefined();
+    expect(plans[0].launchOverride).toBeUndefined();
   });
 
   it("resume with a missing session id falls back to a fresh shell (undefined)", async () => {
@@ -245,7 +245,7 @@ describe("unarchive", () => {
       seedBlob: true,
     });
     await ops.unarchive("t1", true);
-    expect(plans[0].startupCommand).toBeUndefined();
+    expect(plans[0].launchOverride).toBeUndefined();
   });
 
   it("spawns before deleting archive metadata, clears archived_at, deletes blob", async () => {

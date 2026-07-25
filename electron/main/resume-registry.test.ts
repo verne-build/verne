@@ -6,8 +6,12 @@ describe("resumeCommand", () => {
     expect(resumeCommand("claude", "abc-123")).toBe("claude --resume 'abc-123'");
   });
 
+  it("builds the interactive codex resume command (not `codex exec resume`)", () => {
+    expect(resumeCommand("codex", "abc-123")).toBe("codex resume 'abc-123'");
+  });
+
   it("returns undefined for an unknown agent type", () => {
-    expect(resumeCommand("codex", "abc-123")).toBeUndefined();
+    expect(resumeCommand("definitely-not-an-agent", "abc-123")).toBeUndefined();
   });
 
   it("returns undefined when the agent type is missing", () => {
@@ -26,10 +30,11 @@ describe("resumeCommand", () => {
 describe("canResumeAgent", () => {
   it("is true for a registered agent with a session id", () => {
     expect(canResumeAgent("claude", "abc-123")).toBe(true);
+    expect(canResumeAgent("codex", "abc-123")).toBe(true);
   });
 
   it("is false for an unknown agent", () => {
-    expect(canResumeAgent("codex", "abc-123")).toBe(false);
+    expect(canResumeAgent("definitely-not-an-agent", "abc-123")).toBe(false);
   });
 
   it("is false when the session id is missing", () => {
