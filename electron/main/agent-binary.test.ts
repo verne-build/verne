@@ -63,4 +63,46 @@ describe("resolveAgentBinary", () => {
     resolveAgentBinary(d);
     expect(probes).toBe(1);
   });
+
+  it("does not call loginShellPath when reportedBin resolves", () => {
+    let loginCalls = 0;
+    const d = deps({
+      reportedBin: "/Users/me/.local/bin/codex",
+      isExecutable: () => true,
+      probe: () => true,
+      loginShellPath: () => { loginCalls++; return "/usr/bin"; },
+    });
+    expect(resolveAgentBinary(d)).toBe("/Users/me/.local/bin/codex");
+    expect(loginCalls).toBe(0);
+  });
+
+  it("calls loginShellPath when earlier layers miss", () => {
+    let loginCalls = 0;
+    const d = deps({
+      reportedBin: null,
+      env: { PATH: "/usr/bin" },
+      isExecutable: (p) => p === "/Users/me/.local/bin/codex",
+      probe: () => true,
+      loginShellPath: () => {
+        loginCalls++;
+        return "/Users/me/.local/bin:/usr/bin";
+      },
+    });
+    expect(resolveAgentBinary(d)).toBe("/Users/me/.local/bin/codex");
+    expect(loginCalls).toBe(1);
+  });
+
+  it("does not cache a miss when reportedBin was absent, allowing later calls with reportedBin to succeed", () => {
+    // First call without reportedBin → no resolution, miss is NOT cached
+    const d1 = deps({ reportedBin: null });
+    expect(resolveAgentBinary(d1)).toBeNull();
+
+    // Second call with reportedBin → should find it (miss was not cached)
+    const d2 = deps({
+      reportedBin: "/Users/me/.local/bin/codex",
+      isExecutable: (p) => p === "/Users/me/.local/bin/codex",
+      probe: () => true,
+    });
+    expect(resolveAgentBinary(d2)).toBe("/Users/me/.local/bin/codex");
+  });
 });

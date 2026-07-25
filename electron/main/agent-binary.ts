@@ -32,31 +32,70 @@ export function clearAgentBinaryCache(): void {
   cache.clear();
 }
 
-function candidates(deps: AgentBinaryDeps): string[] {
-  const out: string[] = [];
-  if (deps.reportedBin) out.push(deps.reportedBin);
-  const dirsFrom = (path: string | null | undefined) =>
-    (path ?? "").split(":").filter(Boolean);
-  for (const dir of dirsFrom(deps.env.PATH)) out.push(join(dir, deps.binaryName));
-  for (const dir of dirsFrom(deps.loginShellPath())) out.push(join(dir, deps.binaryName));
-  out.push(join(deps.homedir(), ".local", "bin", deps.binaryName));
-  for (const dir of KNOWN_DIRS) out.push(join(dir, deps.binaryName));
-  return out;
-}
-
 export function resolveAgentBinary(deps: AgentBinaryDeps): string | null {
   const cached = cache.get(deps.binaryName);
   if (cached !== undefined) return cached;
-  let found: string | null = null;
+
   const seen = new Set<string>();
-  for (const candidate of candidates(deps)) {
-    if (seen.has(candidate)) continue;
+
+  const check = (candidate: string): boolean => {
+    if (seen.has(candidate)) return false;
     seen.add(candidate);
-    if (!deps.isExecutable(candidate)) continue;
-    if (!deps.probe(candidate)) continue;
-    found = candidate;
-    break;
+    return deps.isExecutable(candidate) && deps.probe(candidate);
+  };
+
+  const checkDirs = (path: string | null | undefined): string | null => {
+    const dirs = (path ?? "").split(":").filter(Boolean);
+    for (const dir of dirs) {
+      const candidate = join(dir, deps.binaryName);
+      if (check(candidate)) return candidate;
+    }
+    return null;
+  };
+
+  let found: string | null = null;
+
+  // Layer 1: hook-reported path (most authoritative)
+  if (deps.reportedBin) {
+    if (check(deps.reportedBin)) {
+      found = deps.reportedBin;
+    }
   }
-  cache.set(deps.binaryName, found);
+
+  // Layer 2: env.PATH
+  if (!found) {
+    found = checkDirs(deps.env.PATH);
+  }
+
+  // Layer 3: login shell PATH (called lazily only if earlier layers miss)
+  if (!found) {
+    found = checkDirs(deps.loginShellPath());
+  }
+
+  // Layer 4: ~/.local/bin
+  if (!found) {
+    const candidate = join(deps.homedir(), ".local", "bin", deps.binaryName);
+    if (check(candidate)) {
+      found = candidate;
+    }
+  }
+
+  // Layer 5: known install dirs
+  if (!found) {
+    for (const dir of KNOWN_DIRS) {
+      const candidate = join(dir, deps.binaryName);
+      if (check(candidate)) {
+        found = candidate;
+        break;
+      }
+    }
+  }
+
+  // Only cache if we found something, or if reportedBin was supplied and failed
+  // This prevents a miss without reportedBin from suppressing a later call with reportedBin
+  if (found !== null || (deps.reportedBin !== undefined && deps.reportedBin !== null)) {
+    cache.set(deps.binaryName, found);
+  }
+
   return found;
 }
