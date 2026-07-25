@@ -73,6 +73,15 @@ fn hook_display_title(agent_type: &str, event: &str, payload: &serde_json::Value
     if config.strategy == TitleStrategy::Osc {
         return None;
     }
+    // Generated strategies: the title comes from Electron main, which shells out
+    // to the agent CLI. Emitting a hook title here would flash the raw prompt
+    // before the generated one lands — the exact behaviour this replaces.
+    if matches!(
+        config.strategy,
+        TitleStrategy::Generated | TitleStrategy::GeneratedThenHookPrompt
+    ) {
+        return None;
+    }
     if !config.prompt_events.iter().any(|candidate| candidate == event) {
         return None;
     }
@@ -432,13 +441,12 @@ mod tests {
 
     #[test]
     fn extracts_codex_prompt_title() {
+        // codex now uses generated_then_hook_prompt strategy, so hook_display_title
+        // returns None — the title comes from Electron main instead.
         let payload = serde_json::json!({
             "prompt": "  create   a docs page\nabout Verne  "
         });
-        assert_eq!(
-            hook_display_title("codex", "UserPromptSubmit", &payload).as_deref(),
-            Some("create a docs page about Verne")
-        );
+        assert_eq!(hook_display_title("codex", "UserPromptSubmit", &payload), None);
     }
 
     #[test]
@@ -464,5 +472,13 @@ mod tests {
     fn ignores_osc_only_agents() {
         let payload = serde_json::json!({ "prompt": "keep me out of the title" });
         assert_eq!(hook_display_title("claude", "UserPromptSubmit", &payload), None);
+    }
+
+    #[test]
+    fn generated_strategy_suppresses_hook_title() {
+        // codex declares generated_then_hook_prompt, so the raw prompt must NOT
+        // become the live title — main supplies the title instead.
+        let payload = serde_json::json!({ "prompt": "add a retry to the uploader" });
+        assert_eq!(hook_display_title("codex", "UserPromptSubmit", &payload), None);
     }
 }

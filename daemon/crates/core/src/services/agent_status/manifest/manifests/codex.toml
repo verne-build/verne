@@ -3,7 +3,7 @@ version = "2026.06.11"
 updated_at = "2026-06-11"
 
 [title]
-strategy = "hook_prompt"
+strategy = "generated_then_hook_prompt"
 prompt_events = ["UserPromptSubmit"]
 prompt_fields = ["prompt", "message", "message.text", "message.content", "input", "text"]
 max_length = 120
