@@ -194,6 +194,12 @@ CREATE TABLE recent_files (
     db.exec("ALTER TABLE tabs ADD COLUMN archived_at INTEGER;");
   }
 
+  // tabs: generated_title — one-shot agent-generated session title; non-null
+  // also means "already attempted" (freezes it to one title per session).
+  if (!hasColumn("tabs", "generated_title")) {
+    db.exec("ALTER TABLE tabs ADD COLUMN generated_title TEXT;");
+  }
+
   // tab_snapshots: not gated behind the tabs.archived_at check — an interrupted
   // older migration could have added one without the other.
   db.exec(`CREATE TABLE IF NOT EXISTS tab_snapshots (

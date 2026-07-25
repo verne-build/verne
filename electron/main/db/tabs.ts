@@ -4,7 +4,7 @@ import { getDirectory } from "./directories";
 
 // Columns in db.rs table order.
 const TAB_COLS =
-  "id, directory_id, label, cwd, sort_order, created_at, last_agent_type, last_agent_session_id, last_agent_state, user_renamed, scope_pinned_by_user, launch_command, archived_at";
+  "id, directory_id, label, cwd, sort_order, created_at, last_agent_type, last_agent_session_id, last_agent_state, user_renamed, scope_pinned_by_user, launch_command, archived_at, generated_title";
 
 type TabRow = {
   id: string;
@@ -20,6 +20,7 @@ type TabRow = {
   scope_pinned_by_user: number;
   launch_command: string | null;
   archived_at: number | null;
+  generated_title: string | null;
 };
 
 function rowToTab(row: TabRow): Tab {
@@ -38,12 +39,13 @@ function rowToTab(row: TabRow): Tab {
   if (row.last_agent_state != null) tab.lastAgentState = row.last_agent_state as AgentState;
   if (row.launch_command != null) tab.launchCommand = row.launch_command;
   if (row.archived_at != null) tab.archivedAt = row.archived_at;
+  if (row.generated_title != null) tab.generatedTitle = row.generated_title;
   return tab;
 }
 
 export function insertTab(db: DatabaseSync, tab: Tab): void {
   db.prepare(
-    `INSERT INTO tabs (${TAB_COLS}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    `INSERT INTO tabs (${TAB_COLS}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
   ).run(
     tab.id,
     tab.directoryId,
@@ -58,11 +60,18 @@ export function insertTab(db: DatabaseSync, tab: Tab): void {
     tab.scopePinnedByUser ? 1 : 0,
     tab.launchCommand ?? null,
     tab.archivedAt ?? null,
+    tab.generatedTitle ?? null,
   );
 }
 
 export function setTabArchivedAt(db: DatabaseSync, id: string, archivedAt: number | null): void {
   db.prepare("UPDATE tabs SET archived_at = ? WHERE id = ?").run(archivedAt, id);
+}
+
+/** Write the one-shot generated title. Only ever called when the column is
+ *  still NULL (see session-title.ts) — non-null is the freeze flag. */
+export function setTabGeneratedTitle(db: DatabaseSync, id: string, title: string): void {
+  db.prepare("UPDATE tabs SET generated_title = ? WHERE id = ?").run(title, id);
 }
 
 export function getTabs(db: DatabaseSync, directoryId?: string | null): Tab[] {

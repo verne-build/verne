@@ -20,6 +20,7 @@ import {
   setTabScopePinned,
   getTabScopePinned,
   setTabArchivedAt,
+  setTabGeneratedTitle,
 } from "./tabs";
 import type { Tab } from "../../../src/types/shared";
 
@@ -247,6 +248,14 @@ describe("tabs", () => {
     expect(getTab(db, "t1")!.archivedAt).toBe(5000);
     setTabArchivedAt(db, "t1", null);
     expect(getTab(db, "t1")!.archivedAt).toBeUndefined();
+  });
+
+  it("round-trips a generated title", () => {
+    const db = tmpDb();
+    insertTab(db, mkTab());
+    expect(getTab(db, "t1")?.generatedTitle).toBeUndefined();
+    setTabGeneratedTitle(db, "t1", "Retry the uploader");
+    expect(getTab(db, "t1")?.generatedTitle).toBe("Retry the uploader");
   });
 
   it("scope pin round-trips and defaults false", () => {

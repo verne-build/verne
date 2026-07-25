@@ -217,6 +217,19 @@ pub fn init_db(conn: &Connection) {
             .unwrap();
     }
 
+    // tabs.generated_title — one-shot agent-generated session title (see the
+    // `generated*` TitleStrategy). Non-null also means "already attempted",
+    // which is what freezes it to exactly one title per session.
+    let has_generated_title: bool = conn
+        .prepare("SELECT COUNT(*) FROM pragma_table_info('tabs') WHERE name='generated_title'")
+        .and_then(|mut s| s.query_row([], |r| r.get::<_, i64>(0)))
+        .map(|c| c > 0)
+        .unwrap_or(false);
+    if !has_generated_title {
+        conn.execute_batch("ALTER TABLE tabs ADD COLUMN generated_title TEXT;")
+            .unwrap();
+    }
+
     // tab_snapshots: not gated behind the tabs.archived_at check above — an
     // interrupted older migration could have added one without the other.
     conn.execute_batch(

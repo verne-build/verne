@@ -385,6 +385,9 @@ export interface Tab {
   launchCommand?: string;
   /** Set when this tab's session was archived; ms epoch of the archive action. */
   archivedAt?: number;
+  /** One-shot agent-generated session title. Non-null also means "already
+   *  attempted" — this is what freezes it to one title per session. */
+  generatedTitle?: string;
   /** Derived (never persisted): true when an archived snapshot can be restored. */
   resumeAvailable?: boolean;
 }
