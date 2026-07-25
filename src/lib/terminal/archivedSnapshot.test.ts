@@ -5,6 +5,7 @@ import {
   gridStoreFromArchivedSnapshot,
   validateArchivedSnapshot,
   isCurrentArchivedRead,
+  isPartialArchivedSnapshot,
 } from './archivedSnapshot';
 import type { ArchivedSnapshotBlob, GridSnapshotDump, GridSnapshotRow } from '../../types/shared';
 
@@ -176,6 +177,18 @@ describe('validateArchivedSnapshot', () => {
     const bad = fixture();
     bad.historyRows = [{ ...textRow(0, 'oldest'), line: 99 }, textRow(1, 'mid', true), textRow(2, 'z')];
     expect(() => validateArchivedSnapshot(bad)).toThrow('archived snapshot unavailable');
+  });
+});
+
+describe('isPartialArchivedSnapshot', () => {
+  it('flags an alt-screen capture as final-screen-only', () => {
+    const dump = fixture();
+    dump.modes = { ...dump.modes, altScreen: true };
+    expect(isPartialArchivedSnapshot(dump)).toBe(true);
+  });
+
+  it('does not flag a normal-screen capture', () => {
+    expect(isPartialArchivedSnapshot(fixture())).toBe(false);
   });
 });
 

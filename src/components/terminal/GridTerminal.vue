@@ -17,6 +17,7 @@ import {
   decodeArchivedSnapshot,
   gridStoreFromArchivedSnapshot,
   isCurrentArchivedRead,
+  isPartialArchivedSnapshot,
 } from '../../lib/terminal/archivedSnapshot';
 import { createRenderer, makeCanvas2D, type RendererOptions } from '../../lib/terminal/createRenderer';
 import { cellWidthFor, cellHeightFor, gridSizeFor } from '../../lib/terminal/metrics';
@@ -48,7 +49,12 @@ const snapshotUnavailable = ref(false);
 let disposed = false;
 // Emitted after each applySize with the pane's grid size, so the workspace can
 // keep backgrounded single-pane tabs sized to the viewport (no reactivation jump).
-const emit = defineEmits<{ resized: [cols: number, rows: number] }>();
+// `archivedPartial` fires once per archived mount: true when the capture only
+// holds the final screen (alt-screen TUI), so the host can label it.
+const emit = defineEmits<{
+  resized: [cols: number, rows: number];
+  archivedPartial: [partial: boolean];
+}>();
 
 const container = ref<HTMLDivElement | null>(null);
 const canvas = ref<HTMLCanvasElement | null>(null);
@@ -371,6 +377,9 @@ function onContextLost(e: Event): void {
  *  never seeds the wrong pane. */
 async function mountArchived(c: HTMLCanvasElement): Promise<void> {
   const requestedTabId = props.archivedTabId;
+  // Emitted unconditionally up front so the host never has to reset it: every
+  // archived mount lands on a definite value, including the failure paths below.
+  emit('archivedPartial', false);
   let blob;
   try {
     blob = await useRpc().request.tabSnapshotRead({ id: requestedTabId! });
@@ -391,6 +400,8 @@ async function mountArchived(c: HTMLCanvasElement): Promise<void> {
     return;
   }
   if (!isCurrentArchivedRead(requestedTabId, props.archivedTabId, disposed)) return;
+
+  emit('archivedPartial', isPartialArchivedSnapshot(dump));
 
   const store = gridStoreFromArchivedSnapshot(dump);
   const transport = new StaticGridTransport(store);

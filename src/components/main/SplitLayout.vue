@@ -16,6 +16,10 @@ const props = defineProps<{
   focusedSessionId?: string;
   multi: boolean;
   reserveRightOverlay?: boolean;
+  /** Reserve the top-left window-control + toggle/search strip's overlay slot.
+   *  Forwarded only to the FIRST child at each level, so exactly the top-left
+   *  pane pads — the strip overlaps nothing else. */
+  reserveLeftOverlay?: boolean;
 }>();
 
 const store = useWorkspaceStore();
@@ -39,6 +43,7 @@ function onLayout(sizes: number[]) {
     :focused-session-id="focusedSessionId"
     :multi="multi"
     :reserve-right-overlay="reserveRightOverlay"
+    :reserve-left-overlay="reserveLeftOverlay"
   />
   <ResizablePanelGroup
     v-else
@@ -62,6 +67,7 @@ function onLayout(sizes: number[]) {
           :focused-session-id="focusedSessionId"
           :multi="multi"
           :reserve-right-overlay="reserveRightOverlay"
+          :reserve-left-overlay="reserveLeftOverlay && i === 0"
         />
       </ResizablePanel>
     </template>

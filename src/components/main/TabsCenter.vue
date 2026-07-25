@@ -2,6 +2,7 @@
 import { computed, inject, onMounted, onUnmounted, type Ref } from "vue";
 import { Folder, PanelRight } from "@lucide/vue";
 import { ask } from "@/platform";
+import { sessionEndAction, shouldConfirmArchive } from "@/lib/sessionEnd";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useRpc } from "@/composables/useRpc";
 import { useShortcuts } from "@/composables/useShortcuts";
@@ -43,18 +44,32 @@ const welcome = computed(() =>
   }),
 );
 
-async function confirmKill(id: string | undefined) {
+// Archive replaces "close" for a live session — same seam as the sidebar card and
+// the pane menu. Delete only once nothing is live (archived, or the PTY exited).
+async function endSession(id: string | undefined) {
   if (!id) return;
-  const running = await rpc.request.tabsHasRunningChild({ id }).catch(() => false);
-  if (
-    running &&
-    !(await ask("Close Session?", {
-      detail: "A process is still running in this session.",
-      confirmLabel: "Close",
-    }))
-  )
+  const tab = store.sessionsList("all").find((row) => row.tab.id === id)?.tab;
+  const action = sessionEndAction({
+    archived: tab?.archivedAt != null,
+    exited: store.sessionLifecycle.get(id) === "exited",
+  });
+  if (action === "delete") {
+    await store.closeSession(id);
     return;
-  await store.closeSession(id);
+  }
+  const state = store.tabRuntime.get(id)?.agentState ?? tab?.lastAgentState;
+  if (shouldConfirmArchive(state)) {
+    const ok = await ask("Archive Session?", {
+      detail: "A process is still running. Archiving stops it and keeps a read-only terminal snapshot.",
+      confirmLabel: "Archive",
+    });
+    if (!ok) return;
+  }
+  try {
+    await store.archiveSession(id);
+  } catch (e) {
+    window.alert(`Failed to archive session: ${e}`);
+  }
 }
 
 function onCloseActiveTerminal() {
@@ -62,11 +77,11 @@ function onCloseActiveTerminal() {
   if (!id || !dirId.value) return;
   const arr = store.arrangementFor(dirId.value);
   if (arr && paneCount(arr.layout) > 1) store.removeFromView(id); // never kills
-  else void confirmKill(id); // solo: ⌘W keeps meaning "close" — confirm + kill
+  else void endSession(id); // solo: ⌘W now archives (or deletes if nothing is live)
 }
 
 function onKillActiveSession() {
-  void confirmKill(store.focusedSessionId);
+  void endSession(store.focusedSessionId);
 }
 
 onMounted(() => {
@@ -120,7 +135,7 @@ onUnmounted(() => {
         v-else-if="store.pendingPicker"
         class="flex flex-1 min-h-0 flex-col"
       >
-        <div class="flex h-11.5 shrink-0 items-center gap-1.5 overflow-hidden border-b bg-sidebar pl-4 text-xs text-muted-foreground">
+        <div class="drag-region flex h-11.5 shrink-0 items-center gap-1.5 overflow-hidden border-b bg-sidebar pl-4 text-xs text-muted-foreground">
           <Folder aria-hidden="true" class="size-4 text-muted-foreground" />
           <span class="truncate text-muted-foreground">{{ pickerDirectoryName }}</span>
           <span aria-hidden="true" class="text-muted-foreground">/</span>
@@ -140,6 +155,7 @@ onUnmounted(() => {
         :focused-session-id="store.focusedSessionId"
         :multi="paneCount(arrangement.layout) > 1"
         :reserve-right-overlay="showRightOverlay"
+        :reserve-left-overlay="!!leftCollapsed"
       />
       <!-- A selected scope without an arrangement intentionally reaches the
            picker branch above; keep this fallback for incomplete hydration. -->

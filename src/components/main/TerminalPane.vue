@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import { SquareTerminal, SplitSquareHorizontal, PanelRight, PanelLeft, PanelBottom, PanelTop, X, RotateCw, Play } from "@lucide/vue";
+// Columns2 (not SplitSquareHorizontal): the latter's outline is inset to 18x14,
+// so it renders visibly shorter than the 18x18 icons beside it in the title bar.
+import { SquareTerminal, Columns2, PanelRight, PanelLeft, PanelBottom, PanelTop, X, RotateCw, Play } from "@lucide/vue";
 import { ask } from "@/platform";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useRpc } from "@/composables/useRpc";
@@ -12,6 +14,7 @@ import { useShortcuts } from "@/composables/useShortcuts";
 import { agentIconSurfaceForTheme, getAgentIconForSurface } from "@/composables/useAgentIcon";
 import { useTheme } from "@/composables/useTheme";
 import { collectPaneIds } from "@/lib/paneLayout";
+import { sessionEndAction, sessionEndLabel, shouldConfirmArchive } from "@/lib/sessionEnd";
 import GridTerminal from "@/components/terminal/GridTerminal.vue";
 import {
   getDroppedPaths,
@@ -50,6 +53,10 @@ const props = defineProps<{
   multi: boolean;
   /** Reserve the collapsed right-panel re-expand control's overlay slot. */
   reserveRightOverlay?: boolean;
+  /** This is the top-left pane and the left panel is collapsed, so the title bar
+   *  must clear the macOS traffic lights + the persistent toggle/search strip
+   *  (App.vue anchors it at pl-[78px] + two icon-xs buttons = 128px). */
+  reserveLeftOverlay?: boolean;
 }>();
 
 const store = useWorkspaceStore();
@@ -74,6 +81,11 @@ const isActive = computed(() => props.multi && props.focusedSessionId === props.
 const isExited = computed(() => store.sessionLifecycle.get(props.paneId) === "exited");
 // Archived: render the frozen snapshot read-only; never spawn a PTY.
 const isArchived = computed(() => tab.value?.archivedAt != null);
+// Set from the archived GridTerminal: the capture only holds the final screen
+// (session ended on the alt screen). No reset watch here — the archived
+// GridTerminal is keyed on paneId+archivedAt and emits this on EVERY archived
+// mount (false unless known partial), so a remount can't leave a stale true.
+const snapshotPartial = ref(false);
 
 function pastePaths(paths: string[]) {
   const text = formatPathsForShell(paths);
@@ -130,6 +142,12 @@ const agentType = computed(() => {
 
 const foregroundCommand = computed(() => store.tabRuntime.get(props.paneId)?.foregroundCommand);
 
+// Live agent state (falls back to the persisted last state) — gates the archive
+// confirm so only a mid-work session prompts.
+const agentState = computed(
+  () => store.tabRuntime.get(props.paneId)?.agentState ?? tab.value?.lastAgentState,
+);
+
 const panelLabel = computed(() => {
   const agent = agentType.value;
   if (agent) return agent.charAt(0).toUpperCase() + agent.slice(1);
@@ -150,9 +168,16 @@ const agentIconSrc = computed(() =>
 const otherSessions = computed(() => {
   const arr = store.arrangementFor(props.scopeId);
   const inView = new Set(arr ? collectPaneIds(arr.layout) : []);
+  // Archived sessions are excluded: splitting one in would put a frozen,
+  // read-only snapshot in a pane meant for a live PTY.
   return store
     .sessionsList("all")
-    .filter((row) => row.directory.id === props.scopeId && !inView.has(row.tab.id));
+    .filter(
+      (row) =>
+        row.directory.id === props.scopeId &&
+        !inView.has(row.tab.id) &&
+        row.tab.archivedAt == null,
+    );
 });
 
 // tabsSessionId → ensure_tab_session is idempotent (returns the existing
@@ -233,16 +258,29 @@ function runningProcessLabel(): string {
   return foregroundCommand.value || "a process";
 }
 
-async function closeSession() {
-  const hasChild = await rpc.request.tabsHasRunningChild({ id: props.paneId }).catch(() => false);
-  if (hasChild) {
-    const ok = await ask("Close Session?", {
-      detail: `${runningProcessLabel()} is still running. If you close the session the process will be killed.`,
-      confirmLabel: "Close",
+// Archive replaces "close" for a live session; delete only once nothing is live.
+// Shared with the sidebar card + ⌘W so the three surfaces can't drift.
+const endAction = computed(() =>
+  sessionEndAction({ archived: isArchived.value, exited: isExited.value }),
+);
+
+async function endSession() {
+  if (endAction.value === "delete") {
+    await store.closeSession(props.paneId);
+    return;
+  }
+  if (shouldConfirmArchive(agentState.value)) {
+    const ok = await ask("Archive Session?", {
+      detail: `${runningProcessLabel()} is still running. Archiving stops it and keeps a read-only terminal snapshot.`,
+      confirmLabel: "Archive",
     });
     if (!ok) return;
   }
-  await store.closeSession(props.paneId);
+  try {
+    await store.archiveSession(props.paneId);
+  } catch (e) {
+    window.alert(`Failed to archive session: ${e}`);
+  }
 }
 
 onMounted(() => {
@@ -263,21 +301,26 @@ onUnmounted(() => {
   <div class="flex flex-col h-full min-h-0" @focusin="focusPane">
     <!-- Title bar: label + split / close actions -->
     <div
-      class="flex items-center pl-4 h-11.5 text-xs bg-sidebar border-b overflow-hidden shrink-0 gap-1.5"
+      class="drag-region flex items-center h-11.5 text-xs bg-sidebar border-b overflow-hidden shrink-0 gap-1.5"
       :class="[
         isActive ? 'border-border text-foreground' : 'border-border text-muted-foreground',
         reserveRightOverlay ? 'pr-9' : 'pr-1',
+        reserveLeftOverlay ? 'pl-[133px]' : 'pl-4',
       ]"
     >
+      <!-- Separates the window controls + toggle/search strip (an App.vue overlay
+           that floats over this bar) from this session's own identity, so the two
+           groups don't read as one run of icons. -->
+      <span v-if="reserveLeftOverlay" class="h-4 w-px shrink-0 bg-border mr-1" aria-hidden="true" />
       <img v-if="agentIconSrc" :src="agentIconSrc" class="size-3.5 shrink-0" :alt="panelLabel" />
       <SquareTerminal v-else class="size-3.5 shrink-0" />
-      <span class="truncate flex-1" :class="isActive ? 'text-foreground' : ''">{{ panelLabel }}</span>
+      <span class="truncate flex-1 leading-none" :class="isActive ? 'text-foreground' : ''">{{ panelLabel }}</span>
       <Button
         v-if="isArchived && tab?.resumeAvailable"
         data-no-drag
         size="xs"
         variant="ghost"
-        class="text-primary hover:text-primary"
+        class="text-muted-foreground"
         title="Resume agent (--resume)"
         @click="unarchive(true)"
       >
@@ -287,7 +330,7 @@ onUnmounted(() => {
       <DropdownMenu>
         <DropdownMenuTrigger as-child>
           <Button data-no-drag size="icon-xs" variant="ghost" class="text-muted-foreground" title="Split">
-            <SplitSquareHorizontal class="size-3.5" />
+            <Columns2 class="size-3.5" />
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" size="sm">
@@ -333,6 +376,40 @@ onUnmounted(() => {
       </Button>
     </div>
 
+    <!-- Archived banner: sits in flow between the panel heading and the terminal,
+         so it never covers the frozen screen. The label's tooltip carries the
+         capture caveat when the session ended inside a full-screen TUI — alt
+         screen keeps its scroll history in the app, never in the terminal, so
+         only the final screen was captured and Resume is the only way back to
+         the rest. -->
+    <div
+      v-if="isArchived"
+      class="flex items-center justify-center gap-2 h-8 shrink-0 px-2 border-b border-border bg-sidebar text-xs"
+    >
+      <span
+        class="text-muted-foreground"
+        :title="
+          snapshotPartial
+            ? 'This session ended inside a full-screen app that manages its own scrollback, so the terminal only ever held the final screen. Resume to get the full history back.'
+            : undefined
+        "
+      >
+        This session is archived
+      </span>
+      <Button
+        v-if="tab?.resumeAvailable"
+        data-no-drag
+        size="xs"
+        variant="outline"
+        class="h-5.5 px-2 gap-1"
+        title="Resume agent (--resume)"
+        @click="unarchive(true)"
+      >
+        <Play class="size-3" />
+        Resume Agent
+      </Button>
+    </div>
+
     <ContextMenu>
       <ContextMenuTrigger as-child>
         <div
@@ -344,7 +421,15 @@ onUnmounted(() => {
           @dragleave.capture="onDragLeave"
           @drop.capture="onDrop"
         >
-          <div ref="container" :data-session-id="sessionId" class="absolute inset-0 overflow-hidden">
+          <!-- Archived grid is dimmed as a passive "frozen, read-only" signal.
+               Applied to the grid container only — the overlays below are siblings
+               so their label + resume controls stay at full contrast. -->
+          <div
+            ref="container"
+            :data-session-id="sessionId"
+            class="absolute inset-0 overflow-hidden"
+            :class="isArchived ? 'opacity-70' : ''"
+          >
             <GridTerminal
               v-if="isArchived"
               ref="gridRef"
@@ -352,6 +437,7 @@ onUnmounted(() => {
               :archived-tab-id="paneId"
               :cwd="tab?.cwd"
               :auto-focus="false"
+              @archived-partial="(partial: boolean) => (snapshotPartial = partial)"
             />
             <GridTerminal
               v-else-if="sessionId"
@@ -386,9 +472,10 @@ onUnmounted(() => {
               Session exited — click to restart
             </span>
           </button>
-          <!-- Floating resume affordance for archived agents (mirrors the heading
-               Resume button). Overlay-only so scroll/select/copy underneath are
-               unaffected; offset to clear the horizontal scrollbar. -->
+          <!-- Corner resume affordance for archived agents, mirroring the banner
+               button so it stays reachable wherever the eye is. Overlay-only so
+               scroll/select/copy underneath are unaffected; offset to clear the
+               horizontal scrollbar. -->
           <button
             v-if="isArchived && tab?.resumeAvailable"
             type="button"
@@ -398,7 +485,7 @@ onUnmounted(() => {
             @click="unarchive(true)"
           >
             <Play class="size-3.5" />
-            Resume agent
+            Resume Agent
           </button>
         </div>
       </ContextMenuTrigger>
@@ -426,7 +513,9 @@ onUnmounted(() => {
           Resume Agent
         </ContextMenuItem>
         <ContextMenuSeparator />
-        <ContextMenuItem variant="destructive" @select="closeSession">Close Session</ContextMenuItem>
+        <ContextMenuItem variant="destructive" @select="endSession">
+          {{ sessionEndLabel(endAction) }}
+        </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
   </div>

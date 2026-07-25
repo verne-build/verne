@@ -100,6 +100,16 @@ export async function decodeArchivedSnapshot(
   }
 }
 
+/** True when the snapshot only holds the final screen, not the session's real
+ *  history. A full-screen TUI (claude, opencode, vim) runs on the ALT SCREEN,
+ *  whose grid has no scrollback — and its own scroll history never reaches the
+ *  terminal at all, it repaints one viewport-sized frame and scrolls internally.
+ *  So an alt-screen capture is inherently partial and no amount of grid capture
+ *  can recover the rest; the host labels it and points at Resume. */
+export function isPartialArchivedSnapshot(dump: GridSnapshotDump): boolean {
+  return dump.modes?.altScreen === true;
+}
+
 /** Stale-tab guard for the async archived read: the still-mounted tab must match
  *  the tab the read was started for, and the component must not have been
  *  disposed. Called after BOTH the IPC read and the decode await so a fast tab
