@@ -5,7 +5,6 @@ import {
   ArchiveRestore,
   Columns2,
   Folder,
-  FolderInput,
   GitBranch,
   Pencil,
   RotateCcw,
@@ -24,6 +23,7 @@ import type { DisplayState } from "@/lib/agentStatus";
 import type { SessionRow } from "@/lib/sessionsView";
 import { collectPaneIds, paneCount } from "@/lib/paneLayout";
 import { relativeTime } from "@/lib/sessionSort";
+import { sessionEndAction, sessionEndLabel, shouldConfirmArchive } from "@/lib/sessionEnd";
 import { Button } from "@/components/ui/button";
 import {
   ContextMenu,
@@ -31,9 +31,6 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
-  ContextMenuSub,
-  ContextMenuSubContent,
-  ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 
@@ -69,6 +66,8 @@ const state = computed<DisplayState>(() => {
 const title = computed(() => stripSpinner(store.sessionName(id.value)));
 const exited = computed(() => store.sessionLifecycle.get(id.value) === "exited");
 const archived = computed(() => props.row.tab.archivedAt != null);
+// Single terminating action, shared with the pane menu + ⌘W (see lib/sessionEnd).
+const endAction = computed(() => sessionEndAction({ archived: archived.value, exited: exited.value }));
 const focused = computed(
   () => !store.pendingPicker && id.value === store.focusedSessionId && props.row.directory.id === store.selectedDirectoryId,
 );
@@ -91,23 +90,8 @@ const lastActivity = computed(() => {
   return at ? relativeTime(at, props.now) : "";
 });
 
-// -- Move to Scope… / Follow Agent --
-const otherScopes = computed(() =>
-  store.directories.filter((d) => d.id !== props.row.directory.id),
-);
 // Follow Agent = NOT pinned (auto re-pin follows the agent's cwd around).
 const followingAgent = computed(() => !props.row.tab.scopePinnedByUser);
-
-function moveToScope(directoryId: string) {
-  const tabId = id.value;
-  void rpc.request.tabMoveToDirectory({ id: tabId, directoryId })
-    .then(() => {
-      // Manual move pins server-side; tab_set_scope_pinned/tabMoveToDirectory
-      // emit no event, so mirror it locally or the checkbox goes stale.
-      store.setTabScopePinnedLocal(tabId, true);
-    })
-    .catch(() => {});
-}
 
 function toggleFollowAgent(checked: boolean) {
   // checked here means "Follow Agent" is now on → pinned = false.
@@ -248,8 +232,7 @@ async function closeSession() {
 
 // -- archive (Task 5: live action only; un-archive lands in Task 7) --
 async function archiveSession() {
-  const shouldConfirm = state.value === "working" || state.value === "blocked";
-  if (shouldConfirm) {
+  if (shouldConfirmArchive(state.value)) {
     const ok = await ask("Archive Session?", {
       detail: "This stops the running agent and keeps a read-only terminal snapshot.",
       confirmLabel: "Archive",
@@ -345,29 +328,13 @@ async function unarchive(resume: boolean) {
           <RotateCcw />
           Restart
         </ContextMenuItem>
-        <template v-if="!archived">
-          <ContextMenuSub v-if="otherScopes.length">
-            <ContextMenuSubTrigger>
-              <FolderInput />
-              Move to Scope…
-            </ContextMenuSubTrigger>
-            <ContextMenuSubContent>
-              <ContextMenuItem
-                v-for="scope in otherScopes"
-                :key="scope.id"
-                @select="moveToScope(scope.id)"
-              >
-                {{ scope.name }}
-              </ContextMenuItem>
-            </ContextMenuSubContent>
-          </ContextMenuSub>
-          <ContextMenuCheckboxItem
-            :model-value="followingAgent"
-            @update:model-value="toggleFollowAgent"
-          >
-            Follow Agent
-          </ContextMenuCheckboxItem>
-        </template>
+        <ContextMenuCheckboxItem
+          v-if="!archived"
+          :model-value="followingAgent"
+          @update:model-value="toggleFollowAgent"
+        >
+          Follow Agent
+        </ContextMenuCheckboxItem>
         <ContextMenuItem v-if="!exited && !archived" @select="archiveSession()">
           <Archive />
           Archive Session
@@ -376,10 +343,19 @@ async function unarchive(resume: boolean) {
           <ArchiveRestore />
           Resume Agent
         </ContextMenuItem>
-        <ContextMenuSeparator />
-        <ContextMenuItem variant="destructive" @select="closeSession()">
+        <!-- Archive IS the terminating action for a live session — there is no
+             separate "Close Session". Delete is offered only once nothing is
+             live (archived, or the PTY already exited), so a session can still
+             be removed for good. Separator shares the gate so it can't trail an
+             empty section. -->
+        <ContextMenuSeparator v-if="endAction === 'delete'" />
+        <ContextMenuItem
+          v-if="endAction === 'delete'"
+          variant="destructive"
+          @select="closeSession()"
+        >
           <Trash2 />
-          {{ archived ? "Delete Session" : "Close Session" }}
+          {{ sessionEndLabel(endAction) }}
         </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
