@@ -1,31 +1,24 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, onUnmounted, ref, shallowRef, watch } from "vue";
-import { Archive, ChevronRight, FolderOpen, Plus } from "@lucide/vue";
-import { ask } from "@/platform";
-import StatusIndicator from "@/components/StatusIndicator.vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from "vue";
+import { Archive, Check, ChevronDown, ChevronRight, FolderOpen, Plus, Search } from "@lucide/vue";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useRpc } from "@/composables/useRpc";
 import { useProjectIcons } from "@/composables/useProjectIcons";
 import { listen, type UnlistenFn } from "@/platform";
-import { aggregateGroupState, resolveDisplayState, stripSpinner } from "@/lib/agentStatus";
-import type { DisplayState } from "@/lib/agentStatus";
+import { stripSpinner } from "@/lib/agentStatus";
 import { partitionSessions, type SessionRow as SessionRowModel } from "@/lib/sessionsView";
 import { sortSessionCards, type CardSortInputs } from "@/lib/sessionSort";
 import SessionCard from "./SessionCard.vue";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Empty, EmptyContent, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuSub,
-  ContextMenuSubContent,
-  ContextMenuSubTrigger,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useScrollFades } from "@/composables/useScrollFades";
 import type { WorkingDirectory } from "@/types";
 
@@ -35,26 +28,10 @@ const { icons: projectIcons } = useProjectIcons();
 
 // top/bottom content fades against the fixed header
 const { bodyEl, atStart, atEnd, update } = useScrollFades();
-const {
-  bodyEl: chipRailEl,
-  atStart: chipRailAtStart,
-  atEnd: chipRailAtEnd,
-  update: updateChipRail,
-} = useScrollFades("horizontal");
 
 const rootDirs = computed(() =>
   store.directories.filter((d) => !d.parentDirectoryId),
 );
-const worktreesByParent = computed(() => {
-  const map = new Map<string, WorkingDirectory[]>();
-  for (const d of store.directories) {
-    if (!d.parentDirectoryId) continue;
-    const list = map.get(d.parentDirectoryId);
-    if (list) list.push(d);
-    else map.set(d.parentDirectoryId, [d]);
-  }
-  return map;
-});
 
 // -- filter --
 const query = ref("");
@@ -68,6 +45,35 @@ function matches(r: SessionRowModel): boolean {
 }
 
 const activeChip = ref<string>("all"); // dirId of a ROOT, or "all"; resets every launch (not persisted)
+
+// -- workspace filter dropdown --
+const workspaceMenuOpen = ref(false);
+const workspaceQuery = ref("");
+function setWorkspaceMenuOpen(open: boolean): void {
+  workspaceMenuOpen.value = open;
+  workspaceQuery.value = "";
+}
+const filteredRootDirs = computed(() => {
+  const q = workspaceQuery.value.trim().toLowerCase();
+  return q ? rootDirs.value.filter((d) => d.name.toLowerCase().includes(q)) : rootDirs.value;
+});
+const activeWorkspaceName = computed(() =>
+  rootDirs.value.find((d) => d.id === activeChip.value)?.name ?? null,
+);
+function selectWorkspace(id: string): void {
+  activeChip.value = id;
+}
+function onWorkspaceFilterKeydown(event: KeyboardEvent): void {
+  if (event.key === "Escape") {
+    if (!workspaceQuery.value) return;
+    event.preventDefault();
+    event.stopPropagation();
+    workspaceQuery.value = "";
+    return;
+  }
+  if (["ArrowUp", "ArrowDown", "Home", "End", "Enter", "Tab"].includes(event.key)) return;
+  event.stopPropagation();
+}
 
 const rootOf = (d: WorkingDirectory): WorkingDirectory =>
   d.parentDirectoryId ? (store.directories.find((x) => x.id === d.parentDirectoryId) ?? d) : d;
@@ -108,29 +114,6 @@ watch(
   recomputeCards,
   { immediate: true },
 );
-
-// Chip aggregate dot: any blocked/working session under the root INCLUDING worktrees.
-const chipStates = computed(() => {
-  const byRoot = new Map<string, ReturnType<typeof resolveDisplayState>[]>();
-  for (const r of store.sessionsList("all")) {
-    if (r.tab.archivedAt != null) continue; // archived sessions don't count toward the chip dot
-    const rid = rootOf(r.directory).id;
-    const rt = store.tabRuntime.get(r.tab.id);
-    const s = resolveDisplayState({
-      needsAcknowledgement: rt?.needsAcknowledgement,
-      agentType: r.agentType,
-      agentState: rt?.agentState ?? r.tab.lastAgentState,
-      requireAgentType: true,
-    });
-    (byRoot.get(rid) ?? byRoot.set(rid, []).get(rid)!).push(s);
-  }
-  const out = new Map<string, DisplayState | null>();
-  for (const [rid, states] of byRoot) {
-    const agg = aggregateGroupState(states);
-    out.set(rid, agg === "blocked" || agg === "working" ? agg : null);
-  }
-  return out;
-});
 
 // 30s relative-time tick, paused while the document is hidden (perf guardrail).
 const now = ref(Date.now());
@@ -205,115 +188,12 @@ watch(() => store.directories.map((d) => d.id).join(","), () => {
     activeChip.value = "all";
   refreshAll();
   nextTick(update);
-  nextTick(updateChipRail);
 });
 // row count changes (new/closed sessions, filter) move the scroll extents
 const sessionCount = computed(() =>
   Object.values(store.terminalTabsByDirectory).reduce((count, tabs) => count + tabs.length, 0),
 );
 watch([sessionCount, query], () => nextTick(update));
-
-function select(d: WorkingDirectory) {
-  store.selectDirectory(d);
-}
-
-function onNewSession(d: WorkingDirectory) {
-  if (store.selectedDirectoryId !== d.id) select(d);
-  store.openSessionPicker(d.id);
-}
-
-async function onCreateWorktree(parentDirId: string) {
-  try {
-    const dir = await store.createWorktree(parentDirId, "");
-    store.selectDirectory(dir);
-    store.openSessionPicker(dir.id);
-  } catch (e) {
-    window.alert(`Failed to create worktree: ${e}`);
-  }
-}
-
-async function onRemoveWorktree(dirId: string) {
-  const ok = await ask("Delete this worktree? This runs `git worktree remove`.", {
-    title: "Delete worktree",
-    kind: "warning",
-  });
-  if (!ok) return;
-  try {
-    await store.removeWorktree(dirId);
-  } catch (e) {
-    window.alert(`Failed to delete worktree: ${e}`);
-  }
-}
-
-const renamingId = ref<string | null>(null);
-const renameInputEl = ref<HTMLInputElement | null>(null);
-
-function startRenameWorktree(dirId: string) {
-  renamingId.value = dirId;
-}
-
-async function finishRenameWorktree(dirId: string, value: string) {
-  if (renamingId.value !== dirId) return;
-  renamingId.value = null;
-  renameInputEl.value = null;
-  const trimmed = value.trim();
-  const current = store.directories.find((d) => d.id === dirId)?.name ?? "";
-  if (!trimmed || trimmed === current) return;
-  try {
-    await store.renameWorktree(dirId, trimmed);
-  } catch (e) {
-    window.alert(`Failed to rename worktree: ${e}`);
-  }
-}
-
-function cancelRenameWorktree() {
-  renamingId.value = null;
-  renameInputEl.value = null;
-}
-
-function onRenameInputMounted(el: unknown) {
-  if (!(el instanceof HTMLInputElement)) return;
-  renameInputEl.value = el;
-  requestAnimationFrame(() => {
-    if (renameInputEl.value !== el) return;
-    el.focus();
-    el.select();
-  });
-}
-
-function onWorktreeMenuCloseAutoFocus(e: Event) {
-  // Started a rename from the context menu: keep focus on the rename input.
-  // Otherwise reka-ui returns focus to the trigger button, blurring the input
-  // and cancelling the rename before any typing (flash-then-revert bug).
-  if (renamingId.value) e.preventDefault();
-}
-
-function onDocMousedown(e: MouseEvent) {
-  const id = renamingId.value;
-  const el = renameInputEl.value;
-  if (!id || !el) return;
-  const target = e.target as Node | null;
-  if (target && (target === el || el.contains(target))) return;
-  finishRenameWorktree(id, el.value);
-}
-
-onMounted(() => document.addEventListener("mousedown", onDocMousedown, true));
-onBeforeUnmount(() => document.removeEventListener("mousedown", onDocMousedown, true));
-
-async function onRemoveDirectory(dirId: string) {
-  const dir = store.directories.find((d) => d.id === dirId);
-  const label = dir?.name ?? "this workspace";
-  const ok = await ask(`Remove ${label} from the sidebar? The folder on disk is left alone.`, {
-    title: "Remove workspace",
-    kind: "warning",
-  });
-  if (!ok) return;
-  try {
-    await store.deleteDirectory(dirId);
-  } catch (e) {
-    window.alert(`Failed to remove workspace: ${e}`);
-  }
-}
 </script>
 
 <template>
@@ -350,65 +230,45 @@ async function onRemoveDirectory(dirId: string) {
       </EmptyContent>
     </Empty>
     <template v-else>
-    <!-- Chip rail -->
-    <div class="relative flex shrink-0 items-center gap-1.5 pr-2">
-    <div class="relative min-w-0 flex-1">
-      <div
-        ref="chipRailEl"
-        class="flex items-center gap-1.5 overflow-x-auto px-2 py-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-        @scroll="updateChipRail"
-      >
-      <Badge as="button" type="button" :variant="activeChip === 'all' ? 'default' : 'outline'"
-        class="cursor-pointer select-none shrink-0" @click="activeChip = 'all'">All</Badge>
-      <ContextMenu v-for="d in rootDirs" :key="d.id">
-        <ContextMenuTrigger as-child>
-          <Badge as="button" type="button" :variant="activeChip === d.id ? 'default' : 'outline'"
-            class="cursor-pointer select-none shrink-0 gap-1" @click="activeChip = d.id">
-            <img v-if="projectIcons[d.id]" :src="projectIcons[d.id]" class="size-3 rounded-sm" alt="" />
-            {{ d.name }}
-            <StatusIndicator v-if="chipStates.get(d.id)" :state="chipStates.get(d.id)!" class="size-2.5" />
-          </Badge>
-        </ContextMenuTrigger>
-        <ContextMenuContent @close-auto-focus="onWorktreeMenuCloseAutoFocus">
-          <ContextMenuItem @select="onNewSession(d)">New Session</ContextMenuItem>
-          <ContextMenuItem @select="onCreateWorktree(d.id)">New Worktree</ContextMenuItem>
-          <ContextMenuSub v-if="(worktreesByParent.get(d.id) ?? []).length">
-            <ContextMenuSubTrigger>Worktrees</ContextMenuSubTrigger>
-            <ContextMenuSubContent>
-              <template v-for="wt in worktreesByParent.get(d.id)" :key="wt.id">
-                <ContextMenuItem @select="startRenameWorktree(wt.id)">Rename {{ wt.name }}…</ContextMenuItem>
-                <ContextMenuItem variant="destructive" @select="onRemoveWorktree(wt.id)">Delete {{ wt.name }}</ContextMenuItem>
-              </template>
-            </ContextMenuSubContent>
-          </ContextMenuSub>
-          <ContextMenuSeparator />
-          <ContextMenuItem variant="destructive" @select="onRemoveDirectory(d.id)">Remove Workspace</ContextMenuItem>
-        </ContextMenuContent>
-      </ContextMenu>
-      </div>
-      <div
-        class="pointer-events-none absolute inset-y-0 left-0 z-10 w-4 bg-linear-to-r from-sidebar to-transparent transition-opacity"
-        :class="chipRailAtStart ? 'opacity-0' : 'opacity-100'"
-      />
-      <div
-        class="pointer-events-none absolute inset-y-0 right-0 z-10 w-4 bg-linear-to-l from-sidebar to-transparent transition-opacity"
-        :class="chipRailAtEnd ? 'opacity-0' : 'opacity-100'"
-      />
-    </div>
-    <Badge as="button" type="button" variant="outline" aria-label="Add Workspace"
-      class="cursor-pointer select-none shrink-0 disabled:pointer-events-none disabled:opacity-50"
-      :disabled="store.picking" @click="store.openAndSelectWorkspace()">
-      <Plus class="size-3" />
-    </Badge>
-    </div>
-
-    <div v-if="renamingId" class="px-3 py-1.5 border-b flex items-center gap-2">
-      <span class="text-xs text-muted-foreground shrink-0">Rename worktree:</span>
-      <input :ref="onRenameInputMounted" class="h-6 flex-1 rounded border bg-transparent px-1.5 text-xs"
-        :value="store.directories.find((d) => d.id === renamingId)?.name"
-        @keydown.enter="finishRenameWorktree(renamingId!, ($event.target as HTMLInputElement).value)"
-        @blur="renamingId && finishRenameWorktree(renamingId, ($event.target as HTMLInputElement).value)"
-        @keydown.escape="cancelRenameWorktree" />
+    <!-- Workspace filter -->
+    <div class="flex shrink-0 items-center gap-1.5 px-2 py-1.5">
+      <DropdownMenu :open="workspaceMenuOpen" @update:open="setWorkspaceMenuOpen">
+        <DropdownMenuTrigger as-child>
+          <Button type="button" variant="outline" size="xs" aria-label="Select Workspace"
+            class="min-w-0 flex-1 justify-start gap-1.5">
+            <img v-if="activeChip !== 'all' && projectIcons[activeChip]" :src="projectIcons[activeChip]" class="size-3 rounded-sm" alt="" />
+            <FolderOpen v-else class="size-3.5 text-muted-foreground" />
+            <span class="truncate">{{ activeWorkspaceName ?? "All Workspaces" }}</span>
+            <ChevronDown class="ml-auto size-3.5 shrink-0 text-muted-foreground" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" class="min-w-56 p-0">
+          <div class="border-b p-2">
+            <div class="relative">
+              <Search aria-hidden="true" class="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input v-model="workspaceQuery" placeholder="Filter Workspaces…" class="h-8 pl-8 text-xs" @keydown="onWorkspaceFilterKeydown" />
+            </div>
+          </div>
+          <div class="max-h-64 overflow-y-auto p-1">
+            <DropdownMenuItem @select="selectWorkspace('all')">
+              <FolderOpen class="size-4" />
+              <span class="flex-1 truncate">All Workspaces</span>
+              <Check :class="['ml-auto size-3.5', activeChip === 'all' ? 'opacity-100' : 'opacity-0']" />
+            </DropdownMenuItem>
+            <DropdownMenuItem v-for="d in filteredRootDirs" :key="d.id" @select="selectWorkspace(d.id)">
+              <img v-if="projectIcons[d.id]" :src="projectIcons[d.id]" class="size-4 rounded-sm" alt="" />
+              <FolderOpen v-else class="size-4" />
+              <span class="flex-1 truncate">{{ d.name }}</span>
+              <Check :class="['ml-auto size-3.5', activeChip === d.id ? 'opacity-100' : 'opacity-0']" />
+            </DropdownMenuItem>
+            <p v-if="!filteredRootDirs.length" class="px-2 py-1.5 text-xs text-muted-foreground">No Workspaces Found</p>
+          </div>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <Button type="button" variant="outline" size="xs" aria-label="Add Workspace"
+        class="shrink-0" :disabled="store.picking" @click="store.openAndSelectWorkspace()">
+        <Plus class="size-3.5" />
+      </Button>
     </div>
 
     <!-- Card list -->
@@ -423,7 +283,7 @@ async function onRemoveDirectory(dirId: string) {
           :now="now" />
       </TransitionGroup>
       <div v-if="liveCards.length === 0 && archivedCards.length === 0 && rootDirs.length" class="flex h-24 items-center justify-center px-4 text-center text-xs text-muted-foreground">
-        No sessions — right-click the chip or press ⌘T
+        No sessions — press ⌘T
       </div>
       <Collapsible v-if="archivedCards.length" v-model:open="archivedOpen" class="mt-1">
         <CollapsibleTrigger class="flex w-full items-center gap-1.5 px-3 py-1 text-[10px] uppercase tracking-wide text-muted-foreground/70">
