@@ -91,6 +91,9 @@ listen<string>("file-deleted", (e) => {
     listen<TabArchivedEvent>("tab-archived", (e) => {
       window.dispatchEvent(new CustomEvent("tab-archived", { detail: e.payload }));
     }),
+    listen<{ tabId: string; title: string }>("tab-title-generated", (e) => {
+      window.dispatchEvent(new CustomEvent("tab-title-generated", { detail: e.payload }));
+    }),
     listen<TabUnarchivedEvent>("tab-unarchived", (e) => {
       window.dispatchEvent(new CustomEvent("tab-unarchived", { detail: e.payload }));
     }),

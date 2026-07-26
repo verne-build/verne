@@ -24,6 +24,7 @@ import {
   type SplitDir,
 } from "@/lib/paneLayout";
 import { shouldApplyAgentRevision } from "@/lib/agentStatus";
+import { sessionTitleFrom } from "@/lib/sessionTitle";
 import { buildSessionsList, type SessionRow } from "@/lib/sessionsView";
 import {
   applyArrangementSizes,
@@ -381,28 +382,26 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     if (current) writeArrangement(scopeId, applyArrangementSizes(current, key, sizes));
   }
 
-  // Title precedence: manual rename → daemon agent display title → live OSC
-  // title → foreground/agent process → numbered fallback. Computed live so
-  // renames propagate to rows. Named `sessionName` post slice-2 (one session
-  // == one pane, no more group indirection); `tabGroupName` alias kept for one
-  // slice to limit consumer churn.
+  // Title precedence: manual rename → generated title → daemon agent display
+  // title → live OSC title → foreground/agent process → numbered fallback.
+  // Computed live so renames (and generated titles) propagate to rows.
+  // Precedence itself lives in sessionTitleFrom (testable without Pinia).
+  // Named `sessionName` post slice-2 (one session == one pane, no more group
+  // indirection); `tabGroupName` alias kept for one slice to limit consumer
+  // churn.
   function sessionName(sessionId: string): string {
     const dirId = tabDirId(sessionId) ?? selectedDirectoryId.value ?? "";
     const tab = (terminalTabsByDirectory.value[dirId] ?? []).find((t) => t.id === sessionId);
-
-    // 1. Manual rename always wins.
-    if (tab?.userRenamed && tab.label) return tab.label;
-    // 2. Hook-derived agent display title from the persistent daemon.
     const rt = tabRuntime.value.get(sessionId);
-    if (rt?.displayTitle) return rt.displayTitle;
-    // 3. Live OSC title from the running process.
-    const osc = oscTitleByTab.value.get(sessionId);
-    if (osc) return osc;
-    // 4. Foreground process / agent name from detection.
-    if (rt?.agentType) return rt.agentType.charAt(0).toUpperCase() + rt.agentType.slice(1);
-    if (rt?.foregroundCommand) return rt.foregroundCommand;
-    // 5. Fallback: the numbered label.
-    return tab?.label ?? "shell";
+    return sessionTitleFrom({
+      userRenamed: tab?.userRenamed,
+      label: tab?.label,
+      generatedTitle: tab?.generatedTitle,
+      displayTitle: rt?.displayTitle ?? undefined,
+      oscTitle: oscTitleByTab.value.get(sessionId),
+      agentType: rt?.agentType ?? undefined,
+      foregroundCommand: rt?.foregroundCommand,
+    });
   }
   const tabGroupName = sessionName;
 
@@ -854,6 +853,23 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   }
   window.addEventListener("tab-archived", handleTabArchivedEvent as EventListener);
   onScopeDispose(() => window.removeEventListener("tab-archived", handleTabArchivedEvent as EventListener));
+
+  /** Apply a freshly generated session title (main's `tab-title-generated`).
+   *  Patches the one field via the existing keyed swap so nothing else in the
+   *  tab — or the arrangement — is disturbed. */
+  function handleTabTitleGenerated(e: Event) {
+    const detail = (e as CustomEvent<{ tabId: string; title: string }>).detail;
+    if (!detail?.tabId || !detail.title) return;
+    const dirId = tabDirId(detail.tabId);
+    if (!dirId) return;
+    const existing = (terminalTabsByDirectory.value[dirId] ?? []).find((t) => t.id === detail.tabId);
+    if (!existing) return;
+    replaceTab({ ...existing, generatedTitle: detail.title });
+  }
+  window.addEventListener("tab-title-generated", handleTabTitleGenerated as EventListener);
+  onScopeDispose(() =>
+    window.removeEventListener("tab-title-generated", handleTabTitleGenerated as EventListener),
+  );
 
   /** Apply a tab that just came back from archive (RPC response or the daemon's
    *  `tab-unarchived` broadcast). Idempotent: replaceTab is a keyed swap; mark
