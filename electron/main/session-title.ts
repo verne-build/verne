@@ -57,10 +57,27 @@ export function createSessionTitleGeneration(deps: SessionTitleDeps) {
 
   async function handle(req: TitleRequest): Promise<void> {
     if (inFlight.has(req.tabId)) return;
-    const tab = deps.getTab(req.tabId);
+
+    // handle() must NEVER reject — it's called fire-and-forget from an event
+    // listener. getTab/generatorFor are injected and could throw (e.g. a DB
+    // hiccup); treat that the same as "can't proceed", not an escaping error.
+    let tab: Tab | undefined;
+    try {
+      tab = deps.getTab(req.tabId);
+    } catch (e) {
+      console.error("[session-title] getTab failed:", e);
+      return;
+    }
     if (!tab) return; // tab deleted
     if (tab.generatedTitle != null) return; // already titled — frozen
-    const generator = deps.generatorFor(req.agentType);
+
+    let generator: TitleGenerator | undefined;
+    try {
+      generator = deps.generatorFor(req.agentType);
+    } catch (e) {
+      console.error("[session-title] generatorFor failed:", e);
+      return;
+    }
     if (!generator) return; // agent has no generator
 
     inFlight.add(req.tabId);
@@ -89,7 +106,14 @@ export function createSessionTitleGeneration(deps: SessionTitleDeps) {
         console.error("[session-title] persist failed:", e);
         return;
       }
-      deps.emit("tab-title-generated", { tabId: req.tabId, title: finalTitle });
+      // The DB write already succeeded at this point — a broadcast failure
+      // (e.g. webContents.send throwing on a destroyed window) must not undo
+      // the write or escape as a rejection. Log and move on.
+      try {
+        deps.emit("tab-title-generated", { tabId: req.tabId, title: finalTitle });
+      } catch (e) {
+        console.error("[session-title] emit failed:", e);
+      }
     } finally {
       inFlight.delete(req.tabId);
     }

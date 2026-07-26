@@ -96,6 +96,20 @@ describe("createSessionTitleGeneration", () => {
     const h = harness({ runGenerator: async () => null });
     await h.ops.handle(req());
     expect(h.written).toEqual([{ id: "t1", title: "add a retry to the uploader" }]);
+    expect(h.emitted).toEqual([
+      { name: "tab-title-generated", payload: { tabId: "t1", title: "add a retry to the uploader" } },
+    ]);
+  });
+
+  it("writes the fallback title byte-identical — never re-normalized or re-truncated", async () => {
+    // The daemon already ran normalize_title + manifest max_length on this.
+    // Quotes and >120 chars would both be VISIBLY changed by
+    // normalizeGeneratedTitle, so a regression that ran the fallback through
+    // it (instead of the raw generator output only) would fail this.
+    const longFallback = `"${"x".repeat(150)}"`;
+    const h = harness({ runGenerator: async () => null });
+    await h.ops.handle(req({ fallbackTitle: longFallback }));
+    expect(h.written).toEqual([{ id: "t1", title: longFallback }]);
   });
 
   it("falls back when generation returns only whitespace", async () => {
