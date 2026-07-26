@@ -59,4 +59,14 @@ describe("makeForward", () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(send).not.toHaveBeenCalledWith("daemon-event", "session-cwd", expect.anything());
   });
+
+  // agent-title-requested is main-internal: index.ts's own d0.onEvent listener
+  // does the generation work. makeForward must consume it, not broadcast the
+  // raw payload (prompts can carry multi-MB hook bodies) to a renderer with no
+  // listener for it.
+  it("consumes agent-title-requested instead of forwarding it", () => {
+    const { win, send } = fakeWin({});
+    makeForward(() => win, sidecar)("agent-title-requested", { tabId: "t1", prompt: "hi" });
+    expect(send).not.toHaveBeenCalled();
+  });
 });

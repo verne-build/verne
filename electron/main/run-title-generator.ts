@@ -69,18 +69,48 @@ export async function runTitleGenerator(input: {
   const outFile = join(dir, "title.txt");
   try {
     return await new Promise<string | null>((resolve) => {
+      // Strip Verne hook-attribution vars before spawning. `codex exec` reads
+      // ~/.codex/hooks.json and fires its OWN hooks through Verne's notify
+      // script; if VERNE_TAB_ID leaks in (inherited from a dev app launched
+      // inside a Verne tab), those hooks get attributed to that unrelated
+      // tab — including an agent-title-requested whose prompt is THIS
+      // summarize instruction, permanently freezing that tab's title to junk.
+      // Same class of bug as the daemon-env-leaks-into-PTYs issue. Keep
+      // PATH/HOME/etc — the child legitimately needs those plus codex's own
+      // auth/config vars.
+      const env = { ...process.env };
+      delete env.VERNE_TAB_ID;
+      delete env.VERNE_AGENT_ID;
+      delete env.VERNE_AGENT_TYPE;
       const child = spawn(bin, generator.args({ cwd, outFile }), {
         cwd,
-        stdio: ["pipe", "ignore", "ignore"],
+        env,
+        stdio: ["pipe", "ignore", "pipe"],
       });
+      let stderr = "";
+      child.stderr?.on("data", (chunk: Buffer) => {
+        stderr += chunk.toString("utf8");
+      });
+      // Same class of bug as child.stdin below: an unlistened stream error
+      // (e.g. EPIPE) would crash the whole process. The data handler above
+      // already consumes the stream so it can't block the child either.
+      child.stderr?.on("error", () => {});
       const timer = setTimeout(() => {
         child.kill("SIGKILL");
+        console.warn(
+          `[title-generator] timed out after ${generator.timeoutMs}ms; stderr: ${stderr.slice(-500)}`,
+        );
         resolve(null);
       }, generator.timeoutMs);
       child.on("error", () => { clearTimeout(timer); resolve(null); });
       child.on("close", (code) => {
         clearTimeout(timer);
-        if (code !== 0) return resolve(null);
+        if (code !== 0) {
+          console.warn(
+            `[title-generator] exited ${code}; stderr: ${stderr.slice(-500)}`,
+          );
+          return resolve(null);
+        }
         try {
           resolve(readFileSync(outFile, "utf8"));
         } catch {

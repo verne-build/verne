@@ -96,6 +96,9 @@ export function createSessionTitleGeneration(deps: SessionTitleDeps) {
       }
       // Failure falls back to the daemon-normalized prompt. Same column, so the
       // result is equally frozen — this is the "no retry" decision.
+      if (title == null) {
+        console.warn(`[session-title] generation failed for tab ${req.tabId}; falling back`);
+      }
       const finalTitle = title ?? req.fallbackTitle ?? null;
       if (!finalTitle) return; // bare `generated`: stay at agent name
       try {

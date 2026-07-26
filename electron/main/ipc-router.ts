@@ -83,6 +83,11 @@ export function makeForward(getWindow: () => BrowserWindow, sidecar: DaemonClien
       }).catch((e) => console.error("[scope-repin] session-cwd:", e));
       return;
     }
+    // agent-title-requested is main-internal: the index.ts d0.onEvent listener
+    // does the generation work (shell out, persist, broadcast tab-title-generated).
+    // Prompts here can carry hook bodies up to ~4MB — never structured-clone
+    // that raw payload into the renderer, which has no listener for it anyway.
+    if (name === "agent-title-requested") return;
     if (name === "tab-updated") {
       try {
         updateTabPresentationSnapshot(getDb(), {
