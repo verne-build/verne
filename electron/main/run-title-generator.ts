@@ -49,6 +49,11 @@ export async function runTitleGenerator(input: {
   prompt: string;
 }): Promise<string | null> {
   const { generator, agentBin, cwd, prompt } = input;
+  // Cached per app run only once a path resolves, or once a reportedBin was
+  // supplied and failed. If the hook reports no agentBin AND the binary is
+  // genuinely missing, the miss is NOT cached, so the full probe chain
+  // (spawnSync calls + login shell) re-runs on every call. Acceptable: title
+  // generation is once-per-session.
   const bin = resolveAgentBinary({
     binaryName: generator.binaryName,
     reportedBin: agentBin,
@@ -82,6 +87,13 @@ export async function runTitleGenerator(input: {
           resolve(null);
         }
       });
+      // child.stdin is its own EventEmitter; a write failure (e.g. EPIPE when
+      // the child exits before reading) emits 'error' on the STREAM, not on
+      // `child`, and not as a thrown exception — an unlistened stream error
+      // crashes the whole process. Attach a listener before .end() so it's
+      // merely swallowed; the child 'error'/'close'/timeout paths above
+      // already settle the promise with null (resolve is idempotent).
+      child.stdin.on("error", () => {});
       // Prompt on stdin, never argv: no shell quoting, no ~256KB argv cap.
       child.stdin.end(generator.instruction(prompt));
     });
