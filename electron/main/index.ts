@@ -38,7 +38,11 @@ import {
   tabDisplayLabels,
   defaultLabel,
   setTabArchivedAt,
+  setTabGeneratedTitle,
 } from "./db/tabs";
+import { createSessionTitleGeneration } from "./session-title";
+import { titleGeneratorFor } from "./title-generator-registry";
+import { runTitleGenerator } from "./run-title-generator";
 import { writeTabSnapshot, readTabSnapshotBlob, deleteTabSnapshot } from "./db/tabSnapshots";
 import { createArchiveSessionOperations, assertRespawnable } from "./archive-session";
 import { canResumeAgent } from "./resume-registry";
@@ -376,6 +380,41 @@ app.whenReady().then(async () => {
       toolInput: p.toolInput ?? null,
       agentType: p.agentType ?? "claude",
     }).catch(() => {});
+  });
+
+  // Generated session titles: the daemon hands us the raw first prompt (plus the
+  // fallback it already normalized); we shell out to the agent CLI and persist
+  // one title per session. Fire-and-forget — never blocks the hook response.
+  const titleGeneration = createSessionTitleGeneration({
+    getTab: (id) => getTab(getDb(), id),
+    setGeneratedTitle: (id, title) => setTabGeneratedTitle(getDb(), id, title),
+    generatorFor: titleGeneratorFor,
+    runGenerator: runTitleGenerator,
+    emit: (name, payload) => {
+      try {
+        getWindow().webContents.send("daemon-event", name, payload);
+      } catch { /* window gone; the DB write already landed */ }
+    },
+  });
+  d0.onEvent((name: string, payload: unknown) => {
+    if (name !== "agent-title-requested") return;
+    const p = payload as {
+      tabId?: string;
+      agentType?: string;
+      agentBin?: string | null;
+      prompt?: string;
+      fallbackTitle?: string | null;
+    };
+    if (!p.tabId || !p.prompt) return;
+    void titleGeneration
+      .handle({
+        tabId: p.tabId,
+        agentType: p.agentType,
+        agentBin: p.agentBin ?? null,
+        prompt: p.prompt,
+        fallbackTitle: p.fallbackTitle ?? null,
+      })
+      .catch((e) => console.error("[session-title]", e));
   });
 
   // Install the invoke router BEFORE creating the window: the renderer fires its
