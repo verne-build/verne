@@ -45,6 +45,7 @@ import { titleGeneratorFor } from "./title-generator-registry";
 import { runTitleGenerator } from "./run-title-generator";
 import { writeTabSnapshot, readTabSnapshotBlob, deleteTabSnapshot } from "./db/tabSnapshots";
 import { createArchiveSessionOperations, assertRespawnable } from "./archive-session";
+import { createResumeSessionOperations } from "./resume-session";
 import { canResumeAgent } from "./resume-registry";
 import type { DatabaseSync } from "node:sqlite";
 import type { Tab, CreateTabOpts } from "../../src/types/shared";
@@ -198,6 +199,15 @@ function registerTabOrchestration(d: DaemonClient, s: DaemonClient): void {
     now: () => Date.now(),
   });
 
+  // resume: respawn an exited (non-archived) session's PTY execing the agent's
+  // resume command. Possible because the identity columns are now latched
+  // rather than nulled when the agent quits — see db/tabs.ts.
+  const resumeOps = createResumeSessionOperations({
+    getTab: (id) => getTab(getDb(), id),
+    daemonRequest: (method, params) => d.request(method, params),
+    buildPlan: (tab, launchOverride) => buildTabSpawnPlan(getDb(), tab, launchOverride),
+  });
+
   // create: Electron inserts the row + assembles the spawn plan → daemon spawns
   // the PTY. Roll the row back on failure.
   registerNative("tabs_create", async (params: { opts: CreateTabOpts }) => {
@@ -294,6 +304,7 @@ function registerTabOrchestration(d: DaemonClient, s: DaemonClient): void {
     emit("tab-unarchived", { tab });
     return tab;
   });
+  registerNative("tabs_resume", ({ id }: { id: string }) => resumeOps.resume(id));
   registerNative("tab_snapshot_read", ({ id }: { id: string }) => archiveOps.read(id));
 }
 

@@ -168,6 +168,8 @@ const request = {
     invoke("tabs_archive", { id: p.id }),
   tabsUnarchive: (p: { id: string; resume: boolean }): Promise<Tab> =>
     invoke("tabs_unarchive", { id: p.id, resume: p.resume }),
+  tabsResume: (p: { id: string }): Promise<string> =>
+    invoke("tabs_resume", { id: p.id }),
   tabSnapshotRead: (p: { id: string }): Promise<ArchivedSnapshotBlob | null> =>
     invoke("tab_snapshot_read", { id: p.id }),
   tabsReorder: (p: { ids: string[] }): Promise<boolean> =>
