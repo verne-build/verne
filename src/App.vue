@@ -229,13 +229,6 @@ function onInnerLayout(sizes: number[]) {
 }
 
 const bottomPanelRef = ref<InstanceType<typeof BottomPanel> | null>(null);
-// Remount the vertical group when the bottom panel appears/disappears or
-// collapses, so reka-ui re-reads the child set (same pattern as `showRight`).
-const bottomKey = computed(() => {
-  const dirId = store.selectedDirectoryId;
-  const state = dirId ? store.bottomPanelFor(dirId) : null;
-  return `${state?.tabs.length ? "on" : "off"}-${state?.collapsed ? "c" : "e"}`;
-});
 function onBottomLayout(sizes: number[]) {
   bottomPanelRef.value?.onLayout(sizes);
 }
@@ -891,7 +884,6 @@ onUnmounted(() => {
           />
           <ResizablePanelGroup
             v-show="!showSettings"
-            :key="`main-v-${bottomKey}`"
             direction="vertical"
             class="flex-1 overflow-hidden"
             @layout="onBottomLayout"
@@ -900,7 +892,7 @@ onUnmounted(() => {
               <ResizablePanelGroup
                 :key="`inner-${showRight}`"
                 direction="horizontal"
-                class="inner-resize-group h-full overflow-hidden"
+                class="inner-resize-group overflow-hidden"
                 :class="{ 'is-file-maximized': fileMaximized }"
                 @layout="onInnerLayout"
               >

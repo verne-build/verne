@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onBeforeUnmount } from "vue";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { setSplitterDragging } from "@/composables/useTerminal";
 import { bottomSurfaceKey, MIN_BOTTOM_HEIGHT_PX } from "@/lib/bottomPanel";
@@ -21,6 +21,7 @@ const surfaceKey = computed(() =>
 );
 const arrangement = computed(() => (surfaceKey.value ? store.arrangementFor(surfaceKey.value) : null));
 const focusedId = computed(() => store.bottomFocusedSessionId);
+const splitCount = computed(() => (arrangement.value ? paneCount(arrangement.value.layout) : 0));
 
 function toggleCollapsed() {
   if (dirId.value) store.setBottomPanelCollapsed(dirId.value, !collapsed.value);
@@ -28,12 +29,22 @@ function toggleCollapsed() {
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 function onLayout(sizes: number[]) {
-  const px = sizes[sizes.length - 1];
+  // The bottom ResizablePanel is only registered with reka-ui while expanded
+  // and visible (see template) — order 1 is main-upper, order 2 is us. When
+  // collapsed/hidden it isn't registered at all, so `sizes` reports only
+  // main-upper's own (percent) size; treating that as our px height would
+  // stomp the persisted value with a bogus one.
+  if (!visible.value || collapsed.value) return;
+  const px = sizes[1];
   if (!dirId.value || !px) return;
   if (saveTimer) clearTimeout(saveTimer);
   const id = dirId.value;
   saveTimer = setTimeout(() => store.setBottomPanelHeight(id, px), 400);
 }
+
+onBeforeUnmount(() => {
+  if (saveTimer) clearTimeout(saveTimer);
+});
 
 // App.vue owns the vertical panel group, so it forwards its @layout here.
 defineExpose({ onLayout });
@@ -46,6 +57,7 @@ defineExpose({ onLayout });
     <template v-if="!collapsed">
       <ResizableHandle @dragging="setSplitterDragging" />
       <ResizablePanel
+        :key="dirId ?? undefined"
         id="bottom-panel"
         :order="2"
         :default-size="state?.height ?? MIN_BOTTOM_HEIGHT_PX"
@@ -61,7 +73,7 @@ defineExpose({ onLayout });
             :node="arrangement.layout"
             :scope-id="surfaceKey"
             :focused-session-id="focusedId"
-            :multi="paneCount(arrangement.layout) > 1"
+            :multi="splitCount > 1"
             end-mode="close"
           />
         </div>

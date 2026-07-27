@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { onBeforeUnmount } from "vue";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { setSplitterDragging } from "@/composables/useTerminal";
 import { isLeaf, firstLeaf, nodeKey } from "@/lib/paneLayout";
@@ -35,6 +36,10 @@ function onLayout(sizes: number[]) {
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => store.setArrangementSizes(props.scopeId, k, sizes), 400);
 }
+
+onBeforeUnmount(() => {
+  if (saveTimer) clearTimeout(saveTimer);
+});
 </script>
 
 <template>
