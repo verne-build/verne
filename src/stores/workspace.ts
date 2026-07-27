@@ -23,7 +23,21 @@ import {
   singlePaneResizeTargets,
   type SplitDir,
 } from "@/lib/paneLayout";
-import { bottomSurfaceKey, isBottomSurface } from "@/lib/bottomPanel";
+import {
+  activateBottomTab,
+  addBottomTab,
+  bottomSurfaceKey,
+  clampBottomHeight,
+  closeBottomTabState,
+  emptyBottomPanelState,
+  isBottomSurface,
+  parseBottomPanelMap,
+  parseBottomSurfaceKey,
+  pruneBottomTabs,
+  reorderBottomTabs,
+  serializeBottomPanelMap,
+  type BottomPanelState,
+} from "@/lib/bottomPanel";
 import { shouldApplyAgentRevision } from "@/lib/agentStatus";
 import { sessionTitleFrom } from "@/lib/sessionTitle";
 import { buildSessionsList, type SessionRow } from "@/lib/sessionsView";
@@ -282,6 +296,166 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     writeArrangement(surfaceKey, removeFromArrangement(current, sessionId));
   }
 
+  // ---- bottom terminal panel ----
+  const bottomPanelByScope = ref<Record<string, BottomPanelState>>({});
+  let bottomPanelHydrated: Promise<void> | null = null;
+
+  function hydrateBottomPanel(): Promise<void> {
+    bottomPanelHydrated ??= useRpc()
+      .request.getAppState({ key: "bottom_panel_by_scope" })
+      .then((raw) => {
+        bottomPanelByScope.value = { ...parseBottomPanelMap(raw), ...bottomPanelByScope.value };
+      })
+      .catch(() => {
+        bottomPanelHydrated = null; // retry on next load
+      });
+    return bottomPanelHydrated;
+  }
+
+  function bottomPanelFor(dirId: string): BottomPanelState | null {
+    return bottomPanelByScope.value[dirId] ?? null;
+  }
+
+  function writeBottomPanel(dirId: string, state: BottomPanelState | null) {
+    const map = { ...bottomPanelByScope.value };
+    if (state && state.tabs.length) map[dirId] = state;
+    else delete map[dirId];
+    bottomPanelByScope.value = map;
+    useRpc()
+      .request.setAppState({ key: "bottom_panel_by_scope", value: serializeBottomPanelMap(map) })
+      .catch(() => {});
+  }
+
+  /** Sessions in `dirId` that live in the CENTER (i.e. not in a bottom tab). */
+  function centerSessions(dirId: string): Tab[] {
+    return (terminalTabsByDirectory.value[dirId] ?? []).filter(
+      (t) => !isBottomSurface(surfaceKeyFor(t.id) ?? dirId),
+    );
+  }
+
+  async function createBottomTerminal(dirId: string): Promise<Tab | null> {
+    const dir = directories.value.find((d) => d.id === dirId);
+    if (!dir) return null;
+    const existing = terminalTabsByDirectory.value[dirId] ?? [];
+    const tab = await useRpc().request.tabsCreate({
+      directoryId: dirId,
+      cwd: dir.path,
+      label: String(existing.length + 1),
+    });
+    // Re-read post-await (see newSession) so a concurrent create isn't dropped.
+    const current = terminalTabsByDirectory.value[dirId] ?? [];
+    terminalTabsByDirectory.value = { ...terminalTabsByDirectory.value, [dirId]: [...current, tab] };
+    stampActivity(tab.id);
+    const bottomTabId = crypto.randomUUID();
+    writeArrangement(bottomSurfaceKey(dirId, bottomTabId), { version: 1, layout: { pane: tab.id } });
+    writeBottomPanel(dirId, {
+      ...addBottomTab(bottomPanelFor(dirId) ?? emptyBottomPanelState(), bottomTabId),
+      collapsed: false,
+    });
+    focusSession(tab.id);
+    return tab;
+  }
+
+  /** Kill one bottom pane; drops its tab when it was the tab's last pane. */
+  async function closeBottomPane(sessionId: string): Promise<void> {
+    const surfaceKey = surfaceKeyFor(sessionId);
+    const parsed = surfaceKey ? parseBottomSurfaceKey(surfaceKey) : null;
+    if (!surfaceKey || !parsed) return;
+    const { dirId, bottomTabId } = parsed;
+    const wasFocused = focusedByScope.value[surfaceKey] === sessionId;
+    await destroyPane(sessionId);
+    forgetTab(sessionId);
+    forgetAgentNotificationTab(sessionId);
+    terminalTabsByDirectory.value = {
+      ...terminalTabsByDirectory.value,
+      [dirId]: (terminalTabsByDirectory.value[dirId] ?? []).filter((t) => t.id !== sessionId),
+    };
+    const current = arrangementFor(surfaceKey);
+    const next = current ? removeFromArrangement(current, sessionId) : null;
+    writeArrangement(surfaceKey, next);
+    if (next) {
+      if (wasFocused) focusSession(firstLeaf(next.layout));
+      return;
+    }
+    const state = bottomPanelFor(dirId);
+    if (state) writeBottomPanel(dirId, closeBottomTabState(state, bottomTabId));
+    const remaining = bottomPanelFor(dirId);
+    const nextTabId = remaining?.activeTabId;
+    if (nextTabId) {
+      const nextArr = arrangementFor(bottomSurfaceKey(dirId, nextTabId));
+      if (nextArr && wasFocused) focusSession(firstLeaf(nextArr.layout));
+    } else {
+      activeSurface.value = "center";
+    }
+  }
+
+  async function closeBottomTab(dirId: string, bottomTabId: string): Promise<void> {
+    const key = bottomSurfaceKey(dirId, bottomTabId);
+    const arr = arrangementFor(key);
+    const panes = arr ? collectPaneIds(arr.layout) : [];
+    for (const id of panes) await closeBottomPane(id);
+    // Defensive: an already-empty surface still needs its tab dropped.
+    const state = bottomPanelFor(dirId);
+    if (state?.tabs.includes(bottomTabId)) writeBottomPanel(dirId, closeBottomTabState(state, bottomTabId));
+    writeArrangement(key, null);
+  }
+
+  function activateBottomPanelTab(dirId: string, bottomTabId: string): void {
+    const state = bottomPanelFor(dirId);
+    if (!state) return;
+    writeBottomPanel(dirId, { ...activateBottomTab(state, bottomTabId), collapsed: false });
+    const arr = arrangementFor(bottomSurfaceKey(dirId, bottomTabId));
+    if (arr) focusSession(focusedByScope.value[bottomSurfaceKey(dirId, bottomTabId)] ?? firstLeaf(arr.layout));
+  }
+
+  function reorderBottomPanelTabs(dirId: string, from: number, to: number): void {
+    const state = bottomPanelFor(dirId);
+    if (!state) return;
+    writeBottomPanel(dirId, reorderBottomTabs(state, from, to));
+  }
+
+  function setBottomPanelCollapsed(dirId: string, collapsed: boolean): void {
+    const state = bottomPanelFor(dirId);
+    if (!state || state.collapsed === collapsed) return;
+    writeBottomPanel(dirId, { ...state, collapsed });
+  }
+
+  function setBottomPanelHeight(dirId: string, px: number): void {
+    const state = bottomPanelFor(dirId);
+    const height = clampBottomHeight(px);
+    if (!state || state.height === height) return;
+    writeBottomPanel(dirId, { ...state, height });
+  }
+
+  const bottomFocusedSessionId = computed(() => {
+    const dirId = selectedDirectoryId.value;
+    const state = dirId ? bottomPanelFor(dirId) : null;
+    if (!dirId || !state?.activeTabId) return undefined;
+    const key = bottomSurfaceKey(dirId, state.activeTabId);
+    const arr = arrangementFor(key);
+    if (!arr) return undefined;
+    return focusedByScope.value[key] ?? firstLeaf(arr.layout);
+  });
+
+  const focusedSessionIdForActiveSurface = computed(() =>
+    activeSurface.value === "bottom" ? bottomFocusedSessionId.value : focusedSessionId.value,
+  );
+
+  /** Split-with-existing candidates for a surface: live, same scope, same
+   *  surface class, and not already on screen in that surface. */
+  function splittableSessions(surfaceKey: string): SessionRow[] {
+    const parsed = parseBottomSurfaceKey(surfaceKey);
+    const dirId = parsed?.dirId ?? surfaceKey;
+    const arr = arrangementFor(surfaceKey);
+    const inView = new Set(arr ? collectPaneIds(arr.layout) : []);
+    return buildSessionsList(directories.value, terminalTabsByDirectory.value, tabRuntime.value, dirId)
+      .filter((row) => {
+        if (inView.has(row.tab.id) || row.tab.archivedAt != null) return false;
+        const key = surfaceKeyFor(row.tab.id) ?? dirId;
+        return parsed ? isBottomSurface(key) : !isBottomSurface(key);
+      });
+  }
+
   const focusedByScope = ref<Record<string, string | undefined>>({});
   let focusedHydrated: Promise<void> | null = null;
 
@@ -525,7 +699,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   // Per-dir in-flight de-dupe: concurrent loads share one run.
   const ensureLayoutInFlight = new Map<string, Promise<void>>();
   function ensureSessionForEmptyDir(dirId: string): void {
-    if ((terminalTabsByDirectory.value[dirId] ?? []).length) return;
+    if (centerSessions(dirId).length) return;
     if (dirId === selectedDirectoryId.value) openSessionPicker(dirId);
   }
 
@@ -557,7 +731,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   }
 
   async function doEnsureLayoutModel2(dirId: string, tabs: Tab[]) {
-    await Promise.all([hydrateArrangements(), hydrateFocusedByScope()]);
+    await Promise.all([hydrateArrangements(), hydrateFocusedByScope(), hydrateBottomPanel()]);
     pruneStaleFocusId(dirId, tabs);
     const flagKey = `layout_model:${dirId}`;
     const model = await useRpc().request.getAppState({ key: flagKey });
@@ -587,16 +761,31 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     }
     // Prune/backfill only once hydration has succeeded (see hydrate guard).
     if (arrangementsHydratedOk) {
-      // Prune arrangements against live tabs (dead sessions dropped).
       const live = new Set(tabs.map((t) => t.id));
+      // Bottom surfaces first, so centerSessions() below sees the truth.
+      const bottom = bottomPanelFor(dirId);
+      if (bottom) {
+        const survivors = new Set<string>();
+        for (const bottomTabId of bottom.tabs) {
+          const key = bottomSurfaceKey(dirId, bottomTabId);
+          const arr = arrangementFor(key);
+          const pruned = arr ? pruneArrangement(arr, live) : null;
+          if (JSON.stringify(pruned) !== JSON.stringify(arr)) writeArrangement(key, pruned);
+          if (pruned) survivors.add(bottomTabId);
+        }
+        const nextState = pruneBottomTabs(bottom, survivors);
+        if (nextState !== bottom) writeBottomPanel(dirId, nextState);
+      }
+      // Prune the center arrangement against live tabs (dead sessions dropped).
       const arr = arrangementFor(dirId);
       const pruned = arr ? pruneArrangement(arr, live) : null;
       if (JSON.stringify(pruned) !== JSON.stringify(arr)) writeArrangement(dirId, pruned);
-      if (!arrangementFor(dirId) && tabs.length)
-        writeArrangement(dirId, { version: 1, layout: { pane: tabs[tabs.length - 1].id } });
+      const center = centerSessions(dirId);
+      if (!arrangementFor(dirId) && center.length)
+        writeArrangement(dirId, { version: 1, layout: { pane: center[center.length - 1].id } });
     }
     // Empty selected scopes route to the picker without creating a session.
-    if (!(terminalTabsByDirectory.value[dirId] ?? []).length && dirId === selectedDirectoryId.value)
+    if (!centerSessions(dirId).length && dirId === selectedDirectoryId.value)
       ensureSessionForEmptyDir(dirId);
   }
 
@@ -773,6 +962,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   /** Kill a session's PTY, drop its row, and remove it from its scope's
    *  arrangement. Replaces closeTab/closePane/closeGroup. */
   async function closeSession(sessionId: string): Promise<void> {
+    const surfaceKey = surfaceKeyFor(sessionId);
+    if (surfaceKey && isBottomSurface(surfaceKey)) return closeBottomPane(sessionId);
     const dirId = tabDirId(sessionId);
     await destroyPane(sessionId);
     forgetTab(sessionId);
@@ -784,7 +975,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       };
       const current = arrangementFor(dirId);
       const next = current ? removeFromArrangement(current, sessionId) : null;
-      const remaining = terminalTabsByDirectory.value[dirId] ?? [];
+      const remaining = centerSessions(dirId);
       const wasFocused = focusedByScope.value[dirId] === sessionId;
       if (next) writeArrangement(dirId, next);
       else if (remaining.length) writeArrangement(dirId, { version: 1, layout: { pane: remaining[remaining.length - 1].id } });
@@ -811,6 +1002,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
    *  removal re-pin, or cwd-driven auto re-pin). Moves the tab between
    *  buckets, reconciles the source arrangement/focus, and offers an undo. */
   function applyScopeChange(ev: { tabId: string; fromDirectoryId: string; toDirectoryId: string; cwd: string }) {
+    if (isBottomSurface(surfaceKeyFor(ev.tabId) ?? "")) return;
     // Echo guard: if the tab is already in the destination bucket (e.g. a
     // local optimistic apply already landed), moveTabBetweenBuckets would
     // no-op on the FROM side too — check membership up front and skip
@@ -1153,7 +1345,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       terminalTabsByDirectory.value,
       tabRuntime.value,
       wantDir,
-    );
+    ).filter((row) => !isBottomSurface(surfaceKeyFor(row.tab.id) ?? row.directory.id));
   }
 
   function agentsList(scope: "all" | "current"): { tab: Tab; directory: WorkingDirectory }[] {
@@ -1228,6 +1420,14 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     for (const dir of directories.value) {
       const tabs = terminalTabsByDirectory.value[dir.id] ?? [];
       if (!tabs.some((t) => t.id === sessionId)) continue;
+      const existingSurface = surfaceKeyFor(sessionId);
+      const bottom = existingSurface ? parseBottomSurfaceKey(existingSurface) : null;
+      if (bottom) {
+        if (dir.id !== selectedDirectoryId.value) selectDirectory(dir);
+        activateBottomPanelTab(bottom.dirId, bottom.bottomTabId);
+        focusSession(sessionId);
+        return;
+      }
       if (dir.id !== selectedDirectoryId.value) selectDirectory(dir);
       closeSessionPicker();
       const arr = arrangementFor(dir.id);
@@ -1462,5 +1662,19 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     archiveSession,
     applyUnarchivedTab,
     unarchiveSession,
+    bottomPanelByScope,
+    bottomPanelFor,
+    centerSessions,
+    createBottomTerminal,
+    closeBottomPane,
+    closeBottomTab,
+    activateBottomPanelTab,
+    reorderBottomPanelTabs,
+    setBottomPanelCollapsed,
+    setBottomPanelHeight,
+    bottomFocusedSessionId,
+    focusedSessionIdForActiveSurface,
+    splittableSessions,
+    hydrateBottomPanel,
   };
 });

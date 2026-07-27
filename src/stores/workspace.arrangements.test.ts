@@ -1425,3 +1425,135 @@ describe("surface keys (bottom panel groundwork)", () => {
     expect(store.arrangementByScope[key]).toBeUndefined();
   });
 });
+
+describe("bottom terminal panel", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    setActivePinia(createPinia());
+    setAppStateCalls.length = 0;
+    tabsClosedIds.length = 0;
+    tabsCreateCalls.length = 0;
+    nextId = 0;
+    setLiveTabIds([]);
+    appState.clear();
+    for (const k of Object.keys(tabsListByDir)) delete tabsListByDir[k];
+    setFailArrangementGets(0);
+  });
+
+  async function withDir() {
+    const store = useWorkspaceStore();
+    store.directories.push(dir("dir-1"));
+    store.selectDirectory(dir("dir-1"));
+    return store;
+  }
+
+  it("createBottomTerminal spawns in the scope cwd and opens a bottom surface", async () => {
+    const store = await withDir();
+    const tab = await store.createBottomTerminal("dir-1");
+    expect(tab).toBeTruthy();
+    expect(tabsCreateCalls.at(-1)).toMatchObject({ directoryId: "dir-1", cwd: "/dir-1" });
+    const state = store.bottomPanelFor("dir-1")!;
+    expect(state.tabs).toHaveLength(1);
+    expect(state.collapsed).toBe(false);
+    const key = bottomSurfaceKey("dir-1", state.tabs[0]);
+    expect(store.arrangementByScope[key]).toEqual({ version: 1, layout: { pane: tab!.id } });
+  });
+
+  it("keeps bottom terminals out of the center arrangement and the sessions list", async () => {
+    const store = await withDir();
+    const bottom = await store.createBottomTerminal("dir-1");
+    expect(store.arrangementByScope["dir-1"]).toBeUndefined();
+    expect(store.sessionsList("all").map((r) => r.tab.id)).not.toContain(bottom!.id);
+    expect(store.centerSessions("dir-1")).toEqual([]);
+  });
+
+  it("closeBottomPane kills the pane and removes the tab when it was the last one", async () => {
+    const store = await withDir();
+    const tab = await store.createBottomTerminal("dir-1");
+
+    await store.closeBottomPane(tab!.id);
+
+    expect(tabsClosedIds).toContain(tab!.id);
+    expect(store.bottomPanelFor("dir-1")).toBeNull();
+    expect(store.arrangementByScope[bottomSurfaceKey("dir-1", "bt-1")]).toBeUndefined();
+  });
+
+  it("closeBottomPane keeps the tab alive while another pane remains", async () => {
+    const store = await withDir();
+    const first = await store.createBottomTerminal("dir-1");
+    await store.splitSessionWithNew(first!.id, "h");
+    const bottomTabId = store.bottomPanelFor("dir-1")!.tabs[0];
+    const key = bottomSurfaceKey("dir-1", bottomTabId);
+    const other = collectPaneIds(store.arrangementByScope[key].layout).find((id) => id !== first!.id)!;
+
+    await store.closeBottomPane(other);
+
+    expect(collectPaneIds(store.arrangementByScope[key].layout)).toEqual([first!.id]);
+    expect(store.bottomPanelFor("dir-1")!.tabs).toEqual([bottomTabId]);
+  });
+
+  it("closeBottomTab kills every pane in the tab", async () => {
+    const store = await withDir();
+    const first = await store.createBottomTerminal("dir-1");
+    await store.splitSessionWithNew(first!.id, "h");
+    const bottomTabId = store.bottomPanelFor("dir-1")!.tabs[0];
+    const panes = collectPaneIds(store.arrangementByScope[bottomSurfaceKey("dir-1", bottomTabId)].layout);
+
+    await store.closeBottomTab("dir-1", bottomTabId);
+
+    for (const id of panes) expect(tabsClosedIds).toContain(id);
+    expect(store.bottomPanelFor("dir-1")).toBeNull();
+  });
+
+  it("closing the last center session does not adopt a bottom terminal", async () => {
+    const store = await withDir();
+    const center = await store.newSession("dir-1");
+    const bottom = await store.createBottomTerminal("dir-1");
+
+    await store.closeSession(center.id);
+
+    expect(store.arrangementByScope["dir-1"]).toBeUndefined();
+    const bottomKey = bottomSurfaceKey("dir-1", store.bottomPanelFor("dir-1")!.tabs[0]);
+    expect(collectPaneIds(store.arrangementByScope[bottomKey].layout)).toEqual([bottom!.id]);
+    expect(store.pendingPicker).toEqual({ dirId: "dir-1" });
+  });
+
+  it("persists collapsed + height per scope", async () => {
+    const store = await withDir();
+    await store.createBottomTerminal("dir-1");
+
+    store.setBottomPanelCollapsed("dir-1", true);
+    store.setBottomPanelHeight("dir-1", 10);
+
+    expect(store.bottomPanelFor("dir-1")).toMatchObject({ collapsed: true, height: 120 });
+    const write = setAppStateCalls.filter((c) => c.key === "bottom_panel_by_scope").at(-1);
+    expect(JSON.parse(write!.value!)["dir-1"]).toMatchObject({ collapsed: true, height: 120 });
+  });
+
+  it("selectSession on a bottom terminal activates its tab instead of the center", async () => {
+    const store = await withDir();
+    const bottom = await store.createBottomTerminal("dir-1");
+    store.setBottomPanelCollapsed("dir-1", true);
+
+    store.selectSession(bottom!.id);
+
+    expect(store.arrangementByScope["dir-1"]).toBeUndefined();
+    expect(store.bottomPanelFor("dir-1")!.collapsed).toBe(false);
+    expect(store.activeSurface).toBe("bottom");
+  });
+
+  it("splittableSessions lists only same-surface-class candidates", async () => {
+    const store = await withDir();
+    const center = await store.newSession("dir-1");
+    const bottomA = await store.createBottomTerminal("dir-1");
+    const bottomB = await store.createBottomTerminal("dir-1");
+    const keyA = bottomSurfaceKey("dir-1", store.bottomPanelFor("dir-1")!.tabs[0]);
+
+    const fromBottom = store.splittableSessions(keyA).map((r) => r.tab.id);
+    const fromCenter = store.splittableSessions("dir-1").map((r) => r.tab.id);
+
+    expect(fromBottom).toEqual([bottomB!.id]);
+    expect(fromBottom).not.toContain(center.id);
+    expect(fromCenter).not.toContain(bottomA!.id);
+  });
+});
