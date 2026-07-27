@@ -506,11 +506,6 @@ function handleGlobalKeydown(e: KeyboardEvent) {
     setTimeout(() => { invoke("notify_test").catch(() => {}); }, 3000);
     return;
   }
-  if (shortcuts.matches("toggle-bottom-panel", e)) {
-    e.preventDefault();
-    toggleBottomPanel();
-    return;
-  }
   // Split the focused terminal pane. Only when a terminal owns focus, so Monaco's
   // ⌘D (add-selection-to-next-match) is untouched. Bindings are Cmd-only.
   if (shortcuts.matches("split-pane-h", e) || shortcuts.matches("split-pane-v", e)) {

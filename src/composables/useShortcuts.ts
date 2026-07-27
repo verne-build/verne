@@ -6,26 +6,20 @@ import { ref } from "vue";
 import { listen } from "@/platform";
 import { useRpc } from "./useRpc";
 import { matchesEvent, toDisplayKeys } from "@/lib/shortcuts/binding";
-import { SHORTCUT_CATALOG } from "@/lib/shortcuts/catalog";
+import { catalogDefaults, withCatalogFallback } from "@/lib/shortcuts/catalog";
 import type { Shortcut } from "@/lib/shortcuts/types";
 
 // Seed synchronously from the in-code catalog so keydown matching works from the
 // very first event — before the async get_shortcuts round-trip resolves. load()
 // then overlays any user overrides from the registry file.
-const registry = ref<Shortcut[]>(
-  SHORTCUT_CATALOG.map((d) => ({
-    name: d.name,
-    label: d.label,
-    category: d.category,
-    target: d.target,
-    binding: d.defaultBinding,
-  })),
-);
+const registry = ref<Shortcut[]>(catalogDefaults());
 let loaded = false;
 
 export function useShortcuts() {
   async function load() {
-    registry.value = await useRpc().request.getShortcuts({});
+    // Overlay, don't replace: a main process built before a new catalog entry
+    // existed omits it, and a bare assign would leave that shortcut unbound.
+    registry.value = withCatalogFallback(await useRpc().request.getShortcuts({}));
     loaded = true;
   }
 

@@ -4,7 +4,7 @@
 //
 // `name` is the stable id used by the override file and by lookups everywhere.
 // Bindings sourced from electron/main/menu.ts and src/App.vue handleGlobalKeydown.
-import type { ShortcutDef } from "./types";
+import type { Shortcut, ShortcutDef } from "./types";
 
 export const SHORTCUT_CATALOG: ShortcutDef[] = [
   // General
@@ -27,7 +27,7 @@ export const SHORTCUT_CATALOG: ShortcutDef[] = [
   { name: "toggle-right-panel", label: "Toggle Right Panel", category: "View", defaultBinding: "Mod+Alt+B", target: "menu" },
   { name: "focus-file-explorer", label: "Focus File Explorer", category: "View", defaultBinding: "Mod+Shift+E", target: "menu" },
   { name: "focus-source-control", label: "Focus Source Control", category: "View", defaultBinding: "Ctrl+Shift+G", target: "menu" },
-  { name: "toggle-bottom-panel", label: "Toggle Bottom Panel", category: "View", defaultBinding: "Mod+J", target: "renderer" },
+  { name: "toggle-bottom-panel", label: "Toggle Bottom Panel", category: "View", defaultBinding: "Mod+J", target: "menu" },
 
   // Navigation
   { name: "command-palette", label: "Command Palette", category: "Navigation", defaultBinding: "Mod+K", target: "menu" },
@@ -51,3 +51,20 @@ export const SHORTCUT_CATALOG: ShortcutDef[] = [
   { name: "close-window", label: "Close Window", category: "Window", defaultBinding: "Mod+Shift+W", target: "menu" },
   { name: "inspect-element", label: "Inspect Element", category: "Window", defaultBinding: "Mod+Alt+I", target: "menu" },
 ];
+
+/** Catalog entries as effective shortcuts (no user overrides applied). */
+export function catalogDefaults(): Shortcut[] {
+  return SHORTCUT_CATALOG.map(({ defaultBinding, ...rest }) => ({ ...rest, binding: defaultBinding }));
+}
+
+/** Overlay a loaded registry on the catalog: the catalog decides which
+ *  shortcuts EXIST, the response decides their bindings. Backfills entries a
+ *  stale main process (built before the entry existed) never returns — without
+ *  it the binding vanishes in the renderer and the key silently goes dead. */
+export function withCatalogFallback(loaded: readonly Shortcut[]): Shortcut[] {
+  const byName = new Map(loaded.map((s) => [s.name, s]));
+  return catalogDefaults().map((d) => {
+    const hit = byName.get(d.name);
+    return hit ? { ...d, binding: hit.binding } : d;
+  });
+}
