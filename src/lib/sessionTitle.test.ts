@@ -35,4 +35,31 @@ describe("sessionTitleFrom", () => {
   it("ignores an empty label on a renamed tab", () => {
     expect(sessionTitleFrom({ userRenamed: true, label: "", agentType: "codex" })).toBe("Codex");
   });
+
+  it("a live runtime displayTitle beats the persisted one", () => {
+    expect(sessionTitleFrom({
+      displayTitle: "Live", storedDisplayTitle: "Stored", agentType: "claude",
+    })).toBe("Live");
+  });
+
+  it("the persisted title takes over once the daemon is gone", () => {
+    // The whole point: an archived or post-restart session has no runtime
+    // displayTitle and no OSC title, and used to collapse to "Claude".
+    expect(sessionTitleFrom({
+      storedDisplayTitle: "Fix the uploader", agentType: "claude",
+    })).toBe("Fix the uploader");
+  });
+
+  it("the persisted title still loses to a generated title and a rename", () => {
+    expect(sessionTitleFrom({
+      generatedTitle: "Generated", storedDisplayTitle: "Stored",
+    })).toBe("Generated");
+    expect(sessionTitleFrom({
+      userRenamed: true, label: "Mine", storedDisplayTitle: "Stored",
+    })).toBe("Mine");
+  });
+
+  it("the persisted title beats a live OSC title", () => {
+    expect(sessionTitleFrom({ storedDisplayTitle: "Stored", oscTitle: "Osc" })).toBe("Stored");
+  });
 });

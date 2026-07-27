@@ -382,8 +382,9 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     if (current) writeArrangement(scopeId, applyArrangementSizes(current, key, sizes));
   }
 
-  // Title precedence: manual rename → generated title → daemon agent display
-  // title → live OSC title → foreground/agent process → numbered fallback.
+  // Title precedence: manual rename → generated title → live daemon display
+  // title → persisted display title → live OSC title → foreground/agent
+  // process → numbered fallback.
   // Computed live so renames (and generated titles) propagate to rows.
   // Precedence itself lives in sessionTitleFrom (testable without Pinia).
   // Named `sessionName` post slice-2 (one session == one pane, no more group
@@ -398,6 +399,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       label: tab?.label,
       generatedTitle: tab?.generatedTitle,
       displayTitle: rt?.displayTitle ?? undefined,
+      storedDisplayTitle: tab?.displayTitle,
       oscTitle: oscTitleByTab.value.get(sessionId),
       agentType: rt?.agentType ?? undefined,
       foregroundCommand: rt?.foregroundCommand,
