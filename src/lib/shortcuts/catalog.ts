@@ -27,6 +27,7 @@ export const SHORTCUT_CATALOG: ShortcutDef[] = [
   { name: "toggle-right-panel", label: "Toggle Right Panel", category: "View", defaultBinding: "Mod+Alt+B", target: "menu" },
   { name: "focus-file-explorer", label: "Focus File Explorer", category: "View", defaultBinding: "Mod+Shift+E", target: "menu" },
   { name: "focus-source-control", label: "Focus Source Control", category: "View", defaultBinding: "Ctrl+Shift+G", target: "menu" },
+  { name: "toggle-bottom-panel", label: "Toggle Bottom Panel", category: "View", defaultBinding: "Mod+J", target: "renderer" },
 
   // Navigation
   { name: "command-palette", label: "Command Palette", category: "Navigation", defaultBinding: "Mod+K", target: "menu" },

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount } from "vue";
+import { computed, onBeforeUnmount, onMounted, onUnmounted } from "vue";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { setSplitterDragging } from "@/composables/useTerminal";
 import { bottomSurfaceKey, MIN_BOTTOM_HEIGHT_PX } from "@/lib/bottomPanel";
@@ -7,8 +7,11 @@ import { paneCount } from "@/lib/paneLayout";
 import SplitLayout from "./SplitLayout.vue";
 import BottomTabBar from "./BottomTabBar.vue";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
+import { useRpc } from "@/composables/useRpc";
+import { ask } from "@/platform";
 
 const store = useWorkspaceStore();
+const rpc = useRpc();
 
 const dirId = computed(() => store.selectedDirectoryId);
 const state = computed(() => (dirId.value ? store.bottomPanelFor(dirId.value) : null));
@@ -45,6 +48,26 @@ function onLayout(sizes: number[]) {
 onBeforeUnmount(() => {
   if (saveTimer) clearTimeout(saveTimer);
 });
+
+// ⌘W on the bottom surface bypasses TerminalPane.confirmKill, so mirror its
+// running-process guard here.
+async function onCloseActivePane() {
+  const id = store.bottomFocusedSessionId;
+  if (!id) return;
+  const running = await rpc.request.tabsHasRunningChild({ id }).catch(() => false);
+  if (running) {
+    const label = store.tabRuntime.get(id)?.foregroundCommand || "A process";
+    const ok = await ask("Close Terminal?", {
+      detail: `${label} is still running. Closing kills it.`,
+      confirmLabel: "Close",
+    });
+    if (!ok) return;
+  }
+  await store.closeBottomPane(id);
+}
+
+onMounted(() => window.addEventListener("close-active-bottom-pane", onCloseActivePane));
+onUnmounted(() => window.removeEventListener("close-active-bottom-pane", onCloseActivePane));
 
 // App.vue owns the vertical panel group, so it forwards its @layout here.
 defineExpose({ onLayout });

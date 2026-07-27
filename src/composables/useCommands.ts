@@ -1,7 +1,7 @@
 import type { Component } from "vue";
 import { toast } from "vue-sonner";
 import {
-  PanelLeft, PanelRight, Maximize2, Files, Settings, Palette,
+  PanelLeft, PanelRight, PanelBottom, Maximize2, Files, Settings, Palette,
   FolderOpen, SquareTerminal, GitFork, ArrowRight, ArrowLeft, FilePlusCorner, X,
   SplitSquareHorizontal, SplitSquareVertical,
   RotateCcw, Save, Hash, MessageSquarePlus, WrapText, Map, ListOrdered, Pin, Eye, Pencil,
@@ -60,6 +60,7 @@ export function useCommands() {
       // View
       { id: "view.toggleLeft", title: "Toggle Left Sidebar", category: "View", icon: PanelLeft, shortcut: "⌘B", keywords: "sidebar panel hide", run: () => menu("toggleLeftPanel") },
       { id: "view.toggleRight", title: "Toggle Right Panel", category: "View", icon: PanelRight, keywords: "sidebar editor hide", run: () => menu("toggleRightPanel") },
+      { id: "view.toggleBottom", title: "Toggle Bottom Panel", category: "View", icon: PanelBottom, keywords: "terminal panel drawer shell", run: () => menu("toggleBottomPanel") },
       { id: "view.maximize", title: "Maximize Editor Panel", category: "View", icon: Maximize2, when: hasDir, keywords: "fullscreen full", run: () => menu("toggleMaximize") },
       { id: "view.explorer", title: "Show File Explorer", category: "View", icon: Files, when: hasDir, keywords: "files tree reveal", run: () => menu("focusExplorer") },
       { id: "view.sc", title: "Show Source Control", category: "View", icon: GitBranch, when: hasDir, keywords: "git changes diff", run: () => menu("focusSourceControl") },

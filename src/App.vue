@@ -312,7 +312,25 @@ async function openWorkspace() {
 }
 
 function newTerminal() {
+  const dirId = store.selectedDirectoryId;
+  if (store.activeSurface === "bottom" && dirId) {
+    void store.createBottomTerminal(dirId);
+    return;
+  }
   store.openSessionPicker();
+}
+
+// ⌘J — show/hide the bottom terminal panel, creating the first terminal if the
+// scope has none.
+function toggleBottomPanel() {
+  const dirId = store.selectedDirectoryId;
+  if (!dirId) return;
+  const state = store.bottomPanelFor(dirId);
+  if (!state?.tabs.length) {
+    void store.createBottomTerminal(dirId);
+    return;
+  }
+  store.setBottomPanelCollapsed(dirId, !state.collapsed);
 }
 
 async function newWorktree() {
@@ -351,13 +369,15 @@ function selectTabByIndex(n: number) {
   return true;
 }
 
-// ⌘W — close the focused tab: file tab if focus is in the file panel,
-// otherwise the active terminal tab. Each owner applies its own close
-// confirmation (dirty file / running process).
+// ⌘W — close the focused tab: file tab if focus is in the file panel, the
+// focused bottom terminal if the bottom panel owns focus, else the active
+// terminal tab. Each owner applies its own close confirmation.
 function closeActiveTab() {
   const el = document.activeElement as HTMLElement | null;
   if (el?.closest("[data-file-panel]")) {
     window.dispatchEvent(new CustomEvent("close-active-file-tab"));
+  } else if (store.activeSurface === "bottom") {
+    window.dispatchEvent(new CustomEvent("close-active-bottom-pane"));
   } else {
     window.dispatchEvent(new CustomEvent("close-active-terminal-tab"));
   }
@@ -383,7 +403,7 @@ function focusTerminal() {
 
 // Split the focused terminal pane. 'h' = side-by-side, 'v' = stacked.
 function splitActivePane(direction: "h" | "v") {
-  const id = store.focusedSessionId;
+  const id = store.focusedSessionIdForActiveSurface;
   if (id) void store.splitSessionWithNew(id, direction);
 }
 
@@ -415,6 +435,7 @@ function handleMenuAction(e: Event) {
   else if (action === "focusSourceControl") focusFilePanel("sc");
   else if (action === "focusNotes") focusFilePanel("notes");
   else if (action === "focusTerminal") focusTerminal();
+  else if (action === "toggleBottomPanel") toggleBottomPanel();
   else if (action === "checkForUpdates") window.dispatchEvent(new CustomEvent("check-for-updates"));
   else if (action === "restartToUpdate") void invoke("updater_quit_and_install");
   else if (action === "undo" || action === "redo") {
@@ -482,6 +503,11 @@ function handleGlobalKeydown(e: KeyboardEvent) {
   if (e.metaKey && e.ctrlKey && e.shiftKey && (e.key === "n" || e.key === "N")) {
     e.preventDefault();
     setTimeout(() => { invoke("notify_test").catch(() => {}); }, 3000);
+    return;
+  }
+  if (shortcuts.matches("toggle-bottom-panel", e)) {
+    e.preventDefault();
+    toggleBottomPanel();
     return;
   }
   // Split the focused terminal pane. Only when a terminal owns focus, so Monaco's
