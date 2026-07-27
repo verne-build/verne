@@ -14,6 +14,8 @@ import { useShortcuts } from "@/composables/useShortcuts";
 import { agentIconSurfaceForTheme, getAgentIconForSurface } from "@/composables/useAgentIcon";
 import { useTheme } from "@/composables/useTheme";
 import { sessionEndAction, sessionEndLabel, shouldConfirmArchive } from "@/lib/sessionEnd";
+import { parseBottomSurfaceKey } from "@/lib/bottomPanel";
+import { terminalTitleFrom } from "@/lib/sessionTitle";
 import { confirmCloseTerminals, runningProcessLabel } from "@/composables/useConfirmClose";
 import GridTerminal from "@/components/terminal/GridTerminal.vue";
 import {
@@ -134,9 +136,12 @@ watch(terminalWrapper, (el, prev) => {
   el?.addEventListener(PASTE_PATH_LEAVE_EVENT, onPastePathLeave);
 });
 
-const tab = computed(() =>
-  (store.terminalTabsByDirectory[props.scopeId] ?? []).find((t) => t.id === props.paneId),
-);
+// scopeId is a SURFACE key — for a bottom pane it isn't a directory id, so
+// resolve the owning directory from the key before looking the row up.
+const tab = computed(() => {
+  const dirId = parseBottomSurfaceKey(props.scopeId)?.dirId ?? props.scopeId;
+  return (store.terminalTabsByDirectory[dirId] ?? []).find((t) => t.id === props.paneId);
+});
 
 const agentType = computed(() => {
   const runtime = store.tabRuntime.get(props.paneId);
@@ -151,11 +156,14 @@ const agentState = computed(
   () => store.tabRuntime.get(props.paneId)?.agentState ?? tab.value?.lastAgentState,
 );
 
-const panelLabel = computed(() => {
-  const agent = agentType.value;
-  if (agent) return agent.charAt(0).toUpperCase() + agent.slice(1);
-  return foregroundCommand.value || "zsh";
-});
+const panelLabel = computed(() =>
+  terminalTitleFrom({
+    userRenamed: tab.value?.userRenamed,
+    label: tab.value?.label,
+    agentType: agentType.value ?? undefined,
+    foregroundCommand: foregroundCommand.value,
+  }),
+);
 
 const agentIconSurface = computed(() => {
   void activeThemeName.value;

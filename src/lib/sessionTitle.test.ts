@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { sessionTitleFrom } from "./sessionTitle";
+import { sessionTitleFrom, terminalTitleFrom } from "./sessionTitle";
 
 describe("sessionTitleFrom", () => {
   it("a manual rename beats everything", () => {
@@ -61,5 +61,27 @@ describe("sessionTitleFrom", () => {
 
   it("the persisted title beats a live OSC title", () => {
     expect(sessionTitleFrom({ storedDisplayTitle: "Stored", oscTitle: "Osc" })).toBe("Stored");
+  });
+});
+
+describe("terminalTitleFrom", () => {
+  it("prefers a user rename", () => {
+    expect(terminalTitleFrom({ userRenamed: true, label: "build", foregroundCommand: "vim" })).toBe("build");
+  });
+  it("ignores a label the user did not set", () => {
+    expect(terminalTitleFrom({ label: "2", foregroundCommand: "vim" })).toBe("vim");
+  });
+  it("names the agent when one owns the tab", () => {
+    expect(terminalTitleFrom({ agentType: "claude", foregroundCommand: "node" })).toBe("Claude");
+  });
+  it("uses the foreground command", () => {
+    expect(terminalTitleFrom({ foregroundCommand: "pnpm" })).toBe("pnpm");
+  });
+  it("strips the login-shell dash", () => {
+    expect(terminalTitleFrom({ foregroundCommand: "-zsh" })).toBe("zsh");
+  });
+  it("falls back to the shell name when nothing is running", () => {
+    expect(terminalTitleFrom({})).toBe("zsh");
+    expect(terminalTitleFrom({ foregroundCommand: "" })).toBe("zsh");
   });
 });

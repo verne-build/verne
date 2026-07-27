@@ -36,3 +36,23 @@ export function sessionTitleFrom(inputs: SessionTitleInputs): string {
   if (inputs.foregroundCommand) return inputs.foregroundCommand;
   return inputs.label ?? "shell";
 }
+
+// Terminal-pane / bottom-tab title. Deliberately NOT sessionTitleFrom: a scratch
+// terminal is named by what it is RUNNING, not by an OSC/agent-generated session
+// name (zsh configs set the OSC title to the cwd, which reads as noise here).
+//   1. manual rename  2. agent name  3. foreground command  4. shell
+export interface TerminalTitleInputs {
+  userRenamed?: boolean;
+  label?: string;
+  agentType?: string;
+  foregroundCommand?: string;
+}
+
+export function terminalTitleFrom(inputs: TerminalTitleInputs): string {
+  if (inputs.userRenamed && inputs.label) return inputs.label;
+  if (inputs.agentType)
+    return inputs.agentType.charAt(0).toUpperCase() + inputs.agentType.slice(1);
+  // Login shells report argv0 as "-zsh".
+  const cmd = inputs.foregroundCommand?.replace(/^-/, "");
+  return cmd || "zsh";
+}

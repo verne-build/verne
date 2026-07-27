@@ -10,9 +10,10 @@ import { collectPaneIds, paneCount } from "@/lib/paneLayout";
 import { bottomSurfaceKey } from "@/lib/bottomPanel";
 import { confirmCloseTerminals } from "@/composables/useConfirmClose";
 import { resolveDisplayState, aggregateGroupState, stripSpinner } from "@/lib/agentStatus";
+import { terminalTitleFrom } from "@/lib/sessionTitle";
 import type { DisplayState } from "@/lib/agentStatus";
 import StatusIndicator from "@/components/StatusIndicator.vue";
-import type { LayoutNode } from "@/types";
+import type { LayoutNode, Tab } from "@/types";
 import { TabBar, TabBarTrigger } from "@/components/ui/tab-bar";
 import { Button } from "@/components/ui/button";
 import { Kbd, KbdGroup } from "@/components/ui/kbd";
@@ -56,15 +57,28 @@ const renameInputEl = ref<HTMLInputElement | null>(null);
 function primaryPaneId(t: BottomTab): string {
   return collectPaneIds(t.layout)[0];
 }
+function paneTab(paneId: string): Tab | undefined {
+  return (store.terminalTabsByDirectory[props.dirId] ?? []).find((x) => x.id === paneId);
+}
+// A scratch terminal is named by what it's RUNNING (or the shell), not by the
+// session-title chain — see terminalTitleFrom.
 function tabLabel(t: BottomTab): string {
-  return stripSpinner(store.sessionName(primaryPaneId(t)));
+  const paneId = primaryPaneId(t);
+  const rt = store.tabRuntime.get(paneId);
+  const tab = paneTab(paneId);
+  return stripSpinner(
+    terminalTitleFrom({
+      userRenamed: tab?.userRenamed,
+      label: tab?.label,
+      agentType: rt?.agentType ?? tab?.lastAgentType ?? undefined,
+      foregroundCommand: rt?.foregroundCommand,
+    }),
+  );
 }
 // Rename seeds from the raw stored label, NOT the resolved auto-name — else
-// accepting the rename unchanged would lock the tab to its current OSC title.
+// accepting the rename unchanged would lock the tab to its current command name.
 function tabRenameSeed(t: BottomTab): string {
-  const paneId = primaryPaneId(t);
-  const tab = (store.terminalTabsByDirectory[props.dirId] ?? []).find((x) => x.id === paneId);
-  return tab?.label ?? "";
+  return paneTab(primaryPaneId(t))?.label ?? "";
 }
 function tabSplitCount(t: BottomTab): number {
   return paneCount(t.layout);
