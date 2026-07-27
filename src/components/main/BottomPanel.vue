@@ -6,12 +6,10 @@ import { bottomSurfaceKey, MIN_BOTTOM_HEIGHT_PX } from "@/lib/bottomPanel";
 import { paneCount } from "@/lib/paneLayout";
 import SplitLayout from "./SplitLayout.vue";
 import BottomTabBar from "./BottomTabBar.vue";
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
-import { useRpc } from "@/composables/useRpc";
-import { ask } from "@/platform";
+import { ResizableHandle, ResizablePanel } from "@/components/ui/resizable";
+import { confirmCloseTerminals } from "@/composables/useConfirmClose";
 
 const store = useWorkspaceStore();
-const rpc = useRpc();
 
 const dirId = computed(() => store.selectedDirectoryId);
 const state = computed(() => (dirId.value ? store.bottomPanelFor(dirId.value) : null));
@@ -49,21 +47,12 @@ onBeforeUnmount(() => {
   if (saveTimer) clearTimeout(saveTimer);
 });
 
-// ⌘W on the bottom surface bypasses TerminalPane.confirmKill, so mirror its
-// running-process guard here.
+// ⌘W on the bottom surface bypasses the pane menu, so it runs the same shared
+// running-process guard.
 async function onCloseActivePane() {
   const id = store.bottomFocusedSessionId;
   if (!id) return;
-  const running = await rpc.request.tabsHasRunningChild({ id }).catch(() => false);
-  if (running) {
-    const label = store.tabRuntime.get(id)?.foregroundCommand || "A process";
-    const ok = await ask("Close Terminal?", {
-      detail: `${label} is still running. Closing kills it.`,
-      confirmLabel: "Close",
-    });
-    if (!ok) return;
-  }
-  await store.closeBottomPane(id);
+  if (await confirmCloseTerminals([id])) await store.closeBottomPane(id);
 }
 
 onMounted(() => window.addEventListener("close-active-bottom-pane", onCloseActivePane));

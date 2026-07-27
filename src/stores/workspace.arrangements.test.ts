@@ -76,6 +76,8 @@ const {
   appState,
   setFailArrangementGets,
   takeArrangementGetFailure,
+  setFailBottomPanelGets,
+  takeBottomPanelGetFailure,
   tabsListByDir,
   tabsListCalls,
   agentStates,
@@ -112,7 +114,16 @@ const {
   const agentStates: unknown[] = [];
   let directoriesResult: unknown[] = [];
   let failArrangementGets = 0;
+  let failBottomPanelGets = 0;
   return {
+    setFailBottomPanelGets: (n: number) => {
+      failBottomPanelGets = n;
+    },
+    takeBottomPanelGetFailure: () => {
+      if (failBottomPanelGets <= 0) return false;
+      failBottomPanelGets -= 1;
+      return true;
+    },
     appState,
     tabsListByDir,
     tabsListCalls,
@@ -210,6 +221,8 @@ vi.mock("@/composables/useRpc", () => ({
     request: {
       getAppState: vi.fn(async (p: { key: string }) => {
         if (p.key === "arrangement_by_scope" && takeArrangementGetFailure())
+          throw new Error("boot flake");
+        if (p.key === "bottom_panel_by_scope" && takeBottomPanelGetFailure())
           throw new Error("boot flake");
         return appState.get(p.key) ?? null;
       }),
@@ -1398,6 +1411,10 @@ describe("surface keys (bottom panel groundwork)", () => {
       layout: { pane: bottomTab.id },
     });
     store.selectedDirectoryId = "dir-1";
+    // activeSurface only honours "bottom" while the scope has a visible panel.
+    store.bottomPanelByScope = {
+      "dir-1": { tabs: ["bt-1"], activeTabId: "bt-1", height: 260, collapsed: false },
+    };
     store.focusSession(centerTab.id);
 
     store.focusSession(bottomTab.id);
@@ -1571,5 +1588,246 @@ describe("bottom terminal panel", () => {
     expect(fromBottom).toEqual([bottomB!.id]);
     expect(fromBottom).not.toContain(center.id);
     expect(fromCenter).not.toContain(bottomA!.id);
+  });
+});
+
+describe("bottom panel: active surface invalidation", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    setActivePinia(createPinia());
+    setAppStateCalls.length = 0;
+    tabsClosedIds.length = 0;
+    tabsCreateCalls.length = 0;
+    scopePinnedCalls.length = 0;
+    nextId = 0;
+    setLiveTabIds([]);
+    appState.clear();
+    for (const k of Object.keys(tabsListByDir)) delete tabsListByDir[k];
+    setFailArrangementGets(0);
+    setFailBottomPanelGets(0);
+  });
+
+  async function withDirs() {
+    const store = useWorkspaceStore();
+    store.directories.push(dir("dir-1"), dir("dir-2"));
+    store.selectDirectory(dir("dir-1"));
+    return store;
+  }
+
+  it("reverts to center when the selected scope has no bottom panel", async () => {
+    const store = await withDirs();
+    await store.createBottomTerminal("dir-1");
+    expect(store.activeSurface).toBe("bottom");
+
+    store.selectDirectory(dir("dir-2"));
+
+    // ⌘T must open the session picker in dir-2, not silently create a bottom
+    // terminal there; ⌘W must not dispatch at a bottom pane that isn't shown.
+    expect(store.activeSurface).toBe("center");
+    expect(store.bottomFocusedSessionId).toBeUndefined();
+  });
+
+  it("reverts to center while the panel is collapsed and restores on expand", async () => {
+    const store = await withDirs();
+    await store.createBottomTerminal("dir-1");
+
+    store.setBottomPanelCollapsed("dir-1", true);
+    expect(store.activeSurface).toBe("center");
+
+    store.setBottomPanelCollapsed("dir-1", false);
+    expect(store.activeSurface).toBe("bottom");
+  });
+
+  it("reverts to center once the scope's last bottom tab closes", async () => {
+    const store = await withDirs();
+    const tab = await store.createBottomTerminal("dir-1");
+    expect(store.activeSurface).toBe("bottom");
+
+    await store.closeBottomPane(tab!.id);
+
+    expect(store.activeSurface).toBe("center");
+  });
+
+  it("returning to a scope with a live bottom panel does not re-arm bottom focus", async () => {
+    const store = await withDirs();
+    await store.createBottomTerminal("dir-1");
+    store.selectDirectory(dir("dir-2"));
+    const center = await store.newSession("dir-2");
+    store.focusSession(center.id);
+
+    store.selectDirectory(dir("dir-1"));
+
+    // Intent was reset to center by the center focus, so the stale bottom
+    // intent can't come back with the scope.
+    expect(store.activeSurface).toBe("center");
+  });
+});
+
+describe("bottom panel: cross-surface split cleanup", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    setActivePinia(createPinia());
+    setAppStateCalls.length = 0;
+    tabsClosedIds.length = 0;
+    tabsCreateCalls.length = 0;
+    scopePinnedCalls.length = 0;
+    nextId = 0;
+    setLiveTabIds([]);
+    appState.clear();
+    for (const k of Object.keys(tabsListByDir)) delete tabsListByDir[k];
+    setFailArrangementGets(0);
+    setFailBottomPanelGets(0);
+  });
+
+  it("drops the emptied source bottom tab instead of leaving a ghost", async () => {
+    const store = useWorkspaceStore();
+    store.directories.push(dir("dir-1"));
+    store.selectDirectory(dir("dir-1"));
+    const a = await store.createBottomTerminal("dir-1");
+    const b = await store.createBottomTerminal("dir-1");
+    const [tabA, tabB] = store.bottomPanelFor("dir-1")!.tabs;
+    expect(store.bottomPanelFor("dir-1")!.activeTabId).toBe(tabB);
+
+    // Pull B's solo pane into A — B's surface empties.
+    store.splitSessionWithExisting(a!.id, b!.id, "h");
+
+    const state = store.bottomPanelFor("dir-1")!;
+    expect(state.tabs).toEqual([tabA]);
+    expect(state.activeTabId).toBe(tabA);
+    expect(store.arrangementByScope[bottomSurfaceKey("dir-1", tabB)]).toBeUndefined();
+    expect(collectPaneIds(store.arrangementByScope[bottomSurfaceKey("dir-1", tabA)].layout)).toEqual([
+      a!.id,
+      b!.id,
+    ]);
+    // The panel body still resolves — no tab bar over an empty surface.
+    expect(store.bottomFocusedSessionId).toBe(b!.id);
+    // …and the persisted map matches memory.
+    const write = setAppStateCalls.filter((c) => c.key === "bottom_panel_by_scope").at(-1);
+    expect(JSON.parse(write!.value!)["dir-1"].tabs).toEqual([tabA]);
+  });
+
+  it("keeps the source tab when it still holds another pane", async () => {
+    const store = useWorkspaceStore();
+    store.directories.push(dir("dir-1"));
+    store.selectDirectory(dir("dir-1"));
+    const a = await store.createBottomTerminal("dir-1");
+    const b = await store.createBottomTerminal("dir-1");
+    await store.splitSessionWithNew(b!.id, "h");
+    const [tabA, tabB] = store.bottomPanelFor("dir-1")!.tabs;
+    const keyB = bottomSurfaceKey("dir-1", tabB);
+    const extra = collectPaneIds(store.arrangementByScope[keyB].layout).find((id) => id !== b!.id)!;
+
+    store.splitSessionWithExisting(a!.id, b!.id, "h");
+
+    expect(store.bottomPanelFor("dir-1")!.tabs).toEqual([tabA, tabB]);
+    expect(collectPaneIds(store.arrangementByScope[keyB].layout)).toEqual([extra]);
+    // The merged pane must be on screen: the destination tab becomes active.
+    expect(store.bottomPanelFor("dir-1")!.activeTabId).toBe(tabA);
+    expect(store.bottomFocusedSessionId).toBe(b!.id);
+  });
+});
+
+describe("bottom panel: load-path prune + hydrate guard", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    setActivePinia(createPinia());
+    setAppStateCalls.length = 0;
+    tabsClosedIds.length = 0;
+    tabsCreateCalls.length = 0;
+    nextId = 0;
+    setLiveTabIds([]);
+    appState.clear();
+    for (const k of Object.keys(tabsListByDir)) delete tabsListByDir[k];
+    setFailArrangementGets(0);
+    setFailBottomPanelGets(0);
+  });
+
+  function lastBottomWrite() {
+    return setAppStateCalls.filter((c) => c.key === "bottom_panel_by_scope").at(-1);
+  }
+
+  it("prunes dead bottom panes and drops a bottom tab that empties entirely", async () => {
+    appState.set("layout_model:dir-1", "2");
+    // bt-1: one live pane + one dead pane → survives, pruned.
+    // bt-2: only a dead pane → tab disappears.
+    appState.set(
+      "arrangement_by_scope",
+      JSON.stringify({
+        "dir-1": { version: 1, layout: { pane: "tab-center" } },
+        [bottomSurfaceKey("dir-1", "bt-1")]: {
+          version: 1,
+          layout: { direction: "h", children: [{ pane: "tab-live" }, { pane: "tab-dead" }], sizes: [50, 50] },
+        },
+        [bottomSurfaceKey("dir-1", "bt-2")]: { version: 1, layout: { pane: "tab-gone" } },
+      }),
+    );
+    appState.set(
+      "bottom_panel_by_scope",
+      JSON.stringify({
+        "dir-1": { tabs: ["bt-1", "bt-2"], activeTabId: "bt-2", height: 300, collapsed: false },
+      }),
+    );
+    tabsListByDir["dir-1"] = [
+      { id: "tab-center", directoryId: "dir-1", label: "1", cwd: null },
+      { id: "tab-live", directoryId: "dir-1", label: "2", cwd: null },
+    ];
+
+    const store = useWorkspaceStore();
+    await store.loadTabsForDirectory("dir-1");
+
+    const state = store.bottomPanelFor("dir-1")!;
+    expect(state.tabs).toEqual(["bt-1"]);
+    expect(state.activeTabId).toBe("bt-1");
+    expect(state.height).toBe(300);
+    expect(collectPaneIds(store.arrangementByScope[bottomSurfaceKey("dir-1", "bt-1")].layout)).toEqual([
+      "tab-live",
+    ]);
+    expect(store.arrangementByScope[bottomSurfaceKey("dir-1", "bt-2")]).toBeUndefined();
+    // Center is untouched, and the surviving bottom pane never leaks into it.
+    expect(store.arrangementByScope["dir-1"]).toEqual({ version: 1, layout: { pane: "tab-center" } });
+    expect(store.centerSessions("dir-1").map((t) => t.id)).toEqual(["tab-center"]);
+    // Both persisted maps agree with memory.
+    expect(JSON.parse(lastBottomWrite()!.value!)["dir-1"].tabs).toEqual(["bt-1"]);
+    const arrWrite = JSON.parse(lastArrangementWrite()!.value!);
+    expect(arrWrite[bottomSurfaceKey("dir-1", "bt-2")]).toBeUndefined();
+  });
+
+  it("center arrangements persisted before the bottom panel existed still load", async () => {
+    appState.set("layout_model:dir-1", "2");
+    appState.set(
+      "arrangement_by_scope",
+      JSON.stringify({ "dir-1": { version: 1, layout: { pane: "tab-center" } } }),
+    );
+    tabsListByDir["dir-1"] = [{ id: "tab-center", directoryId: "dir-1", label: "1", cwd: null }];
+
+    const store = useWorkspaceStore();
+    await store.loadTabsForDirectory("dir-1");
+
+    expect(store.arrangementByScope["dir-1"]).toEqual({ version: 1, layout: { pane: "tab-center" } });
+    expect(store.bottomPanelFor("dir-1")).toBeNull();
+    expect(store.centerSessions("dir-1").map((t) => t.id)).toEqual(["tab-center"]);
+  });
+
+  it("never persists the bottom map before a hydrate has succeeded", async () => {
+    appState.set("layout_model:dir-1", "2");
+    appState.set(
+      "bottom_panel_by_scope",
+      JSON.stringify({
+        "dir-2": { tabs: ["bt-9"], activeTabId: "bt-9", height: 260, collapsed: false },
+      }),
+    );
+    tabsListByDir["dir-1"] = [{ id: "tab-a", directoryId: "dir-1", label: "1", cwd: null }];
+    setFailBottomPanelGets(1);
+
+    const store = useWorkspaceStore();
+    store.directories.push(dir("dir-1"));
+    await store.loadTabsForDirectory("dir-1");
+    expect(lastBottomWrite()).toBeUndefined();
+
+    // A ⌘J-driven create retries hydration first, so dir-2's tabs survive.
+    await store.createBottomTerminal("dir-1");
+    const persisted = JSON.parse(lastBottomWrite()!.value!);
+    expect(persisted["dir-2"].tabs).toEqual(["bt-9"]);
+    expect(persisted["dir-1"].tabs).toHaveLength(1);
   });
 });

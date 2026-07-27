@@ -286,25 +286,38 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     return surfaceKeyBySession.value.get(sessionId) ?? tabDirId(sessionId);
   }
 
-  /** Which surface last took terminal focus — routes ⌘T/⌘W and split keys. */
-  const activeSurface = ref<"center" | "bottom">("center");
-
-  /** Drop a pane from a specific surface, deleting the surface if it empties. */
+  /** Drop a pane from a specific surface, deleting the surface if it empties.
+   *  An emptied BOTTOM surface also drops its tab — otherwise the tab id lingers
+   *  in bottomPanelByScope with no arrangement (ghost tab: a tab bar over an
+   *  empty body, self-healing only on the next app load). */
   function detachFromSurface(surfaceKey: string, sessionId: string): void {
     const current = arrangementFor(surfaceKey);
     if (!current) return;
-    writeArrangement(surfaceKey, removeFromArrangement(current, sessionId));
+    const next = removeFromArrangement(current, sessionId);
+    writeArrangement(surfaceKey, next);
+    if (next) return;
+    const parsed = parseBottomSurfaceKey(surfaceKey);
+    if (!parsed) return;
+    clearFocusForScope(surfaceKey);
+    const state = bottomPanelFor(parsed.dirId);
+    if (state?.tabs.includes(parsed.bottomTabId))
+      writeBottomPanel(parsed.dirId, closeBottomTabState(state, parsed.bottomTabId));
   }
 
   // ---- bottom terminal panel ----
   const bottomPanelByScope = ref<Record<string, BottomPanelState>>({});
   let bottomPanelHydrated: Promise<void> | null = null;
+  // Same guard as arrangementsHydratedOk: until one hydrate has succeeded the
+  // in-memory map is missing every OTHER scope, so persisting it would drop
+  // their bottom tabs for good (orphaning running PTYs with no UI to reach).
+  let bottomPanelHydratedOk = false;
 
   function hydrateBottomPanel(): Promise<void> {
     bottomPanelHydrated ??= useRpc()
       .request.getAppState({ key: "bottom_panel_by_scope" })
       .then((raw) => {
         bottomPanelByScope.value = { ...parseBottomPanelMap(raw), ...bottomPanelByScope.value };
+        bottomPanelHydratedOk = true;
       })
       .catch(() => {
         bottomPanelHydrated = null; // retry on next load
@@ -321,21 +334,44 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     if (state && state.tabs.length) map[dirId] = state;
     else delete map[dirId];
     bottomPanelByScope.value = map;
+    if (!bottomPanelHydratedOk) return;
     useRpc()
       .request.setAppState({ key: "bottom_panel_by_scope", value: serializeBottomPanelMap(map) })
       .catch(() => {});
   }
 
+  /** Which surface last took terminal focus — routes ⌘T/⌘W, ⌘W's kill and the
+   *  split keys. INTENT only: `activeSurface` below discards it whenever the
+   *  selected scope has no expanded, non-empty bottom panel, so scope switches,
+   *  ⌘J collapses and the last bottom tab closing all invalidate it without any
+   *  per-callsite bookkeeping. */
+  const activeSurfaceIntent = ref<"center" | "bottom">("center");
+
+  /** Is the selected scope's bottom panel actually on screen and non-empty? */
+  const bottomSurfaceVisible = computed(() => {
+    const dirId = selectedDirectoryId.value;
+    const state = dirId ? bottomPanelByScope.value[dirId] : null;
+    return !!state && state.tabs.length > 0 && !state.collapsed;
+  });
+
+  const activeSurface = computed<"center" | "bottom">(() =>
+    activeSurfaceIntent.value === "bottom" && bottomSurfaceVisible.value ? "bottom" : "center",
+  );
+
   /** Sessions in `dirId` that live in the CENTER (i.e. not in a bottom tab). */
   function centerSessions(dirId: string): Tab[] {
+    const bySession = surfaceKeyBySession.value;
     return (terminalTabsByDirectory.value[dirId] ?? []).filter(
-      (t) => !isBottomSurface(surfaceKeyFor(t.id) ?? dirId),
+      (t) => !isBottomSurface(bySession.get(t.id) ?? dirId),
     );
   }
 
   async function createBottomTerminal(dirId: string): Promise<Tab | null> {
     const dir = directories.value.find((d) => d.id === dirId);
     if (!dir) return null;
+    // Never build on an un-hydrated map (writeBottomPanel would refuse to
+    // persist, silently losing the new tab across a relaunch).
+    await hydrateBottomPanel();
     const existing = terminalTabsByDirectory.value[dirId] ?? [];
     const tab = await useRpc().request.tabsCreate({
       directoryId: dirId,
@@ -395,7 +431,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       const nextArr = arrangementFor(bottomSurfaceKey(dirId, nextTabId));
       if (nextArr && wasFocused) focusSession(firstLeaf(nextArr.layout));
     } else {
-      activeSurface.value = "center";
+      activeSurfaceIntent.value = "center";
     }
   }
 
@@ -458,10 +494,11 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     const dirId = parsed?.dirId ?? surfaceKey;
     const arr = arrangementFor(surfaceKey);
     const inView = new Set(arr ? collectPaneIds(arr.layout) : []);
+    const bySession = surfaceKeyBySession.value;
     return buildSessionsList(directories.value, terminalTabsByDirectory.value, tabRuntime.value, dirId)
       .filter((row) => {
         if (inView.has(row.tab.id) || row.tab.archivedAt != null) return false;
-        const key = surfaceKeyFor(row.tab.id) ?? dirId;
+        const key = bySession.get(row.tab.id) ?? dirId;
         return parsed ? isBottomSurface(key) : !isBottomSurface(key);
       });
   }
@@ -479,9 +516,12 @@ export const useWorkspaceStore = defineStore("workspace", () => {
           focusedByScope.value = { ...stored, ...focusedByScope.value };
           // focusedSessionId reads activeTabIdByDirectory — mirror hydrated
           // focus into it without clobbering focus set this session.
+          // Bottom surface keys are not directory ids — mirroring them would
+          // land inert `bottom:<dir>:<uuid>` entries in the selection map that
+          // only accumulate across restarts.
           const active = { ...activeTabIdByDirectory.value };
           for (const [dirId, sid] of Object.entries(stored))
-            if (sid && active[dirId] === undefined) active[dirId] = sid;
+            if (sid && !isBottomSurface(dirId) && active[dirId] === undefined) active[dirId] = sid;
           activeTabIdByDirectory.value = active;
         } catch {}
       })
@@ -496,7 +536,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     if (!surfaceKey) return;
     const changed = focusedByScope.value[surfaceKey] !== sessionId;
     focusedByScope.value = { ...focusedByScope.value, [surfaceKey]: sessionId };
-    activeSurface.value = isBottomSurface(surfaceKey) ? "bottom" : "center";
+    activeSurfaceIntent.value = isBottomSurface(surfaceKey) ? "bottom" : "center";
     // Center focus mirrors into activeTabIdByDirectory (the selection model);
     // bottom focus must NOT, or focusing a bottom terminal would move the
     // center's active session.
@@ -621,6 +661,15 @@ export const useWorkspaceStore = defineStore("workspace", () => {
         surfaceKey,
         insertIntoArrangement(arrangementFor(surfaceKey), sessionId, otherSessionId, direction, before),
       );
+      // Show the destination tab: detaching the source may have handed "active"
+      // to an unrelated neighbour, leaving the merged pane off screen.
+      const dest = parseBottomSurfaceKey(surfaceKey);
+      const destState = dest ? bottomPanelFor(dest.dirId) : null;
+      if (dest && destState)
+        writeBottomPanel(dest.dirId, {
+          ...activateBottomTab(destState, dest.bottomTabId),
+          collapsed: false,
+        });
     }
     focusSession(otherSessionId);
   }
@@ -788,7 +837,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     if (arrangementsHydratedOk) {
       const live = new Set(tabs.map((t) => t.id));
       // Bottom surfaces first, so centerSessions() below sees the truth.
-      const bottom = bottomPanelFor(dirId);
+      const bottom = bottomPanelHydratedOk ? bottomPanelFor(dirId) : null;
       if (bottom) {
         const survivors = new Set<string>();
         for (const bottomTabId of bottom.tabs) {
@@ -1365,12 +1414,16 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
   function sessionsList(scope: "all" | "current"): SessionRow[] {
     const wantDir = scope === "current" ? selectedDirectoryId.value : null;
-    return buildSessionsList(
+    const rows = buildSessionsList(
       directories.value,
       terminalTabsByDirectory.value,
       tabRuntime.value,
       wantDir,
-    ).filter((row) => !isBottomSurface(surfaceKeyFor(row.tab.id) ?? row.directory.id));
+    );
+    // Index lookup, never surfaceKeyFor — its tabDirId fallback would rescan
+    // every directory for every row the arrangements don't hold.
+    const bySession = surfaceKeyBySession.value;
+    return rows.filter((row) => !isBottomSurface(bySession.get(row.tab.id) ?? row.directory.id));
   }
 
   function agentsList(scope: "all" | "current"): { tab: Tab; directory: WorkingDirectory }[] {

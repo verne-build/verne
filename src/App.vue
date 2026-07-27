@@ -358,12 +358,13 @@ function cycleTab(dir: 1 | -1) {
   store.selectSession(next.id);
 }
 
-// Activate terminal tab N (1-based) in the selected directory.
+// Activate terminal tab N (1-based) in the selected directory. Center only —
+// bottom terminals aren't in the sidebar, so counting them would desync ⌘1–9
+// from what the user is numbering off.
 function selectTabByIndex(n: number) {
   const dirId = store.selectedDirectoryId;
   if (!dirId) return false;
-  const tabs = store.terminalTabsByDirectory[dirId] ?? [];
-  const tab = tabs[n - 1];
+  const tab = store.centerSessions(dirId)[n - 1];
   if (!tab) return false;
   store.selectSession(tab.id);
   return true;
@@ -376,7 +377,7 @@ function closeActiveTab() {
   const el = document.activeElement as HTMLElement | null;
   if (el?.closest("[data-file-panel]")) {
     window.dispatchEvent(new CustomEvent("close-active-file-tab"));
-  } else if (store.activeSurface === "bottom") {
+  } else if (store.activeSurface === "bottom" && store.bottomFocusedSessionId) {
     window.dispatchEvent(new CustomEvent("close-active-bottom-pane"));
   } else {
     window.dispatchEvent(new CustomEvent("close-active-terminal-tab"));

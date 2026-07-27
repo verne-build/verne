@@ -80,7 +80,13 @@ function onCloseActiveTerminal() {
   else void endSession(id); // solo: ⌘W now archives (or deletes if nothing is live)
 }
 
+// Surface-aware, same routing as ⌘W: with focus in the bottom panel this must
+// kill that scratch terminal, not the center session behind it.
 function onKillActiveSession() {
+  if (store.activeSurface === "bottom" && store.bottomFocusedSessionId) {
+    window.dispatchEvent(new CustomEvent("close-active-bottom-pane"));
+    return;
+  }
   void endSession(store.focusedSessionId);
 }
 

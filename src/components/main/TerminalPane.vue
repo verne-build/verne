@@ -14,6 +14,7 @@ import { useShortcuts } from "@/composables/useShortcuts";
 import { agentIconSurfaceForTheme, getAgentIconForSurface } from "@/composables/useAgentIcon";
 import { useTheme } from "@/composables/useTheme";
 import { sessionEndAction, sessionEndLabel, shouldConfirmArchive } from "@/lib/sessionEnd";
+import { confirmCloseTerminals, runningProcessLabel } from "@/composables/useConfirmClose";
 import GridTerminal from "@/components/terminal/GridTerminal.vue";
 import {
   getDroppedPaths,
@@ -260,14 +261,12 @@ function splitWithExisting(otherId: string) {
   store.splitSessionWithExisting(props.paneId, otherId, "h");
 }
 
+// Never in close mode: a bottom terminal dropped from its arrangement has no
+// sessions-sidebar row to return through, and surfaceKeyFor would then resolve
+// it to the CENTER — promoting a scratch terminal into the sessions pool.
 function removeFromView() {
+  if (props.endMode === "close") return;
   store.removeFromView(props.paneId);
-}
-
-function runningProcessLabel(): string {
-  const a = agentType.value;
-  if (a) return a.charAt(0).toUpperCase() + a.slice(1);
-  return foregroundCommand.value || "a process";
 }
 
 // Archive replaces "close" for a live session; delete only once nothing is live.
@@ -278,7 +277,7 @@ const endAction = computed(() =>
 
 async function endSession() {
   if (props.endMode === "close") {
-    if (await confirmKill()) await store.closeBottomPane(props.paneId);
+    if (await confirmCloseTerminals([props.paneId])) await store.closeBottomPane(props.paneId);
     return;
   }
   if (endAction.value === "delete") {
@@ -287,7 +286,7 @@ async function endSession() {
   }
   if (shouldConfirmArchive(agentState.value)) {
     const ok = await ask("Archive Session?", {
-      detail: `${runningProcessLabel()} is still running. Archiving stops it and keeps a read-only terminal snapshot.`,
+      detail: `${runningProcessLabel(props.paneId)} is still running. Archiving stops it and keeps a read-only terminal snapshot.`,
       confirmLabel: "Archive",
     });
     if (!ok) return;
@@ -297,19 +296,6 @@ async function endSession() {
   } catch (e) {
     window.alert(`Failed to archive session: ${e}`);
   }
-}
-
-// Bottom panel terminals have no archive fallback, so confirm before killing a
-// live process.
-async function confirmKill(): Promise<boolean> {
-  const running = await rpc.request
-    .tabsHasRunningChild({ id: props.paneId })
-    .catch(() => false);
-  if (!running) return true;
-  return await ask("Close Terminal?", {
-    detail: `${runningProcessLabel()} is still running. Closing kills it.`,
-    confirmLabel: "Close",
-  });
 }
 
 const endLabel = computed(() =>
@@ -396,14 +382,16 @@ onUnmounted(() => {
           </DropdownMenuSub>
         </DropdownMenuContent>
       </DropdownMenu>
+      <!-- Close mode has no "remove from view": the X kills this scratch pane
+           (with the running-process confirm) instead of orphaning it. -->
       <Button
         v-if="multi"
         data-no-drag
         size="icon-xs"
         variant="ghost"
         class="text-muted-foreground"
-        title="Remove From View"
-        @click="removeFromView"
+        :title="endMode === 'close' ? 'Close Terminal' : 'Remove From View'"
+        @click="endMode === 'close' ? endSession() : removeFromView()"
       >
         <X class="size-3.5" />
       </Button>
@@ -548,7 +536,9 @@ onUnmounted(() => {
           Split Down
           <ContextMenuShortcut>{{ shortcutText("split-pane-v") }}</ContextMenuShortcut>
         </ContextMenuItem>
-        <ContextMenuItem v-if="multi" @select="removeFromView">Remove From View</ContextMenuItem>
+        <ContextMenuItem v-if="multi && endMode !== 'close'" @select="removeFromView">
+          Remove From View
+        </ContextMenuItem>
         <ContextMenuItem v-if="isExited && !isArchived && tab?.resumeAvailable" @select="resumeAgent">
           Resume Agent
         </ContextMenuItem>

@@ -8,6 +8,7 @@ import { useWorkspaceStore } from "@/stores/workspace";
 import { useShortcuts } from "@/composables/useShortcuts";
 import { collectPaneIds, paneCount } from "@/lib/paneLayout";
 import { bottomSurfaceKey } from "@/lib/bottomPanel";
+import { confirmCloseTerminals } from "@/composables/useConfirmClose";
 import { resolveDisplayState, aggregateGroupState, stripSpinner } from "@/lib/agentStatus";
 import type { DisplayState } from "@/lib/agentStatus";
 import StatusIndicator from "@/components/StatusIndicator.vue";
@@ -101,13 +102,23 @@ function focus(id: string) {
   store.activateBottomPanelTab(props.dirId, id);
 }
 
+// Closing a tab kills every pane in it, so confirm once over the whole group.
+async function confirmCloseTab(t: BottomTab): Promise<boolean> {
+  return await confirmCloseTerminals(collectPaneIds(t.layout), "Close Tab?");
+}
+
 async function close(id: string, e?: MouseEvent) {
   e?.stopPropagation();
+  const t = tabs.value.find((x) => x.id === id);
+  if (!t || !(await confirmCloseTab(t))) return;
   await store.closeBottomTab(props.dirId, id);
 }
 
 async function closeAll() {
-  for (const t of [...tabs.value]) await store.closeBottomTab(props.dirId, t.id);
+  for (const t of [...tabs.value]) {
+    if (!(await confirmCloseTab(t))) continue;
+    await store.closeBottomTab(props.dirId, t.id);
+  }
 }
 
 function startRename(id: string) {
