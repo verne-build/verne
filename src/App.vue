@@ -397,7 +397,7 @@ function focusFilePanel(view: "sc" | "explorer" | "notes") {
   void nextTick(() => window.dispatchEvent(new CustomEvent("focus-file-panel", { detail: view })));
 }
 
-function focusTerminal() {
+function focusSession() {
   fileMaximized.value = false;
   window.dispatchEvent(new CustomEvent("terminal-action", { detail: "focus" }));
 }
@@ -435,7 +435,7 @@ function handleMenuAction(e: Event) {
   else if (action === "focusExplorer") focusFilePanel("explorer");
   else if (action === "focusSourceControl") focusFilePanel("sc");
   else if (action === "focusNotes") focusFilePanel("notes");
-  else if (action === "focusTerminal") focusTerminal();
+  else if (action === "focusSession") focusSession();
   else if (action === "toggleBottomPanel") toggleBottomPanel();
   else if (action === "checkForUpdates") window.dispatchEvent(new CustomEvent("check-for-updates"));
   else if (action === "restartToUpdate") void invoke("updater_quit_and_install");

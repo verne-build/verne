@@ -27,7 +27,7 @@ export const SHORTCUT_CATALOG: ShortcutDef[] = [
   { name: "toggle-right-panel", label: "Toggle Right Panel", category: "View", defaultBinding: "Mod+Alt+B", target: "menu" },
   { name: "focus-file-explorer", label: "Focus File Explorer", category: "View", defaultBinding: "Mod+Shift+E", target: "menu" },
   { name: "focus-source-control", label: "Focus Source Control", category: "View", defaultBinding: "Ctrl+Shift+G", target: "menu" },
-  { name: "toggle-bottom-panel", label: "Toggle Bottom Panel", category: "View", defaultBinding: "Mod+J", target: "menu" },
+  { name: "toggle-bottom-panel", label: "Toggle Bottom Panel", category: "View", defaultBinding: "Ctrl+`", target: "menu" },
 
   // Navigation
   { name: "command-palette", label: "Command Palette", category: "Navigation", defaultBinding: "Mod+K", target: "menu" },
@@ -40,7 +40,7 @@ export const SHORTCUT_CATALOG: ShortcutDef[] = [
   { name: "jump-to-tab", label: "Jump to Tab 1–9", category: "Navigation", defaultBinding: "Cmd+1", target: "renderer" },
 
   // Terminal
-  { name: "focus-terminal", label: "Focus Terminal", category: "Terminal", defaultBinding: "Ctrl+`", target: "menu" },
+  { name: "focus-session", label: "Focus Session", category: "Terminal", defaultBinding: "Ctrl+Shift+`", target: "menu" },
   // Split bindings are Cmd-only (literal) to preserve "only when a terminal owns
   // focus and never on Ctrl+D (EOF)" — see App.vue.
   { name: "split-pane-h", label: "Split Pane Horizontally", category: "Terminal", defaultBinding: "Cmd+D", target: "renderer" },

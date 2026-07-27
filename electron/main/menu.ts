@@ -120,7 +120,7 @@ export function buildAppMenu(getWindow: () => BrowserWindow, onRestartDaemon?: (
         { type: "separator" },
         { label: "Focus File Explorer", accelerator: accel("focus-file-explorer"), click: () => send("focusExplorer") },
         { label: "Focus Source Control", accelerator: accel("focus-source-control"), click: () => send("focusSourceControl") },
-        { label: "Focus Terminal", accelerator: accel("focus-terminal"), click: () => send("focusTerminal") },
+        { label: "Focus Session", accelerator: accel("focus-session"), click: () => send("focusSession") },
       ],
     },
     // Go — Tauri: Command Palette(⌘K), Go to File…(⌘P), Run Action…(⌘⇧P), sep,
