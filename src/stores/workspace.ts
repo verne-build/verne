@@ -113,6 +113,33 @@ export const useWorkspaceStore = defineStore("workspace", () => {
           : completedInBackground || prev?.needsAcknowledgement,
     });
     triggerRef(tabRuntime);
+    patchTabIdentityFromEvent(payload);
+  }
+
+  /** Main stamps the LATCHED identity + derived `resumeAvailable` on every
+   *  tab-updated. Patch the stored row so Resume appears as soon as a session id
+   *  is captured — the row is otherwise only refreshed by tabs_list/create/
+   *  rename/archive, so resume would stay dead until an app relaunch. Only swaps
+   *  when a field actually changed, to keep the reactive array off the status
+   *  tick. */
+  function patchTabIdentityFromEvent(payload: TabUpdatedEvent): void {
+    if (payload.resumeAvailable === undefined && payload.lastAgentType === undefined) return;
+    const dirId = tabDirId(payload.tabId);
+    if (!dirId) return;
+    const existing = (terminalTabsByDirectory.value[dirId] ?? []).find(
+      (t) => t.id === payload.tabId,
+    );
+    if (!existing) return;
+    const lastAgentType = payload.lastAgentType ?? undefined;
+    const lastAgentSessionId = payload.lastAgentSessionId ?? undefined;
+    const resumeAvailable = payload.resumeAvailable ?? false;
+    if (
+      existing.lastAgentType === lastAgentType
+      && existing.lastAgentSessionId === lastAgentSessionId
+      && (existing.resumeAvailable ?? false) === resumeAvailable
+    )
+      return;
+    replaceTab({ ...existing, lastAgentType, lastAgentSessionId, resumeAvailable });
   }
 
   // Lifecycle is orthogonal to agent state (spec: session rows carry both).
@@ -550,8 +577,13 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     // agent type but not the state (daemon was restarted → state column was
     // cleared), default to "idle" not "unknown" — a known agent is by
     // definition not unknown.
+    // Gated on lastAgentState, NOT lastAgentType: the type is latched now, so an
+    // exited tab keeps it and would seed a bogus "idle" dot (permanently if
+    // listLiveTabIds rejects and lifecycle stays empty = assumed running).
+    // clearStaleTabStates nulls the state column for every tab with no live PTY
+    // while exempting archived rows, so archived tabs still seed.
     for (const t of tabs) {
-      if (t.lastAgentType || t.lastAgentState) {
+      if (t.lastAgentState) {
         const prev = tabRuntime.value.get(t.id);
         const fallback: AgentState = t.lastAgentType ? "idle" : "unknown";
         tabRuntime.value.set(t.id, {
@@ -1077,8 +1109,11 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   }
 
   function agentsList(scope: "all" | "current"): { tab: Tab; directory: WorkingDirectory }[] {
+    // A LIVE agent has a live state, not merely a latched type (same re-keying as
+    // agentCount in db/tabs.ts) — otherwise every session that ever ran an agent
+    // shows up in the palette.
     return sessionsList(scope)
-      .filter((r) => r.agentType)
+      .filter((r) => r.agentType && tabRuntime.value.get(r.tab.id)?.agentState != null)
       .map(({ tab, directory }) => ({ tab, directory }));
   }
 

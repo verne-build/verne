@@ -180,8 +180,9 @@ const otherSessions = computed(() => {
     );
 });
 
-// tabsSessionId → ensure_tab_session is idempotent (returns the existing
-// session, or respawns after a daemon restart). Only called on mount.
+// tabsSessionId → the daemon's spawn_tab_pty is idempotent (get_session_by_agent
+// returns the existing session, or it respawns after a daemon restart). Only
+// called on mount.
 // opts.resume swaps in tabs_resume, which respawns execing `claude --resume
 // <id>` instead of the tab's own launch_command.
 let mountGen = 0;
@@ -204,8 +205,12 @@ async function mountActive(opts: { force?: boolean; resume?: boolean } = {}) {
       : await rpc.request.tabsSessionId({ id: props.paneId });
   } catch (e) {
     // Resume can fail for real (stale id, agent CLI gone). Keep the overlay so
-    // Restart is still reachable.
-    if (gen === mountGen) window.alert(`Failed to resume session: ${e instanceof Error ? e.message : String(e)}`);
+    // Restart is still reachable. A plain restart fails differently (stale cwd
+    // → ENOENT, spawn slot) — don't mislabel it a resume failure.
+    if (gen === mountGen)
+      window.alert(
+        `${opts.resume ? "Failed to resume session" : "Failed to restart session"}: ${e instanceof Error ? e.message : String(e)}`,
+      );
     return;
   }
   if (gen !== mountGen) return;

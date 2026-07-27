@@ -536,6 +536,11 @@ export interface TabUpdatedEvent {
   /** Renderer acknowledgement state: completed while this pane was backgrounded. */
   needsAcknowledgement?: boolean;
   lastAgentSessionId?: string;
+  /** Latched identity, stamped by Electron main from the DB row (the daemon's
+   *  own fields go null when the agent exits). */
+  lastAgentType?: string | null;
+  /** Derived in main from the latched identity (resume-registry lives there). */
+  resumeAvailable?: boolean;
   /** Daemon-resolved agent title, usually a hook-captured user prompt. */
   displayTitle?: string | null;
   /** Name of the current foreground command when no agent owns the tab. */

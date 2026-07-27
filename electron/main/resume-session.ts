@@ -37,8 +37,9 @@ export function createResumeSessionOperations(deps: ResumeSessionDeps): ResumeSe
     const launchOverride = resumeCommand(tab.lastAgentType, tab.lastAgentSessionId);
     if (!launchOverride) throw new Error("resume unavailable");
 
-    // tab_spawn is idempotent (ensure_tab_session returns the existing
-    // session), so a redundant call attaches rather than starting a second agent.
+    // tab_spawn is idempotent (the daemon's spawn_tab_pty returns the existing
+    // session from get_session_by_agent — daemon/crates/core/src/daemon/tab_pty.rs),
+    // so a redundant call attaches rather than starting a second agent.
     return deps.daemonRequest<string>("tab_spawn", { plan: deps.buildPlan(tab, launchOverride) });
   }
 

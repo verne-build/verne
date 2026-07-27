@@ -193,7 +193,12 @@ export function clearStaleTabStates(db: DatabaseSync, liveIds: string[]): void {
  *  persistence — resume needs the type + id to outlive the process.
  *
  *  `last_agent_state` is the exception: it IS liveness, so it must be able to
- *  go null. */
+ *  go null.
+ *
+ *  The identity is latched as a PAIR, atomically: when the incoming type differs
+ *  from the stored one the agent genuinely changed, so the id and title are taken
+ *  verbatim (including null) instead of coalesced. Independent COALESCEs would
+ *  let type=codex keep a claude session id and resume `codex resume <claude-id>`. */
 export function updateTabPresentationSnapshot(
   db: DatabaseSync,
   snapshot: {
@@ -205,13 +210,26 @@ export function updateTabPresentationSnapshot(
   },
 ): void {
   if (!snapshot.tabId) return;
+  const prev = db
+    .prepare("SELECT last_agent_type AS t FROM tabs WHERE id = ?")
+    .get(snapshot.tabId) as { t: string | null } | undefined;
+  if (!prev) return;
+  const agentChanged =
+    snapshot.agentType != null && prev.t != null && snapshot.agentType !== prev.t;
   db.prepare(
-    `UPDATE tabs
-     SET last_agent_type       = COALESCE(?, last_agent_type),
-         last_agent_session_id = COALESCE(?, last_agent_session_id),
-         display_title         = COALESCE(?, display_title),
-         last_agent_state      = ?
-     WHERE id = ?`,
+    agentChanged
+      ? `UPDATE tabs
+           SET last_agent_type       = ?,
+               last_agent_session_id = ?,
+               display_title         = ?,
+               last_agent_state      = ?
+           WHERE id = ?`
+      : `UPDATE tabs
+           SET last_agent_type       = COALESCE(?, last_agent_type),
+               last_agent_session_id = COALESCE(?, last_agent_session_id),
+               display_title         = COALESCE(?, display_title),
+               last_agent_state      = ?
+           WHERE id = ?`,
   ).run(
     snapshot.agentType,
     snapshot.sessionId,

@@ -189,6 +189,31 @@ describe("tabs", () => {
     expect(getTab(db, "t1")!.lastAgentSessionId).toBe("new");
   });
 
+  // The identity is a PAIR: a different agent type must not inherit the previous
+  // agent's session id, or resume execs `codex resume <claude-id>`.
+  it("a changed agentType takes the incoming id/title verbatim, even null", () => {
+    const db = tmpDb();
+    insertTab(db, mkTab({
+      lastAgentType: "claude", lastAgentSessionId: "claude-id", displayTitle: "Old claude title",
+    }));
+    updateTabPresentationSnapshot(db, {
+      tabId: "t1", agentType: "codex", agentState: "working", sessionId: null, displayTitle: null,
+    });
+    const t = getTab(db, "t1")!;
+    expect(t.lastAgentType).toBe("codex");
+    expect(t.lastAgentSessionId).toBeUndefined();
+    expect(t.displayTitle).toBeUndefined();
+  });
+
+  it("the SAME agentType with a null id still retains the stored id", () => {
+    const db = tmpDb();
+    insertTab(db, mkTab({ lastAgentType: "claude", lastAgentSessionId: "claude-id" }));
+    updateTabPresentationSnapshot(db, {
+      tabId: "t1", agentType: "claude", agentState: "working", sessionId: null, displayTitle: null,
+    });
+    expect(getTab(db, "t1")!.lastAgentSessionId).toBe("claude-id");
+  });
+
   it("latches displayTitle: non-null writes, null keeps", () => {
     const db = tmpDb();
     insertTab(db, mkTab());

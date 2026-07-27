@@ -2,7 +2,8 @@ import { ipcMain, BrowserWindow } from "electron";
 import type { DaemonClient } from "./daemon-client";
 import { handleTabUpdate } from "./native/notifications";
 import { getDb } from "./db/connection";
-import { updateTabPresentationSnapshot } from "./db/tabs";
+import { updateTabPresentationSnapshot, getTab } from "./db/tabs";
+import { canResumeAgent } from "./resume-registry";
 import { handleSessionCwd } from "./scope-repin";
 
 type Handler = (params: any, win: BrowserWindow) => Promise<unknown> | unknown;
@@ -88,10 +89,12 @@ export function makeForward(getWindow: () => BrowserWindow, sidecar: DaemonClien
     // Prompts here can carry hook bodies up to ~4MB — never structured-clone
     // that raw payload into the renderer, which has no listener for it anyway.
     if (name === "agent-title-requested") return;
+    let out = payload;
     if (name === "tab-updated") {
+      const tabId = typeof update.tabId === "string" ? update.tabId : "";
       try {
         updateTabPresentationSnapshot(getDb(), {
-          tabId: typeof update.tabId === "string" ? update.tabId : "",
+          tabId,
           agentType: typeof update.agentType === "string" ? update.agentType : null,
           agentState: typeof update.agentState === "string" ? update.agentState : null,
           sessionId:
@@ -103,6 +106,24 @@ export function makeForward(getWindow: () => BrowserWindow, sidecar: DaemonClien
       } catch (e) {
         console.error("[agent-status] persist snapshot:", e);
       }
+      // Stamp the LATCHED identity + derived resumeAvailable onto the event: the
+      // daemon's payload nulls both the moment the agent exits, and the renderer
+      // can't derive resumeAvailable itself (resume-registry is main-side). Without
+      // this the renderer row keeps whatever tabs_list saw, so Resume stays hidden
+      // for a session whose id was captured after load. PK read — cheap.
+      try {
+        const row = tabId ? getTab(getDb(), tabId) : undefined;
+        if (row) {
+          out = {
+            ...update,
+            lastAgentType: row.lastAgentType ?? null,
+            lastAgentSessionId: row.lastAgentSessionId,
+            resumeAvailable: canResumeAgent(row.lastAgentType, row.lastAgentSessionId),
+          };
+        }
+      } catch (e) {
+        console.error("[agent-status] latched identity:", e);
+      }
     }
 
     let win: BrowserWindow;
@@ -113,6 +134,6 @@ export function makeForward(getWindow: () => BrowserWindow, sidecar: DaemonClien
       try { handleTabUpdate(update, win); }
       catch (e) { console.error("[notifications] handleTabUpdate:", e); }
     }
-    win.webContents.send("daemon-event", name, payload);
+    win.webContents.send("daemon-event", name, out);
   };
 }

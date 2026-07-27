@@ -11,6 +11,9 @@ vi.mock("./db/connection", async (importOriginal) => {
 });
 
 import { makeForward } from "./ipc-router";
+import { getDb } from "./db/connection";
+import { insertDirectory } from "./db/directories";
+import { insertTab, getTab } from "./db/tabs";
 
 const sidecar = { request: vi.fn(async () => null) } as unknown as DaemonClient;
 
@@ -68,5 +71,38 @@ describe("makeForward", () => {
     const { win, send } = fakeWin({});
     makeForward(() => win, sidecar)("agent-title-requested", { tabId: "t1", prompt: "hi" });
     expect(send).not.toHaveBeenCalled();
+  });
+
+  // The renderer can't derive resumeAvailable (resume-registry is main-side) and
+  // only refreshes rows on tabs_list/create/rename/archive — so tab-updated must
+  // carry the LATCHED identity, not the daemon's (which nulls on agent exit).
+  it("stamps latched identity + resumeAvailable on tab-updated", () => {
+    const db = getDb();
+    insertDirectory(db, { id: "dr", path: "/tmp/dr", name: "dr", createdAt: 0, sortOrder: 0 });
+    insertTab(db, {
+      id: "tr", directoryId: "dr", label: "1", cwd: "/tmp/dr",
+      sortOrder: 0, createdAt: 0, userRenamed: false,
+    });
+    const { win, send } = fakeWin({});
+    const fwd = makeForward(() => win, sidecar);
+
+    // Hook lands the session id — payload must now advertise resume.
+    fwd("tab-updated", {
+      tabId: "tr", agentType: "claude", agentState: "working", lastAgentSessionId: "sid-1",
+    });
+    expect(send).toHaveBeenLastCalledWith("daemon-event", "tab-updated", expect.objectContaining({
+      lastAgentType: "claude",
+      lastAgentSessionId: "sid-1",
+      resumeAvailable: true,
+    }));
+
+    // Agent quits: daemon publishes nulls, latched values still ride the event.
+    fwd("tab-updated", { tabId: "tr", agentType: null, agentState: null });
+    expect(send).toHaveBeenLastCalledWith("daemon-event", "tab-updated", expect.objectContaining({
+      lastAgentType: "claude",
+      lastAgentSessionId: "sid-1",
+      resumeAvailable: true,
+    }));
+    expect(getTab(db, "tr")!.lastAgentState).toBeUndefined();
   });
 });
