@@ -182,8 +182,10 @@ const otherSessions = computed(() => {
 
 // tabsSessionId → ensure_tab_session is idempotent (returns the existing
 // session, or respawns after a daemon restart). Only called on mount.
+// opts.resume swaps in tabs_resume, which respawns execing `claude --resume
+// <id>` instead of the tab's own launch_command.
 let mountGen = 0;
-async function mountActive(opts: { force?: boolean } = {}) {
+async function mountActive(opts: { force?: boolean; resume?: boolean } = {}) {
   // Archived tabs render from the stored snapshot and must NEVER spawn a PTY —
   // guard before tabsSessionId so no session is ever resolved for them.
   if (isArchived.value) {
@@ -191,12 +193,21 @@ async function mountActive(opts: { force?: boolean } = {}) {
     return;
   }
   // Lifecycle-aware: an exited session shows the overlay instead of silently
-  // respawning. Explicit restart (overlay click / restart event) forces.
+  // respawning. Explicit restart/resume (overlay click / event) forces.
   if (!opts.force && store.sessionLifecycle.get(props.paneId) === "exited") return;
   const gen = ++mountGen;
-  // Resolve the PTY session id; GridTerminal opens its own grid WS connection
-  // (the xterm path is no longer used here).
-  const sid = await rpc.request.tabsSessionId({ id: props.paneId });
+  // Resolve the PTY session id; GridTerminal opens its own grid WS connection.
+  let sid: string | null;
+  try {
+    sid = opts.resume
+      ? await rpc.request.tabsResume({ id: props.paneId })
+      : await rpc.request.tabsSessionId({ id: props.paneId });
+  } catch (e) {
+    // Resume can fail for real (stale id, agent CLI gone). Keep the overlay so
+    // Restart is still reachable.
+    if (gen === mountGen) window.alert(`Failed to resume session: ${e instanceof Error ? e.message : String(e)}`);
+    return;
+  }
   if (gen !== mountGen) return;
   if (!sid) return;
   sessionId.value = sid;
@@ -207,11 +218,17 @@ function restart() {
   void mountActive({ force: true });
 }
 
-// Sidebar Restart for an already-in-view exited session: selectSession only
-// focuses, so the pane must be told to respawn explicitly.
+function resumeAgent() {
+  void mountActive({ force: true, resume: true });
+}
+
+// Sidebar Restart/Resume for an already-in-view exited session: selectSession
+// only focuses, so the pane must be told to respawn explicitly.
 function onRestartEvent(e: Event) {
-  const detail = (e as CustomEvent<{ tabId: string }>).detail;
-  if (detail?.tabId === props.paneId) restart();
+  const detail = (e as CustomEvent<{ tabId: string; resume?: boolean }>).detail;
+  if (detail?.tabId !== props.paneId) return;
+  if (detail.resume) resumeAgent();
+  else restart();
 }
 
 watch(() => props.paneId, () => { void mountActive(); });
@@ -459,17 +476,24 @@ onUnmounted(() => {
             v-if="dropActive"
             class="pointer-events-none absolute inset-0 z-20 border-2 border-primary/60 bg-primary/5"
           />
-          <!-- Exited overlay: PTY is gone; click to respawn. Never for archived
-               (there's no PTY to restart). -->
+          <!-- Exited overlay: PTY is gone. Resume is preferred when the agent's
+               session id survived; plain restart otherwise. Never for archived
+               (that's the un-archive flow). -->
           <button
             v-if="isExited && !isArchived"
             type="button"
             class="absolute inset-0 z-40 flex items-center justify-center bg-[var(--editor-bg)]/50 opacity-50 hover:opacity-70 transition-opacity cursor-pointer"
-            @click="restart"
+            @click="tab?.resumeAvailable ? resumeAgent() : restart()"
           >
             <span class="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <RotateCw class="size-3.5" />
-              Session exited — click to restart
+              <template v-if="tab?.resumeAvailable">
+                <Play class="size-3.5" />
+                Session exited — click to resume agent
+              </template>
+              <template v-else>
+                <RotateCw class="size-3.5" />
+                Session exited — click to restart
+              </template>
             </span>
           </button>
           <!-- Corner resume affordance for archived agents, mirroring the banner
@@ -509,6 +533,9 @@ onUnmounted(() => {
           <ContextMenuShortcut>{{ shortcutText("split-pane-v") }}</ContextMenuShortcut>
         </ContextMenuItem>
         <ContextMenuItem v-if="multi" @select="removeFromView">Remove From View</ContextMenuItem>
+        <ContextMenuItem v-if="isExited && !isArchived && tab?.resumeAvailable" @select="resumeAgent">
+          Resume Agent
+        </ContextMenuItem>
         <ContextMenuItem v-if="isArchived && tab?.resumeAvailable" @select="unarchive(true)">
           Resume Agent
         </ContextMenuItem>

@@ -7,6 +7,7 @@ import {
   Folder,
   GitBranch,
   Pencil,
+  Play,
   RotateCcw,
   SquareTerminal,
   Trash2,
@@ -201,14 +202,15 @@ function runningProcessLabel(): string {
   return runtime?.foregroundCommand ?? "a process";
 }
 
-// Restart an exited session. selectSession only focuses when the pane is
-// already in view, so also tell the mounted TerminalPane to respawn. Dispatch
-// on nextTick so a newly-mounted pane (not-in-view case) has its listener up.
-function restartSession() {
+// Restart or resume an exited session. selectSession only focuses when the pane
+// is already in view, so also tell the mounted TerminalPane to respawn.
+// Dispatch on nextTick so a newly-mounted pane (not-in-view case) has its
+// listener up.
+function restartSession(resume = false) {
   store.selectSession(id.value);
   void nextTick(() =>
     window.dispatchEvent(
-      new CustomEvent("restart-terminal-session", { detail: { tabId: id.value } }),
+      new CustomEvent("restart-terminal-session", { detail: { tabId: id.value, resume } }),
     ),
   );
 }
@@ -323,6 +325,13 @@ async function unarchive(resume: boolean) {
         <ContextMenuItem @select="startRename()">
           <Pencil />
           Rename
+        </ContextMenuItem>
+        <ContextMenuItem
+          v-if="exited && row.tab.resumeAvailable"
+          @select="restartSession(true)"
+        >
+          <Play />
+          Resume Agent
         </ContextMenuItem>
         <ContextMenuItem v-if="exited" @select="restartSession()">
           <RotateCcw />
