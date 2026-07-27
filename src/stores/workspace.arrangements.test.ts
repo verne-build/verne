@@ -24,6 +24,7 @@ function freshId(prefix: string) {
 
 const setAppStateCalls: Array<{ key: string; value: string | null }> = [];
 const tabsClosedIds: string[] = [];
+const scopePinnedCalls: Array<{ id: string; pinned: boolean }> = [];
 const tabsSessionIdCalls: string[] = [];
 const tabsArchiveCalls: string[] = [];
 let tabsArchiveNext: unknown = null;
@@ -252,6 +253,10 @@ vi.mock("@/composables/useRpc", () => ({
       listLiveTabIds: vi.fn(async () => getLiveTabIds()),
       setActiveDirectory: vi.fn(async () => true),
       prewarmFileIndex: vi.fn(async () => true),
+      tabSetScopePinned: vi.fn(async (p: { id: string; pinned: boolean }) => {
+        scopePinnedCalls.push(p);
+        return true;
+      }),
     },
   }),
 }));
@@ -1433,6 +1438,7 @@ describe("bottom terminal panel", () => {
     setAppStateCalls.length = 0;
     tabsClosedIds.length = 0;
     tabsCreateCalls.length = 0;
+    scopePinnedCalls.length = 0;
     nextId = 0;
     setLiveTabIds([]);
     appState.clear();
@@ -1475,7 +1481,17 @@ describe("bottom terminal panel", () => {
 
     expect(tabsClosedIds).toContain(tab!.id);
     expect(store.bottomPanelFor("dir-1")).toBeNull();
-    expect(store.arrangementByScope[bottomSurfaceKey("dir-1", "bt-1")]).toBeUndefined();
+    expect(Object.keys(store.arrangementByScope).some((k) => k.startsWith("bottom:dir-1:"))).toBe(false);
+  });
+
+  it("createBottomTerminal pins the new tab so scope-repin never moves it", async () => {
+    const store = await withDir();
+    const tab = await store.createBottomTerminal("dir-1");
+
+    expect(scopePinnedCalls).toContainEqual({ id: tab!.id, pinned: true });
+    await vi.waitFor(() =>
+      expect(store.terminalTabsByDirectory["dir-1"]?.find((t) => t.id === tab!.id)?.scopePinnedByUser).toBe(true),
+    );
   });
 
   it("closeBottomPane keeps the tab alive while another pane remains", async () => {

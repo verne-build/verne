@@ -353,6 +353,13 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       collapsed: false,
     });
     focusSession(tab.id);
+    // Pin so scope-repin.ts never moves this tab on a cwd change — a bottom
+    // terminal must stay put; applyScopeChange's bottom-surface guard is
+    // belt-and-braces, not the primary defense.
+    useRpc()
+      .request.tabSetScopePinned({ id: tab.id, pinned: true })
+      .then(() => setTabScopePinnedLocal(tab.id, true))
+      .catch(() => {});
     return tab;
   }
 
@@ -377,6 +384,9 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       if (wasFocused) focusSession(firstLeaf(next.layout));
       return;
     }
+    // Surface destroyed — bottom tab ids are fresh UUIDs, never reused, so a
+    // leftover focusedByScope[surfaceKey] entry would otherwise persist forever.
+    clearFocusForScope(surfaceKey);
     const state = bottomPanelFor(dirId);
     if (state) writeBottomPanel(dirId, closeBottomTabState(state, bottomTabId));
     const remaining = bottomPanelFor(dirId);
@@ -728,6 +738,21 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       delete next[dirId];
       activeTabIdByDirectory.value = next;
     }
+    // Bottom surface keys are `bottom:<dirId>:<uuid>` — never reused once the
+    // tab is gone, so a stale entry (dead arrangement, or a focused pane that
+    // isn't live) would otherwise leak into focused_by_scope forever.
+    let bottomChanged = false;
+    const nextFocused = { ...focusedByScope.value };
+    for (const key of Object.keys(nextFocused)) {
+      const parsed = parseBottomSurfaceKey(key);
+      if (!parsed || parsed.dirId !== dirId) continue;
+      const paneId = nextFocused[key];
+      if (!arrangementFor(key) || !paneId || !live.has(paneId)) {
+        delete nextFocused[key];
+        bottomChanged = true;
+      }
+    }
+    if (bottomChanged) focusedByScope.value = nextFocused;
   }
 
   async function doEnsureLayoutModel2(dirId: string, tabs: Tab[]) {
