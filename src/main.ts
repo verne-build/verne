@@ -24,6 +24,9 @@ import { useTheme, applyCachedThemeSync } from "./composables/useTheme";
 import { listen } from "@/platform";
 import { preloadConfiguredTerminalFont, reconnectAllTerminals } from "./composables/useTerminal";
 import { getDroppedPaths, hasNativeFileDrop, PASTE_PATH_EVENT } from "@/lib/dropPath";
+import { applyPlatformAppearance } from "@/lib/platformAppearance";
+
+applyPlatformAppearance(document, navigator);
 
 function terminalDropTargetAt(x: number, y: number): Element | null {
   return document

@@ -4,6 +4,7 @@ import { internalDataDir } from "../paths";
 import { registerNative } from "../ipc-router";
 import type { DaemonClient } from "../daemon-client";
 import { pushTerminalColorsToDaemon } from "./terminal-colors";
+import { syncNativeAppearance } from "./native-appearance";
 // Electron owns the default settings — single source shared with the renderer.
 import { DEFAULT_SETTINGS } from "../../../src/lib/defaultSettings";
 
@@ -91,6 +92,7 @@ export function registerSettingsCommands(sidecar: DaemonClient, daemon?: DaemonC
   registerNative("list_user_themes", () => listThemes(themesDir));
   registerNative("update_settings", async (p: { settings: Settings }, win) => {
     const next = store.update(p.settings ?? {});
+    syncNativeAppearance(next.appearance);
     // Push to the sidecar (it consumes filesExclude / worktreesRoot internally),
     // then notify the renderer.
     try { await sidecar.request("set_config", { settings: next }); } catch (e) { console.error("[settings] set_config push failed:", e); }

@@ -434,7 +434,7 @@ app.whenReady().then(async () => {
   // Event forwarding is safe because win is assigned on the next line before any
   // async event can fire.
   installRouter(daemon, sidecar, getWindow);
-  win = createWindow();
+  win = createWindow(startupSettings.appearance);
   console.log(`[main-startup] window created @+${since()}ms`);
 
   // Voice dictation: native sherpa-onnx STT + global-ish hotkey on the window.
@@ -468,7 +468,7 @@ app.whenReady().then(async () => {
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      win = createWindow();
+      win = createWindow(currentSettings().appearance);
       registerDictationHotkey(win);
     }
   });

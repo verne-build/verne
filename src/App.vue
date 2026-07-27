@@ -719,7 +719,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="relative flex h-screen bg-sidebar">
+  <div class="app-window-surface relative flex h-screen">
     <!-- Persistent top-left controls: the same toggle + search nodes stay mounted
          whether the left panel is open or collapsed (anchored after the macOS
          traffic lights). `.drag-region` here is JS-only (native drag is disabled
@@ -794,7 +794,7 @@ onUnmounted(() => {
           :min-size="LEFT_PANEL_MIN_PX"
           :max-size="LEFT_PANEL_MAX_PX"
           size-unit="px"
-          class="bg-sidebar"
+          class="macos-vibrancy-sidebar"
         >
           <div class="h-full flex flex-col">
             <!-- Traffic light spacer + drag region + resource monitor.
@@ -822,7 +822,7 @@ onUnmounted(() => {
       </template>
 
       <!-- Right section: header + center + right sidebar -->
-      <ResizablePanel id="main-area" :order="2" :min-size="30">
+      <ResizablePanel id="main-area" :order="2" :min-size="30" class="bg-[var(--editor-bg)]">
         <div ref="mainAreaEl" class="h-full flex flex-col">
           <header
             v-if="false && !showSettings"
