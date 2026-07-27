@@ -98,6 +98,7 @@ export function makeForward(getWindow: () => BrowserWindow, sidecar: DaemonClien
             typeof update.lastAgentSessionId === "string"
               ? update.lastAgentSessionId
               : null,
+          displayTitle: typeof update.displayTitle === "string" ? update.displayTitle : null,
         });
       } catch (e) {
         console.error("[agent-status] persist snapshot:", e);

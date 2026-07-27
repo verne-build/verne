@@ -14,6 +14,7 @@ import {
   recordTabSession,
   clearStaleTabStates,
   updateTabPresentationSnapshot,
+  agentCount,
   tabDisplayLabels,
   defaultLabel,
   moveTabToDirectory,
@@ -129,58 +130,86 @@ describe("tabs", () => {
     expect(getTab(db, "a")!.sortOrder).toBe(1);
   });
 
-  it("clearStaleTabStates empty clears all", () => {
+  it("clearStaleTabStates clears only the live state, keeping resume metadata", () => {
     const db = tmpDb();
     insertTab(db, mkTab({ id: "a", lastAgentType: "claude", lastAgentState: "idle", lastAgentSessionId: "s" }));
     insertTab(db, mkTab({ id: "b", lastAgentType: "codex", lastAgentState: "working", lastAgentSessionId: "s2" }));
     clearStaleTabStates(db, []);
-    for (const id of ["a", "b"]) {
-      const t = getTab(db, id)!;
-      expect(t.lastAgentType).toBeUndefined();
-      expect(t.lastAgentState).toBeUndefined();
-      expect(t.lastAgentSessionId).toBeUndefined();
-    }
+    // The dot must stop claiming a live agent...
+    expect(getTab(db, "a")!.lastAgentState).toBeUndefined();
+    expect(getTab(db, "b")!.lastAgentState).toBeUndefined();
+    // ...but the identity that makes `claude --resume <id>` possible survives,
+    // which is the whole point: a restarted daemon used to destroy it.
+    expect(getTab(db, "a")!.lastAgentType).toBe("claude");
+    expect(getTab(db, "a")!.lastAgentSessionId).toBe("s");
+    expect(getTab(db, "b")!.lastAgentSessionId).toBe("s2");
   });
 
-  it("clearStaleTabStates non-empty clears only NOT IN live", () => {
+  it("clearStaleTabStates leaves live tabs' state alone", () => {
     const db = tmpDb();
     insertTab(db, mkTab({ id: "live", lastAgentType: "claude", lastAgentState: "idle" }));
     insertTab(db, mkTab({ id: "dead", lastAgentType: "codex", lastAgentState: "working" }));
     clearStaleTabStates(db, ["live"]);
-    expect(getTab(db, "live")!.lastAgentType).toBe("claude");
-    expect(getTab(db, "dead")!.lastAgentType).toBeUndefined();
+    expect(getTab(db, "live")!.lastAgentState).toBe("idle");
+    expect(getTab(db, "dead")!.lastAgentState).toBeUndefined();
+    expect(getTab(db, "dead")!.lastAgentType).toBe("codex");
   });
 
-  it("clearStaleTabStates preserves archived tabs' agent identity (empty live set)", () => {
+  it("clearStaleTabStates leaves archived tabs untouched entirely", () => {
     const db = tmpDb();
-    insertTab(db, mkTab({ id: "live", lastAgentType: "claude", lastAgentState: "idle", lastAgentSessionId: "s1" }));
     insertTab(db, mkTab({ id: "archived", lastAgentType: "codex", lastAgentState: "working", lastAgentSessionId: "s2" }));
     setTabArchivedAt(db, "archived", 12345);
     clearStaleTabStates(db, []);
-    const live = getTab(db, "live")!;
-    expect(live.lastAgentType).toBeUndefined();
-    expect(live.lastAgentState).toBeUndefined();
-    expect(live.lastAgentSessionId).toBeUndefined();
     const archived = getTab(db, "archived")!;
-    expect(archived.lastAgentType).toBe("codex");
     expect(archived.lastAgentState).toBe("working");
     expect(archived.lastAgentSessionId).toBe("s2");
   });
 
-  it("updates the last-known presentation snapshot", () => {
+  it("a null sessionId does NOT clobber a stored one", () => {
+    const db = tmpDb();
+    insertTab(db, mkTab({ lastAgentType: "claude", lastAgentSessionId: "keep-me" }));
+    // What the daemon publishes when the agent quits and the shell takes the
+    // foreground pgrp (engine.rs identity-clear). Losing the id here is exactly
+    // what made an exited session unresumable.
+    updateTabPresentationSnapshot(db, {
+      tabId: "t1", agentType: null, agentState: null, sessionId: null, displayTitle: null,
+    });
+    const t = getTab(db, "t1")!;
+    expect(t.lastAgentSessionId).toBe("keep-me");
+    expect(t.lastAgentType).toBe("claude");
+    expect(t.lastAgentState).toBeUndefined();
+  });
+
+  it("a new sessionId overwrites the stored one (/clear mints a new id)", () => {
+    const db = tmpDb();
+    insertTab(db, mkTab({ lastAgentType: "claude", lastAgentSessionId: "old" }));
+    updateTabPresentationSnapshot(db, {
+      tabId: "t1", agentType: "claude", agentState: "working", sessionId: "new", displayTitle: null,
+    });
+    expect(getTab(db, "t1")!.lastAgentSessionId).toBe("new");
+  });
+
+  it("latches displayTitle: non-null writes, null keeps", () => {
     const db = tmpDb();
     insertTab(db, mkTab());
     updateTabPresentationSnapshot(db, {
-      tabId: "t1",
-      agentType: "codex",
-      agentState: "blocked",
-      sessionId: "s2",
+      tabId: "t1", agentType: "claude", agentState: "working", sessionId: "s", displayTitle: "Fix the uploader",
     });
-    expect(getTab(db, "t1")).toMatchObject({
-      lastAgentType: "codex",
-      lastAgentState: "blocked",
-      lastAgentSessionId: "s2",
+    expect(getTab(db, "t1")!.displayTitle).toBe("Fix the uploader");
+    updateTabPresentationSnapshot(db, {
+      tabId: "t1", agentType: "claude", agentState: "idle", sessionId: "s", displayTitle: null,
     });
+    expect(getTab(db, "t1")!.displayTitle).toBe("Fix the uploader");
+  });
+
+  it("agentCount counts live agents, not every tab that ever ran one", () => {
+    const db = tmpDb();
+    insertTab(db, mkTab({ id: "live", lastAgentType: "claude", lastAgentState: "working" }));
+    // Exited: identity latched, state cleared. Must not inflate the metric.
+    insertTab(db, mkTab({ id: "exited", lastAgentType: "codex", lastAgentState: undefined }));
+    insertTab(db, mkTab({ id: "arch", lastAgentType: "codex", lastAgentState: "working" }));
+    setTabArchivedAt(db, "arch", 1);
+    expect(agentCount(db)).toBe(1);
   });
 
   it("recordTabSession inserts then ON CONFLICT updates last_seen_at", () => {

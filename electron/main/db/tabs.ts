@@ -167,19 +167,33 @@ export function recordTabSession(
   ).run(sessionId, tabId, agentType, workingDir, now, now, now);
 }
 
+/** A tab with no live PTY has no live agent state — clear the dot. Identity
+ *  (`last_agent_type`, `last_agent_session_id`) is deliberately KEPT so an
+ *  exited session stays resumable across a daemon restart; that used to be
+ *  wiped here, which is why only archived sessions could resume. */
 export function clearStaleTabStates(db: DatabaseSync, liveIds: string[]): void {
   if (liveIds.length === 0) {
-    db.exec(
-      "UPDATE tabs SET last_agent_type = NULL, last_agent_state = NULL, last_agent_session_id = NULL WHERE archived_at IS NULL"
-    );
+    db.exec("UPDATE tabs SET last_agent_state = NULL WHERE archived_at IS NULL");
     return;
   }
   const placeholders = liveIds.map(() => "?").join(",");
   db.prepare(
-    `UPDATE tabs SET last_agent_type = NULL, last_agent_state = NULL, last_agent_session_id = NULL WHERE id NOT IN (${placeholders}) AND archived_at IS NULL`
+    `UPDATE tabs SET last_agent_state = NULL WHERE id NOT IN (${placeholders}) AND archived_at IS NULL`
   ).run(...liveIds);
 }
 
+/** Persist the last-known agent presentation for a tab.
+ *
+ *  LATCHING, deliberately: `last_agent_type`, `last_agent_session_id` and
+ *  `display_title` only ever move to a non-null value. The daemon nulls all
+ *  three the moment the agent stops being live (engine.rs identity-clear when a
+ *  non-agent process takes the foreground pgrp), and its session-id assignment
+ *  is unconditional, so a single hook payload missing `session_id` would erase
+ *  a good id too. Both are correct for the LIVE status view and fatal for
+ *  persistence — resume needs the type + id to outlive the process.
+ *
+ *  `last_agent_state` is the exception: it IS liveness, so it must be able to
+ *  go null. */
 export function updateTabPresentationSnapshot(
   db: DatabaseSync,
   snapshot: {
@@ -187,17 +201,22 @@ export function updateTabPresentationSnapshot(
     agentType: string | null;
     agentState: string | null;
     sessionId: string | null;
+    displayTitle: string | null;
   },
 ): void {
   if (!snapshot.tabId) return;
   db.prepare(
     `UPDATE tabs
-     SET last_agent_type = ?, last_agent_state = ?, last_agent_session_id = ?
+     SET last_agent_type       = COALESCE(?, last_agent_type),
+         last_agent_session_id = COALESCE(?, last_agent_session_id),
+         display_title         = COALESCE(?, display_title),
+         last_agent_state      = ?
      WHERE id = ?`,
   ).run(
     snapshot.agentType,
-    snapshot.agentState,
     snapshot.sessionId,
+    snapshot.displayTitle,
+    snapshot.agentState,
     snapshot.tabId,
   );
 }
@@ -216,11 +235,16 @@ export function defaultLabel(existingCount: number): string {
   return String(existingCount + 1);
 }
 
-/** Count tabs that ran an agent (last_agent_type set). Resource monitor metric;
- *  Electron owns the tabs DB so it computes this (the sidecar no longer can). */
+/** Count tabs with a LIVE agent. Resource monitor metric; Electron owns the tabs
+ *  DB so it computes this (the sidecar no longer can). Keyed on
+ *  `last_agent_state` rather than `last_agent_type`, because the type is now
+ *  latched and would otherwise count every tab that ever ran an agent.
+ *  Archived tabs keep their state column but have no running process. */
 export function agentCount(db: DatabaseSync): number {
   const row = db
-    .prepare("SELECT COUNT(*) AS n FROM tabs WHERE last_agent_type IS NOT NULL")
+    .prepare(
+      "SELECT COUNT(*) AS n FROM tabs WHERE last_agent_state IS NOT NULL AND archived_at IS NULL"
+    )
     .get() as { n: number };
   return row.n;
 }
