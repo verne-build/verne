@@ -1650,6 +1650,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     removeFromView,
     closeSession,
     focusSession,
+    focusedByScope,
     setArrangementSizes,
     arrangementFor,
     writeArrangement,
