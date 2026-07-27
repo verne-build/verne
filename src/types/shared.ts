@@ -388,6 +388,10 @@ export interface Tab {
   /** One-shot agent-generated session title. Non-null also means "already
    *  attempted" — this is what freezes it to one title per session. */
   generatedTitle?: string;
+  /** Last hook-derived agent display title, persisted so the name survives the
+   *  daemon dying (the daemon's own copy is memory-only). Latched: only ever
+   *  overwritten by a non-null value — see updateTabPresentationSnapshot. */
+  displayTitle?: string;
   /** Derived (never persisted): true when an archived snapshot can be restored. */
   resumeAvailable?: boolean;
 }

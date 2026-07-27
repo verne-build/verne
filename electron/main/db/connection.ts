@@ -200,6 +200,13 @@ CREATE TABLE recent_files (
     db.exec("ALTER TABLE tabs ADD COLUMN generated_title TEXT;");
   }
 
+  // tabs: display_title — last hook-derived agent title. The daemon keeps its
+  // copy in memory only, so without this an archived/restarted session loses
+  // its name and falls back to the agent name.
+  if (!hasColumn("tabs", "display_title")) {
+    db.exec("ALTER TABLE tabs ADD COLUMN display_title TEXT;");
+  }
+
   // tab_snapshots: not gated behind the tabs.archived_at check — an interrupted
   // older migration could have added one without the other.
   db.exec(`CREATE TABLE IF NOT EXISTS tab_snapshots (

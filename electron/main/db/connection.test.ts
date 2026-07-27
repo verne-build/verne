@@ -140,6 +140,20 @@ describe("openDb", () => {
     expect(row.file_panel_active_id).toBe("__notes__");
     expect(row.right_sidebar_view).toBe("notes");
   });
+
+  it("display_title migration is additive and idempotent", () => {
+    const dir = mkdtempSync(join(tmpdir(), "verne-conn-dt-"));
+    const path = join(dir, "verne.db");
+    const first = openDb(path);
+    first.close();
+    // Re-opening runs migrations again over the existing file.
+    const db = openDb(path);
+    const cols = (db.prepare("SELECT name FROM pragma_table_info('tabs')").all() as {
+      name: string;
+    }[]).map((r) => r.name);
+    expect(cols.filter((n) => n === "display_title")).toHaveLength(1);
+    db.close();
+  });
 });
 
 describe("notes rename substr math", () => {

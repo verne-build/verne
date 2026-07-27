@@ -230,6 +230,19 @@ pub fn init_db(conn: &Connection) {
             .unwrap();
     }
 
+    // tabs.display_title — last hook-derived agent title. The daemon's own copy
+    // is in-memory only, so persisting it is what keeps a session's name after
+    // the PTY (or the whole daemon) is gone.
+    let has_display_title: bool = conn
+        .prepare("SELECT COUNT(*) FROM pragma_table_info('tabs') WHERE name='display_title'")
+        .and_then(|mut s| s.query_row([], |r| r.get::<_, i64>(0)))
+        .map(|c| c > 0)
+        .unwrap_or(false);
+    if !has_display_title {
+        conn.execute_batch("ALTER TABLE tabs ADD COLUMN display_title TEXT;")
+            .unwrap();
+    }
+
     // tab_snapshots: not gated behind the tabs.archived_at check above — an
     // interrupted older migration could have added one without the other.
     conn.execute_batch(

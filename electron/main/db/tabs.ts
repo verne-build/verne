@@ -4,7 +4,7 @@ import { getDirectory } from "./directories";
 
 // Columns in db.rs table order.
 const TAB_COLS =
-  "id, directory_id, label, cwd, sort_order, created_at, last_agent_type, last_agent_session_id, last_agent_state, user_renamed, scope_pinned_by_user, launch_command, archived_at, generated_title";
+  "id, directory_id, label, cwd, sort_order, created_at, last_agent_type, last_agent_session_id, last_agent_state, user_renamed, scope_pinned_by_user, launch_command, archived_at, generated_title, display_title";
 
 type TabRow = {
   id: string;
@@ -21,6 +21,7 @@ type TabRow = {
   launch_command: string | null;
   archived_at: number | null;
   generated_title: string | null;
+  display_title: string | null;
 };
 
 function rowToTab(row: TabRow): Tab {
@@ -40,12 +41,13 @@ function rowToTab(row: TabRow): Tab {
   if (row.launch_command != null) tab.launchCommand = row.launch_command;
   if (row.archived_at != null) tab.archivedAt = row.archived_at;
   if (row.generated_title != null) tab.generatedTitle = row.generated_title;
+  if (row.display_title != null) tab.displayTitle = row.display_title;
   return tab;
 }
 
 export function insertTab(db: DatabaseSync, tab: Tab): void {
   db.prepare(
-    `INSERT INTO tabs (${TAB_COLS}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    `INSERT INTO tabs (${TAB_COLS}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
   ).run(
     tab.id,
     tab.directoryId,
@@ -61,6 +63,7 @@ export function insertTab(db: DatabaseSync, tab: Tab): void {
     tab.launchCommand ?? null,
     tab.archivedAt ?? null,
     tab.generatedTitle ?? null,
+    tab.displayTitle ?? null,
   );
 }
 

@@ -267,4 +267,16 @@ describe("tabs", () => {
     setTabScopePinned(db, "t1", false);
     expect(getTabScopePinned(db, "t1")).toBe(false);
   });
+
+  it("round-trips displayTitle", () => {
+    const db = tmpDb();
+    insertTab(db, mkTab({ displayTitle: "Fix the uploader" }));
+    expect(getTab(db, "t1")!.displayTitle).toBe("Fix the uploader");
+  });
+
+  it("omits displayTitle when the column is NULL", () => {
+    const db = tmpDb();
+    insertTab(db, mkTab());
+    expect(getTab(db, "t1")!.displayTitle).toBeUndefined();
+  });
 });
