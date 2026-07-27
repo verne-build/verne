@@ -26,6 +26,8 @@ build/partial.plist
 
 # git worktrees for isolated feature work
 .worktrees/
+.superpowers/
+docs/superpowers/
 electron-builder.env
 .claude/worktrees
 # playwright renderer suite artifacts
