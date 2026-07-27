@@ -258,6 +258,7 @@ vi.mock("@/composables/useRpc", () => ({
 
 import { useWorkspaceStore } from "./workspace";
 import { collectPaneIds, nodeKey } from "@/lib/paneLayout";
+import { bottomSurfaceKey } from "@/lib/bottomPanel";
 
 function lastArrangementWrite() {
   const writes = setAppStateCalls.filter((c) => c.key === "arrangement_by_scope");
@@ -1335,5 +1336,92 @@ describe("unarchive session lifecycle", () => {
 
     expect(store.terminalTabsByDirectory["dir-1"]?.find((t) => t.id === tab.id)?.archivedAt).toBeUndefined();
     expect(tabsUnarchiveCalls).toEqual([]);
+  });
+});
+
+describe("surface keys (bottom panel groundwork)", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    setActivePinia(createPinia());
+    setAppStateCalls.length = 0;
+    tabsClosedIds.length = 0;
+    nextId = 0;
+    setLiveTabIds([]);
+    appState.clear();
+    for (const k of Object.keys(tabsListByDir)) delete tabsListByDir[k];
+    setFailArrangementGets(0);
+  });
+
+  it("resolves a center session to its directory id", async () => {
+    const store = useWorkspaceStore();
+    const tab = await store.newSession("dir-1");
+    expect(store.surfaceKeyFor(tab.id)).toBe("dir-1");
+  });
+
+  it("resolves a session in a bottom surface to that surface key", async () => {
+    const store = useWorkspaceStore();
+    const tab = await store.newSession("dir-1");
+    const key = bottomSurfaceKey("dir-1", "bt-1");
+    store.writeArrangement("dir-1", null);
+    store.writeArrangement(key, { version: 1, layout: { pane: tab.id } });
+    expect(store.surfaceKeyFor(tab.id)).toBe(key);
+  });
+
+  it("splits inside a bottom surface without touching the center arrangement", async () => {
+    const store = useWorkspaceStore();
+    const centerTab = await store.newSession("dir-1");
+    const bottomTab = await store.newSession("dir-1"); // becomes the bottom pane below
+    const key = bottomSurfaceKey("dir-1", "bt-1");
+    store.writeArrangement("dir-1", { version: 1, layout: { pane: centerTab.id } });
+    store.writeArrangement(key, { version: 1, layout: { pane: bottomTab.id } });
+
+    await store.splitSessionWithNew(bottomTab.id, "h");
+
+    expect(store.arrangementByScope["dir-1"]).toEqual({ version: 1, layout: { pane: centerTab.id } });
+    const panes = collectPaneIds(store.arrangementByScope[key].layout);
+    expect(panes).toHaveLength(2);
+    expect(panes).toContain(bottomTab.id);
+  });
+
+  it("focusing a bottom session does not move center focus", async () => {
+    const store = useWorkspaceStore();
+    const centerTab = await store.newSession("dir-1");
+    const bottomTab = await store.newSession("dir-1");
+    store.writeArrangement("dir-1", { version: 1, layout: { pane: centerTab.id } });
+    store.writeArrangement(bottomSurfaceKey("dir-1", "bt-1"), {
+      version: 1,
+      layout: { pane: bottomTab.id },
+    });
+    store.selectedDirectoryId = "dir-1";
+    store.focusSession(centerTab.id);
+
+    store.focusSession(bottomTab.id);
+
+    expect(store.activeTabIdByDirectory["dir-1"]).toBe(centerTab.id);
+    expect(store.activeSurface).toBe("bottom");
+  });
+
+  it("removeFromView drops a pane from its own bottom surface", async () => {
+    const store = useWorkspaceStore();
+    const a = await store.newSession("dir-1");
+    const key = bottomSurfaceKey("dir-1", "bt-1");
+    store.writeArrangement(key, { version: 1, layout: { pane: a.id } });
+    await store.splitSessionWithNew(a.id, "v");
+    const other = collectPaneIds(store.arrangementByScope[key].layout).find((id) => id !== a.id)!;
+
+    store.removeFromView(other);
+
+    expect(collectPaneIds(store.arrangementByScope[key].layout)).toEqual([a.id]);
+  });
+
+  it("detachFromSurface removes the pane and deletes an emptied surface", async () => {
+    const store = useWorkspaceStore();
+    const tab = await store.newSession("dir-1");
+    const key = bottomSurfaceKey("dir-1", "bt-1");
+    store.writeArrangement(key, { version: 1, layout: { pane: tab.id } });
+
+    store.detachFromSurface(key, tab.id);
+
+    expect(store.arrangementByScope[key]).toBeUndefined();
   });
 });

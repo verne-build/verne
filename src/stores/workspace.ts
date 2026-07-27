@@ -23,6 +23,7 @@ import {
   singlePaneResizeTargets,
   type SplitDir,
 } from "@/lib/paneLayout";
+import { bottomSurfaceKey, isBottomSurface } from "@/lib/bottomPanel";
 import { shouldApplyAgentRevision } from "@/lib/agentStatus";
 import { sessionTitleFrom } from "@/lib/sessionTitle";
 import { buildSessionsList, type SessionRow } from "@/lib/sessionsView";
@@ -255,6 +256,32 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       .catch(() => {});
   }
 
+  // Which surface (center == dirId, or `bottom:<dirId>:<bottomTabId>`) currently
+  // holds each session. Computed once per arrangement change — callers must not
+  // rescan the map per lookup.
+  const surfaceKeyBySession = computed(() => {
+    const m = new Map<string, string>();
+    for (const [key, arr] of Object.entries(arrangementByScope.value))
+      for (const id of collectPaneIds(arr.layout)) m.set(id, key);
+    return m;
+  });
+
+  /** Surface owning `sessionId`; falls back to its directory (center) for a
+   *  session not yet in any arrangement. */
+  function surfaceKeyFor(sessionId: string): string | undefined {
+    return surfaceKeyBySession.value.get(sessionId) ?? tabDirId(sessionId);
+  }
+
+  /** Which surface last took terminal focus — routes ⌘T/⌘W and split keys. */
+  const activeSurface = ref<"center" | "bottom">("center");
+
+  /** Drop a pane from a specific surface, deleting the surface if it empties. */
+  function detachFromSurface(surfaceKey: string, sessionId: string): void {
+    const current = arrangementFor(surfaceKey);
+    if (!current) return;
+    writeArrangement(surfaceKey, removeFromArrangement(current, sessionId));
+  }
+
   const focusedByScope = ref<Record<string, string | undefined>>({});
   let focusedHydrated: Promise<void> | null = null;
 
@@ -281,13 +308,19 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   }
 
   function focusSession(sessionId: string) {
-    const dirId = tabDirId(sessionId);
-    if (!dirId) return;
-    const changed = focusedByScope.value[dirId] !== sessionId;
-    focusedByScope.value = { ...focusedByScope.value, [dirId]: sessionId };
-    activeTabIdByDirectory.value = { ...activeTabIdByDirectory.value, [dirId]: sessionId };
+    const surfaceKey = surfaceKeyFor(sessionId);
+    if (!surfaceKey) return;
+    const changed = focusedByScope.value[surfaceKey] !== sessionId;
+    focusedByScope.value = { ...focusedByScope.value, [surfaceKey]: sessionId };
+    activeSurface.value = isBottomSurface(surfaceKey) ? "bottom" : "center";
+    // Center focus mirrors into activeTabIdByDirectory (the selection model);
+    // bottom focus must NOT, or focusing a bottom terminal would move the
+    // center's active session.
+    if (!isBottomSurface(surfaceKey)) {
+      activeTabIdByDirectory.value = { ...activeTabIdByDirectory.value, [surfaceKey]: sessionId };
+      recordTabActivation(surfaceKey, sessionId);
+    }
     acknowledgeTab(sessionId);
-    recordTabActivation(dirId, sessionId);
     if (changed)
       useRpc()
         .request.setAppState({ key: "focused_by_scope", value: JSON.stringify(focusedByScope.value) })
@@ -363,7 +396,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
 
   async function splitSessionWithNew(sessionId: string, direction: SplitDir, before = false): Promise<void> {
     const dirId = tabDirId(sessionId);
-    if (!dirId) return;
+    const surfaceKey = surfaceKeyFor(sessionId);
+    if (!dirId || !surfaceKey) return;
     const src = (terminalTabsByDirectory.value[dirId] ?? []).find((t) => t.id === sessionId);
     const existing = terminalTabsByDirectory.value[dirId] ?? [];
     const tab = await useRpc().request.tabsCreate({
@@ -377,31 +411,45 @@ export const useWorkspaceStore = defineStore("workspace", () => {
       ...terminalTabsByDirectory.value,
       [dirId]: [...current, tab],
     };
-    writeArrangement(dirId, insertIntoArrangement(arrangementFor(dirId), sessionId, tab.id, direction, before));
+    writeArrangement(
+      surfaceKey,
+      insertIntoArrangement(arrangementFor(surfaceKey), sessionId, tab.id, direction, before),
+    );
     focusSession(tab.id);
   }
 
-  // Same-scope only — cross-scope moves are forbidden by spec (a session
-  // never leaves the directory that owns its PTY).
+  // Same-scope only — cross-scope moves are forbidden by spec (a session never
+  // leaves the directory that owns its PTY). Cross-SURFACE within a scope is
+  // allowed: the source surface is detached first.
   function splitSessionWithExisting(sessionId: string, otherSessionId: string, direction: SplitDir, before = false): void {
     const dirId = tabDirId(sessionId);
-    if (!dirId || tabDirId(otherSessionId) !== dirId) return;
-    const current = arrangementFor(dirId);
+    const surfaceKey = surfaceKeyFor(sessionId);
+    const otherKey = surfaceKeyFor(otherSessionId);
+    if (!dirId || !surfaceKey || !otherKey || tabDirId(otherSessionId) !== dirId) return;
+    const current = arrangementFor(surfaceKey);
     if (!current) return;
-    const without = removeFromArrangement(current, otherSessionId) ?? current;
-    writeArrangement(dirId, insertIntoArrangement(without, sessionId, otherSessionId, direction, before));
+    if (otherKey === surfaceKey) {
+      const without = removeFromArrangement(current, otherSessionId) ?? current;
+      writeArrangement(surfaceKey, insertIntoArrangement(without, sessionId, otherSessionId, direction, before));
+    } else {
+      detachFromSurface(otherKey, otherSessionId);
+      writeArrangement(
+        surfaceKey,
+        insertIntoArrangement(arrangementFor(surfaceKey), sessionId, otherSessionId, direction, before),
+      );
+    }
     focusSession(otherSessionId);
   }
 
-  /** Drop a session out of its scope's arrangement without killing its PTY. */
+  /** Drop a session out of its surface's arrangement without killing its PTY. */
   function removeFromView(sessionId: string): void {
-    const dirId = tabDirId(sessionId);
-    if (!dirId) return;
-    const current = arrangementFor(dirId);
+    const surfaceKey = surfaceKeyFor(sessionId);
+    if (!surfaceKey) return;
+    const current = arrangementFor(surfaceKey);
     if (!current) return;
     const next = removeFromArrangement(current, sessionId);
-    writeArrangement(dirId, next);
-    if (focusedByScope.value[dirId] === sessionId && next) focusSession(firstLeaf(next.layout));
+    writeArrangement(surfaceKey, next);
+    if (focusedByScope.value[surfaceKey] === sessionId && next) focusSession(firstLeaf(next.layout));
   }
 
   function setArrangementSizes(scopeId: string, key: string, sizes: number[]): void {
@@ -1379,6 +1427,10 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     focusSession,
     setArrangementSizes,
     arrangementFor,
+    writeArrangement,
+    surfaceKeyFor,
+    detachFromSurface,
+    activeSurface,
     renameTab,
     reorderTabsInDirectory,
     tabGroupName,
