@@ -13,7 +13,6 @@ import {
 import { useShortcuts } from "@/composables/useShortcuts";
 import { agentIconSurfaceForTheme, getAgentIconForSurface } from "@/composables/useAgentIcon";
 import { useTheme } from "@/composables/useTheme";
-import { collectPaneIds } from "@/lib/paneLayout";
 import { sessionEndAction, sessionEndLabel, shouldConfirmArchive } from "@/lib/sessionEnd";
 import GridTerminal from "@/components/terminal/GridTerminal.vue";
 import {
@@ -57,6 +56,9 @@ const props = defineProps<{
    *  must clear the macOS traffic lights + the persistent toggle/search strip
    *  (App.vue anchors it at pl-[78px] + two icon-xs buttons = 128px). */
   reserveLeftOverlay?: boolean;
+  /** How ⌘W / the pane menu ends this pane. Center sessions archive; bottom
+   *  panel terminals are scratch and are killed outright. */
+  endMode?: "archive" | "close";
 }>();
 
 const store = useWorkspaceStore();
@@ -162,23 +164,11 @@ const agentIconSrc = computed(() =>
   agentType.value ? getAgentIconForSurface(agentType.value, agentIconSurface.value) : null,
 );
 
-// Other sessions in THIS pane's scope it could split with (excludes panes
-// already in the scope's arrangement). Keyed by props.scopeId, not the
-// selected directory — they can differ transiently.
-const otherSessions = computed(() => {
-  const arr = store.arrangementFor(props.scopeId);
-  const inView = new Set(arr ? collectPaneIds(arr.layout) : []);
-  // Archived sessions are excluded: splitting one in would put a frozen,
-  // read-only snapshot in a pane meant for a live PTY.
-  return store
-    .sessionsList("all")
-    .filter(
-      (row) =>
-        row.directory.id === props.scopeId &&
-        !inView.has(row.tab.id) &&
-        row.tab.archivedAt == null,
-    );
-});
+// Other sessions in THIS pane's surface it could split with. Keyed by
+// props.scopeId (a surface key), not the selected directory — they can differ
+// transiently. Archived sessions are excluded: splitting one in would put a
+// frozen, read-only snapshot in a pane meant for a live PTY.
+const otherSessions = computed(() => store.splittableSessions(props.scopeId));
 
 // tabsSessionId → the daemon's spawn_tab_pty is idempotent (get_session_by_agent
 // returns the existing session, or it respawns after a daemon restart). Only
@@ -258,7 +248,7 @@ async function unarchive(resume: boolean) {
 }
 
 function focusPane() {
-  if (store.focusedSessionId !== props.paneId) store.focusSession(props.paneId);
+  if (store.focusedByScope[props.scopeId] !== props.paneId) store.focusSession(props.paneId);
 }
 
 function split(direction: "h" | "v", before = false) {
@@ -287,6 +277,10 @@ const endAction = computed(() =>
 );
 
 async function endSession() {
+  if (props.endMode === "close") {
+    if (await confirmKill()) await store.closeBottomPane(props.paneId);
+    return;
+  }
   if (endAction.value === "delete") {
     await store.closeSession(props.paneId);
     return;
@@ -304,6 +298,23 @@ async function endSession() {
     window.alert(`Failed to archive session: ${e}`);
   }
 }
+
+// Bottom panel terminals have no archive fallback, so confirm before killing a
+// live process.
+async function confirmKill(): Promise<boolean> {
+  const running = await rpc.request
+    .tabsHasRunningChild({ id: props.paneId })
+    .catch(() => false);
+  if (!running) return true;
+  return await ask("Close Terminal?", {
+    detail: `${runningProcessLabel()} is still running. Closing kills it.`,
+    confirmLabel: "Close",
+  });
+}
+
+const endLabel = computed(() =>
+  props.endMode === "close" ? "Close Terminal" : sessionEndLabel(endAction.value),
+);
 
 onMounted(() => {
   incrementMountedTerminalViewCount();
@@ -541,12 +552,15 @@ onUnmounted(() => {
         <ContextMenuItem v-if="isExited && !isArchived && tab?.resumeAvailable" @select="resumeAgent">
           Resume Agent
         </ContextMenuItem>
-        <ContextMenuItem v-if="isArchived && tab?.resumeAvailable" @select="unarchive(true)">
+        <ContextMenuItem
+          v-if="endMode !== 'close' && isArchived && tab?.resumeAvailable"
+          @select="unarchive(true)"
+        >
           Resume Agent
         </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem variant="destructive" @select="endSession">
-          {{ sessionEndLabel(endAction) }}
+          {{ endLabel }}
         </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
