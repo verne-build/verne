@@ -38,6 +38,7 @@ import OpenInIdeButton from "@/components/OpenInIdeButton.vue";
 import HeaderBranchPill from "@/components/HeaderBranchPill.vue";
 import BranchPickerDialog from "@/components/BranchPickerDialog.vue";
 import TabsCenter from "@/components/main/TabsCenter.vue";
+import BottomPanel from "@/components/main/BottomPanel.vue";
 import WelcomeHero from "@/components/main/WelcomeHero.vue";
 import Sidebar from "@/components/sidebar/Sidebar.vue";
 import KeyboardShortcutsModal from "@/components/KeyboardShortcutsModal.vue";
@@ -225,6 +226,18 @@ function onInnerLayout(sizes: number[]) {
     if (rightIdx >= 0 && sizes[rightIdx] > 0)
       useRpc().request.setAppState({ key: "panel_right_px", value: String(Math.round(right)) });
   }, 500);
+}
+
+const bottomPanelRef = ref<InstanceType<typeof BottomPanel> | null>(null);
+// Remount the vertical group when the bottom panel appears/disappears or
+// collapses, so reka-ui re-reads the child set (same pattern as `showRight`).
+const bottomKey = computed(() => {
+  const dirId = store.selectedDirectoryId;
+  const state = dirId ? store.bottomPanelFor(dirId) : null;
+  return `${state?.tabs.length ? "on" : "off"}-${state?.collapsed ? "c" : "e"}`;
+});
+function onBottomLayout(sizes: number[]) {
+  bottomPanelRef.value?.onLayout(sizes);
 }
 
 const { icons: projectIcons, loadIcon: loadProjectIcon } = useProjectIcons();
@@ -878,35 +891,45 @@ onUnmounted(() => {
           />
           <ResizablePanelGroup
             v-show="!showSettings"
-            :key="`inner-${showRight}`"
-            direction="horizontal"
-            class="inner-resize-group flex-1 overflow-hidden"
-            :class="{ 'is-file-maximized': fileMaximized }"
-            @layout="onInnerLayout"
+            :key="`main-v-${bottomKey}`"
+            direction="vertical"
+            class="flex-1 overflow-hidden"
+            @layout="onBottomLayout"
           >
-            <ResizablePanel id="center" :order="1" :min-size="centerMinPct" class="maximize-center">
-              <TabsCenter class="h-full" />
-            </ResizablePanel>
-
-            <template v-if="showRight && !rightCollapsed">
-              <ResizableHandle :class="[handleClass, 'maximize-handle']" @dragging="setSplitterDragging" />
-              <ResizablePanel
-                ref="rightPanelRef"
-                id="right-sidebar"
-                :order="2"
-                :default-size="panelSizes.right"
-                :min-size="RIGHT_PANEL_MIN_PX"
-                size-unit="px"
-                class="maximize-right bg-[var(--editor-bg)]"
+            <ResizablePanel id="main-upper" :order="1" :min-size="20">
+              <ResizablePanelGroup
+                :key="`inner-${showRight}`"
+                direction="horizontal"
+                class="inner-resize-group h-full overflow-hidden"
+                :class="{ 'is-file-maximized': fileMaximized }"
+                @layout="onInnerLayout"
               >
-                <RightPanel
-                  class="h-full"
-                  :maximized="fileMaximized"
-                  @toggle-right="rightCollapsed = !rightCollapsed"
-                  @toggle-maximize="fileMaximized = !fileMaximized"
-                />
-              </ResizablePanel>
-            </template>
+                <ResizablePanel id="center" :order="1" :min-size="centerMinPct" class="maximize-center">
+                  <TabsCenter class="h-full" />
+                </ResizablePanel>
+
+                <template v-if="showRight && !rightCollapsed">
+                  <ResizableHandle :class="[handleClass, 'maximize-handle']" @dragging="setSplitterDragging" />
+                  <ResizablePanel
+                    ref="rightPanelRef"
+                    id="right-sidebar"
+                    :order="2"
+                    :default-size="panelSizes.right"
+                    :min-size="RIGHT_PANEL_MIN_PX"
+                    size-unit="px"
+                    class="maximize-right bg-[var(--editor-bg)]"
+                  >
+                    <RightPanel
+                      class="h-full"
+                      :maximized="fileMaximized"
+                      @toggle-right="rightCollapsed = !rightCollapsed"
+                      @toggle-maximize="fileMaximized = !fileMaximized"
+                    />
+                  </ResizablePanel>
+                </template>
+              </ResizablePanelGroup>
+            </ResizablePanel>
+            <BottomPanel ref="bottomPanelRef" />
           </ResizablePanelGroup>
         </div>
       </ResizablePanel>

@@ -20,6 +20,8 @@ const props = defineProps<{
    *  Forwarded only to the FIRST child at each level, so exactly the top-left
    *  pane pads — the strip overlaps nothing else. */
   reserveLeftOverlay?: boolean;
+  /** Forwarded to every pane: how ⌘W / the pane menu ends it. */
+  endMode?: "archive" | "close";
 }>();
 
 const store = useWorkspaceStore();
@@ -44,6 +46,7 @@ function onLayout(sizes: number[]) {
     :multi="multi"
     :reserve-right-overlay="reserveRightOverlay"
     :reserve-left-overlay="reserveLeftOverlay"
+    :end-mode="endMode"
   />
   <ResizablePanelGroup
     v-else
@@ -68,6 +71,7 @@ function onLayout(sizes: number[]) {
           :multi="multi"
           :reserve-right-overlay="reserveRightOverlay"
           :reserve-left-overlay="reserveLeftOverlay && i === 0"
+          :end-mode="endMode"
         />
       </ResizablePanel>
     </template>
