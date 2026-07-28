@@ -169,7 +169,12 @@ export class GridStore {
     }
   }
 
+  /** Bumped on every applied delta (mirrors `syncGen`). Hosts watch it to tell a
+   *  real program repaint apart from history/search traffic. */
+  deltaGen = 0;
+
   applyDelta(f: DeltaFrame): void {
+    this.deltaGen++;
     // Total rows EVER produced (= base + totalLines) — monotonic even when the
     // ring buffer is full and `totalLines` is pinned. The frozen anchor tracks
     // this so it survives both growth (base flat, total up) and eviction (total

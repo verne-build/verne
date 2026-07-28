@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { TerminalController, type GridTransport } from './TerminalController';
+import { TerminalController, RESIZE_HOLD_MS, type GridTransport } from './TerminalController';
 import { GridStore } from './GridStore';
 import { GridSession, type GridSocket } from './GridSession';
 import type { TerminalRenderer } from './renderer';
@@ -741,9 +741,15 @@ describe('TerminalController read-only (archived snapshot)', () => {
 });
 
 describe('resize hold (pre-resize frame survives the reflow)', () => {
-  /** Controller with an injectable hold deadline and a recorded commit hook. */
-  function setupHold() {
-    let fire: (() => void) | null = null;
+  /** Controller with an injectable hold deadline and a recorded commit hook.
+   *  `schedule` is deferrable so a paint queued before the resize can be held and
+   *  fired mid-hold (the rAF case the app actually hits). */
+  function setupHold(opts: { deferPaint?: boolean } = {}) {
+    // Distinct handles + a cleared log, so a missing clearTimer is detectable.
+    let nextHandle = 1;
+    const timers = new Map<number, { cb: () => void; ms: number }>();
+    const cleared: number[] = [];
+    let queuedPaint: (() => void) | null = null;
     const store = new GridStore();
     store.applySync({
       type: 'sync', rev: 1, cols: 10, rows: 4, cursor: [0, 0], altScreen: false,
@@ -753,12 +759,30 @@ describe('resize hold (pre-resize frame survives the reflow)', () => {
     const renderer = new FakeRenderer();
     const commits: [number, number][] = [];
     const controller = new TerminalController({
-      store, transport, renderer, metrics: METRICS, schedule: (cb) => cb(),
-      setTimer: (cb) => { fire = cb; return 1; },
-      clearTimer: () => { fire = null; },
+      store, transport, renderer, metrics: METRICS,
+      schedule: (cb) => {
+        if (opts.deferPaint) queuedPaint = cb;
+        else cb();
+      },
+      setTimer: (cb, ms) => {
+        const h = nextHandle++;
+        timers.set(h, { cb, ms });
+        return h;
+      },
+      clearTimer: (h) => {
+        cleared.push(h as number);
+        timers.delete(h as number);
+      },
     });
     controller.onResizeCommit = (c, r) => commits.push([c, r]);
+    /** Run the deferred paint callback, if one is queued. */
+    const flushPaint = () => {
+      const cb = queuedPaint;
+      queuedPaint = null;
+      cb?.();
+    };
     transport.onUpdate?.(); // settle the seeded sync so later syncs are detectable
+    flushPaint();
     renderer.paints = 0;
     const update = () => transport.onUpdate?.();
     /** The daemon's post-resize reply: the reflowed, not-yet-repainted screen. */
@@ -776,10 +800,18 @@ describe('resize hold (pre-resize frame survives the reflow)', () => {
       });
       update();
     };
+    /** Scrollback rows streaming back after the reflow dropped the cache. */
+    const history = (from: number, to: number) => {
+      store.applyHistory({ type: 'history', reqId: 1, from, to, runs: [] });
+      update();
+    };
     return {
-      store, transport, renderer, controller, commits, delta, intermediateSync,
-      deadline: () => fire?.(),
-      pending: () => fire != null,
+      store, transport, renderer, controller, commits, delta, intermediateSync, history,
+      /** Fire every armed timer (the hold deadline). */
+      deadline: () => [...timers.values()].forEach((t) => t.cb()),
+      armed: () => [...timers.values()],
+      cleared: () => cleared,
+      flushPaint,
     };
   }
 
@@ -819,7 +851,7 @@ describe('resize hold (pre-resize frame survives the reflow)', () => {
   });
 
   it('the first delta after the post-resize sync releases the hold and paints', () => {
-    const { controller, renderer, commits, delta, intermediateSync, pending } = setupHold();
+    const { controller, renderer, commits, delta, intermediateSync, armed } = setupHold();
     controller.resize(100, 30);
     intermediateSync(100, 30);
     expect(commits).toEqual([]); // the sync itself is not the program's repaint
@@ -827,7 +859,52 @@ describe('resize hold (pre-resize frame survives the reflow)', () => {
     expect(commits).toEqual([[100, 30]]); // canvas resized at commit, not before
     expect(renderer.lastResize).toEqual([100, 30, 1]);
     expect(renderer.paints).toBeGreaterThan(0);
-    expect(pending()).toBe(false); // deadline disarmed
+    expect(armed()).toEqual([]); // deadline disarmed
+  });
+
+  it('history frames after the sync do NOT release the hold', () => {
+    // The width reflow drops the scrollback cache, so history streams back within
+    // milliseconds of the intermediate sync. Releasing on it paints the mangle.
+    const { controller, renderer, commits, history, intermediateSync, delta } = setupHold();
+    controller.resize(100, 30);
+    intermediateSync(100, 30);
+    history(0, 8);
+    history(8, 16);
+    expect(renderer.paints).toBe(0);
+    expect(commits).toEqual([]);
+    delta(3, 'repaint'); // only a real delta releases
+    expect(commits).toEqual([[100, 30]]);
+  });
+
+  it('a paint queued before the resize does not fire during the hold', () => {
+    // rAF phase is uncorrelated with the resize: in the app a paint is usually
+    // already queued when the resize lands, and would otherwise paint the
+    // intermediate onto the still-old-size canvas.
+    const { controller, renderer, transport, intermediateSync, flushPaint, deadline } =
+      setupHold({ deferPaint: true });
+    transport.onUpdate?.(); // output arrives → paint queued (not yet run)
+    controller.resize(100, 30);
+    intermediateSync(100, 30);
+    flushPaint(); // the pre-resize rAF fires mid-hold
+    expect(renderer.paints).toBe(0);
+    deadline();
+    flushPaint();
+    expect(renderer.paints).toBe(1);
+  });
+
+  it('arms the deadline with RESIZE_HOLD_MS', () => {
+    const { controller, armed } = setupHold();
+    controller.resize(100, 30);
+    expect(armed().map((t) => t.ms)).toEqual([RESIZE_HOLD_MS]);
+  });
+
+  it('dispose clears a live hold timer', () => {
+    const { controller, armed, cleared } = setupHold();
+    controller.resize(100, 30);
+    const handle = 1;
+    controller.dispose();
+    expect(cleared()).toContain(handle);
+    expect(armed()).toEqual([]);
   });
 
   it('the deadline releases the hold when the program never repaints', () => {
@@ -840,24 +917,41 @@ describe('resize hold (pre-resize frame survives the reflow)', () => {
     expect(renderer.paints).toBeGreaterThan(0);
   });
 
-  it('a second resize supersedes the first and re-arms the deadline', () => {
-    const { controller, commits, deadline, intermediateSync, delta } = setupHold();
+  it('a second resize supersedes the first: one timer, cleared, commits at #2', () => {
+    const { controller, commits, deadline, intermediateSync, delta, armed, cleared } = setupHold();
     controller.resize(100, 30);
     controller.resize(120, 40);
+    expect(cleared()).toEqual([1]); // resize #1's timer explicitly cleared
+    expect(armed().length).toBe(1); // exactly one live deadline
     intermediateSync(120, 40);
     delta(3, 'x');
     expect(commits).toEqual([[120, 40]]); // commits once, at the latest size
-    deadline(); // stale timer was cleared → no second commit
+    deadline(); // nothing stale left to fire
     expect(commits).toEqual([[120, 40]]);
   });
 
+  it('a sync carrying the previous geometry does not arm the release', () => {
+    // Two resizes in flight: resize #1's snapshot must not release a hold whose
+    // target is #2's size, or the canvas commits ahead of the store.
+    const { controller, store, commits, intermediateSync, delta } = setupHold();
+    controller.resize(100, 30);
+    controller.resize(120, 40);
+    intermediateSync(100, 30); // stale snapshot for the superseded resize
+    delta(3, 'x');
+    expect(commits).toEqual([]);
+    intermediateSync(120, 40); // the snapshot for the live resize
+    delta(4, 'y');
+    expect(commits).toEqual([[120, 40]]);
+    expect([store.cols, store.rows]).toEqual([120, 40]); // store agrees with the canvas
+  });
+
   it('hold:false commits synchronously (mount / renderer rebuild)', () => {
-    const { controller, renderer, commits, pending } = setupHold();
+    const { controller, renderer, commits, armed } = setupHold();
     controller.resize(100, 30, { hold: false });
     expect(commits).toEqual([[100, 30]]);
     expect(renderer.lastResize).toEqual([100, 30, 1]);
     expect(renderer.paints).toBeGreaterThan(0);
-    expect(pending()).toBe(false);
+    expect(armed()).toEqual([]); // no timer allocated at all
   });
 
   it('repaint() is suppressed during the hold and resumes after commit', () => {

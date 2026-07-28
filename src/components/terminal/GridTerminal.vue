@@ -125,6 +125,9 @@ let metrics: FontMetrics;
 /** dpr the current `metrics` were device-aligned against; re-measure when the
  *  window moves to a monitor with a different ratio (else cells de-align). */
 let metricsDpr = 0;
+/** Last grid size handed to `controller.resize` — a repeat is a daemon no-op. */
+let lastAppliedCols = 0;
+let lastAppliedRows = 0;
 
 /** Current renderer construction options, derived from settings + theme. */
 function rendererOptions(): RendererOptions {
@@ -276,7 +279,11 @@ function applySize(opts: { hold?: boolean } = {}): void {
   const ratio = window.devicePixelRatio || 1;
   // dpr changed (monitor move) → re-align cell metrics to the new device grid
   // before computing cols/rows, so glyphs stay crisp and uniform.
-  if (ratio !== metricsDpr) {
+  const dprChanged = ratio !== metricsDpr;
+  if (dprChanged) {
+    // Land any held frame FIRST: it was painted at the old dpr with the old atlas,
+    // and setMetrics rebuilds the atlas immediately. Never hold across a dpr change.
+    controller.commitResize();
     metrics = measure();
     metricsDpr = ratio;
     controller.setMetrics(metrics);
@@ -300,8 +307,16 @@ function applySize(opts: { hold?: boolean } = {}): void {
   const size = gridSize();
   if (!size) return;
   const { cols, rows } = size;
+  // Hold only when the grid actually changed and the dpr didn't: the daemon skips
+  // no-op resizes, so there'd be no SIGWINCH, no repaint, and the hold would run
+  // to the deadline with live output invisible.
+  const changed = cols !== lastAppliedCols || rows !== lastAppliedRows;
+  lastAppliedCols = cols;
+  lastAppliedRows = rows;
   // The canvas is sized in the commit callback, not here — see `sizeCanvas`.
-  controller.resize(cols, rows, { hold: opts.hold ?? false });
+  controller.resize(cols, rows, { hold: (opts.hold ?? false) && changed && !dprChanged });
+  // Emitted immediately (not at commit): this drives the OTHER panes' PTY resize,
+  // and SIGWINCH must never wait on our paint.
   emit("resized", cols, rows);
 }
 

@@ -45,7 +45,7 @@ const TAIL_PREFETCH_THROTTLE_MS = 120;
  *  program's own post-SIGWINCH repaint. Long enough for a full-screen TUI redraw
  *  (tens of ms typical), short enough that a program which never repaints (dead
  *  child, plain idle shell) doesn't leave a visibly stale pane. */
-const RESIZE_HOLD_MS = 200;
+export const RESIZE_HOLD_MS = 200;
 
 /** The transport a controller drives: the live socket-backed `GridSession`, or a
  *  no-op `StaticGridTransport` for a frozen archived snapshot. Structural so both
@@ -124,6 +124,9 @@ export class TerminalController {
   private lastTailPrefetch = -Infinity;
   /** Last seen store.syncGen — a bump means a sync (possible reflow) landed. */
   private lastSyncGen = 0;
+  /** Last seen store.deltaGen — a bump means a real delta (program output) landed,
+   *  as opposed to history/search traffic. */
+  private lastDeltaGen = 0;
   /** Selection anchor/head in absolute visual-line space; null when none. */
   private sel: { anchor: Pos; head: Pos } | null = null;
   private selecting = false;
@@ -173,12 +176,22 @@ export class TerminalController {
         this.transport.cancelAllFetches();
         this.lastFetchReqId = 0;
       }
+      const newDelta = this.store.deltaGen !== this.lastDeltaGen;
+      this.lastDeltaGen = this.store.deltaGen;
       // Resize hold: the daemon answers a resize with a full sync of the screen
       // reflowed but NOT yet repainted by the program. Keep suppressing paints
-      // through it; the first delta after it is the program's own repaint.
+      // through it; the first real DELTA after it is the program's own repaint.
+      // Must be a delta, not merely "not a sync": the width reflow drops the
+      // history cache, so `history` frames stream back within milliseconds and
+      // would otherwise release the hold onto the mangled intermediate.
       if (this.hold) {
-        if (synced) this.hold.sawSync = true;
-        else if (this.hold.sawSync) this.commitResize();
+        // Only the snapshot for THIS resize counts — a sync still carrying the
+        // previous geometry (two resizes in flight) must not arm the release.
+        if (synced) {
+          this.hold.sawSync = this.store.cols === this.hold.cols && this.store.rows === this.hold.rows;
+        } else if (newDelta && this.hold.sawSync) {
+          this.commitResize();
+        }
       }
       this.requestPaint();
       // Following the tail → warm the cache just above it for an instant first
@@ -200,6 +213,9 @@ export class TerminalController {
     this.paintQueued = true;
     this.schedule(() => {
       this.paintQueued = false;
+      // Re-check: a paint queued before the resize would otherwise land mid-hold
+      // (rAF phase is uncorrelated with when the resize arrives).
+      if (this.hold) return;
       this.renderer.paint(this.store);
       this.onAfterPaint?.();
     });
@@ -611,11 +627,12 @@ export class TerminalController {
     // Never delay SIGWINCH: the program needs its new size as early as possible.
     this.transport.resize(cols, rows);
     if (this.hold) this.clearTimer(this.hold.timer);
-    this.hold = { cols, rows, sawSync: false, timer: null };
     if (opts.hold === false) {
-      this.commitResize();
+      this.hold = null;
+      this.applyResize(cols, rows);
       return;
     }
+    this.hold = { cols, rows, sawSync: false, timer: null };
     this.hold.timer = this.setTimer(() => this.commitResize(), RESIZE_HOLD_MS);
   }
 
@@ -626,8 +643,12 @@ export class TerminalController {
     if (!h) return;
     this.clearTimer(h.timer);
     this.hold = null;
-    this.onResizeCommit?.(h.cols, h.rows); // host resizes the canvas → clears it
-    this.renderer.resize(h.cols, h.rows, 1);
+    this.applyResize(h.cols, h.rows);
+  }
+
+  private applyResize(cols: number, rows: number): void {
+    this.onResizeCommit?.(cols, rows); // host resizes the canvas → clears it
+    this.renderer.resize(cols, rows, 1);
     this.store.markAllDirty(); // the cleared canvas needs every row redrawn
     this.requestPaint();
   }
