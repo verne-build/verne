@@ -320,7 +320,15 @@ function newTerminal() {
   store.openSessionPicker();
 }
 
-// ⌘J — show/hide the bottom terminal panel, creating the first terminal if the
+// Drives the filled icon on the bottom-panel toggle: open == has terminals and
+// not collapsed, matching what the panel itself renders.
+const bottomPanelOpen = computed(() => {
+  const dirId = store.selectedDirectoryId;
+  const state = dirId ? store.bottomPanelFor(dirId) : null;
+  return !!state?.tabs.length && !state.collapsed;
+});
+
+// ⌃` — show/hide the bottom terminal panel, creating the first terminal if the
 // scope has none.
 function toggleBottomPanel() {
   const dirId = store.selectedDirectoryId;
@@ -508,7 +516,15 @@ function handleGlobalKeydown(e: KeyboardEvent) {
     setTimeout(() => { invoke("notify_test").catch(() => {}); }, 3000);
     return;
   }
-  // ⌃` toggles the bottom panel. Capture phase on window, before GridTerminal's
+  // Drives the filled icon on the bottom-panel toggle: open == has terminals and
+// not collapsed, matching what the panel itself renders.
+const bottomPanelOpen = computed(() => {
+  const dirId = store.selectedDirectoryId;
+  const state = dirId ? store.bottomPanelFor(dirId) : null;
+  return !!state?.tabs.length && !state.collapsed;
+});
+
+// ⌃` toggles the bottom panel. Capture phase on window, before GridTerminal's
   // element handler, so a focused terminal can never swallow it (stopPropagation
   // is what keeps the key off the PTY).
   if (shortcuts.matches("toggle-bottom-panel", e)) {
@@ -949,6 +965,7 @@ onUnmounted(() => {
                       :maximized="fileMaximized"
                       @toggle-right="rightCollapsed = !rightCollapsed"
                       @toggle-maximize="fileMaximized = !fileMaximized"
+                      :bottom-open="bottomPanelOpen"
                       @toggle-bottom="toggleBottomPanel"
                     />
                   </ResizablePanel>

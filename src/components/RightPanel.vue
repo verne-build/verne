@@ -40,7 +40,7 @@ import { PANEL_SIZES } from "@/lib/panelSizes";
 import { scSelectionStillChanged } from "@/lib/scSelectionReconcile";
 import type { GitStatus } from "@/types";
 
-const props = defineProps<{ maximized?: boolean }>();
+const props = defineProps<{ maximized?: boolean; bottomOpen?: boolean }>();
 const emit = defineEmits<{ toggleRight: []; toggleMaximize: []; toggleBottom: [] }>();
 
 const store = useWorkspaceStore();
@@ -396,6 +396,7 @@ function revertScFile() {
       :maximized="maximized"
       @toggle-right="emit('toggleRight')"
       @toggle-maximize="emit('toggleMaximize')"
+      :bottom-open="props.bottomOpen"
       @toggle-bottom="emit('toggleBottom')"
       @promote="promoteTab"
     />

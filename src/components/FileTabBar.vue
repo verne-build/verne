@@ -23,6 +23,7 @@ import { TabBar, TabBarTrigger } from "./ui/tab-bar";
 import { Button } from "./ui/button";
 import { Kbd, KbdGroup } from "./ui/kbd";
 import PanelRightFilled from "./icons/PanelRightFilled.vue";
+import PanelBottomFilled from "./icons/PanelBottomFilled.vue";
 import {
   Tooltip,
   TooltipContent,
@@ -43,6 +44,8 @@ const props = defineProps<{
   isFileDirty: (path: string) => boolean;
   rootDir?: string;
   maximized?: boolean;
+  /** Bottom terminal panel is visible and expanded — drives the filled icon. */
+  bottomOpen?: boolean;
 }>();
 
 const shortcuts = useShortcuts();
@@ -599,14 +602,15 @@ function onDragEnd(e: DragEndPayload) {
               variant="ghost"
               class="text-muted-foreground ml-0.5"
               tabindex="0"
-              aria-label="Toggle Bottom Panel"
+              :aria-label="props.bottomOpen ? 'Hide Bottom Panel' : 'Show Bottom Panel'"
               @click="emit('toggleBottom')"
             >
-              <PanelBottom class="size-3.5" />
+              <PanelBottomFilled v-if="props.bottomOpen" class="size-3.5" />
+              <PanelBottom v-else class="size-3.5" />
             </Button>
           </TooltipTrigger>
           <TooltipContent side="bottom" class="flex items-center gap-2">
-            <span>Toggle Bottom Panel</span>
+            <span>{{ props.bottomOpen ? "Hide Bottom Panel" : "Show Bottom Panel" }}</span>
             <KbdGroup>
               <Kbd v-for="(key, i) in shortcuts.displayKeys('toggle-bottom-panel')" :key="i">{{ key }}</Kbd>
             </KbdGroup>
