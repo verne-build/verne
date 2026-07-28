@@ -718,6 +718,7 @@ export class TerminalController {
       this.transport.onSearchResult = undefined;
     }
     if (opts.disposeTransport ?? true) this.transport.dispose();
+    this.paintQueued = false;
     this.renderer.dispose();
   }
 }

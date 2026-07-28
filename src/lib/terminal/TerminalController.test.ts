@@ -155,6 +155,23 @@ describe('TerminalController', () => {
     expect(renderer.paints).toBe(1);
   });
 
+  it('does not paint a queued frame after disposal', () => {
+    const { store, session, renderer } = setup();
+    let queuedPaint: (() => void) | undefined;
+    const controller = new TerminalController({
+      store,
+      transport: session,
+      renderer,
+      metrics: METRICS,
+      schedule: (cb) => { queuedPaint = cb; },
+    });
+    session.onUpdate?.();
+    controller.dispose();
+    expect(queuedPaint).toBeTypeOf('function');
+    queuedPaint!();
+    expect(renderer.paints).toBe(0);
+  });
+
   it('can detach its renderer without disposing a retained transport', () => {
     const { controller, session, renderer } = setup();
     const disposeTransport = vi.spyOn(session, 'dispose');
