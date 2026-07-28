@@ -251,7 +251,27 @@ function updateA11y(_s: GridStore): void {
   }, 100);
 }
 
-function applySize(): void {
+/** Size the canvas backing store + CSS box to a cols×rows grid at the current
+ *  dpr. This CLEARS the canvas, so for a live pane it must run only at the resize
+ *  commit (see `TerminalController.onResizeCommit`) — never up front, or the
+ *  pre-resize frame the controller is holding is gone before it can be held. */
+function sizeCanvas(cols: number, rows: number): void {
+  if (!cnv) return;
+  const ratio = window.devicePixelRatio || 1;
+  cnv.width = Math.floor(cols * metrics.cellWidth * ratio);
+  cnv.height = Math.floor(rows * metrics.cellHeight * ratio);
+  cnv.style.width = `${cols * metrics.cellWidth}px`;
+  cnv.style.height = `${rows * metrics.cellHeight}px`;
+  // Canvas2D draws in CSS px on a device-px backing store → scale the context.
+  // WebGL2 scales via gl.viewport using the dpr handed to setDpr.
+  if (ctx2d) ctx2d.setTransform(ratio, 0, 0, ratio, 0, 0);
+  renderer?.setDpr?.(ratio);
+}
+
+/** `hold`: keep showing the pre-resize frame until the program repaints (the
+ *  pane/window resize path). Off for mount, renderer rebuild and font/padding
+ *  changes, where there is no valid frame to hold. */
+function applySize(opts: { hold?: boolean } = {}): void {
   if (!cnv || !controller) return;
   const ratio = window.devicePixelRatio || 1;
   // dpr changed (monitor move) → re-align cell metrics to the new device grid
@@ -267,12 +287,7 @@ function applySize(): void {
   if (archived.value) {
     const s = controller.store;
     const { cols, rows } = s;
-    cnv.width = Math.floor(cols * metrics.cellWidth * ratio);
-    cnv.height = Math.floor(rows * metrics.cellHeight * ratio);
-    cnv.style.width = `${cols * metrics.cellWidth}px`;
-    cnv.style.height = `${rows * metrics.cellHeight}px`;
-    if (ctx2d) ctx2d.setTransform(ratio, 0, 0, ratio, 0, 0);
-    renderer?.setDpr?.(ratio);
+    sizeCanvas(cols, rows);
     renderer?.resize(cols, rows, 1); // renderer viewport only (no PTY behind it)
     controller.store.markAllDirty();
     controller.repaint();
@@ -285,15 +300,8 @@ function applySize(): void {
   const size = gridSize();
   if (!size) return;
   const { cols, rows } = size;
-  cnv.width = Math.floor(cols * metrics.cellWidth * ratio);
-  cnv.height = Math.floor(rows * metrics.cellHeight * ratio);
-  cnv.style.width = `${cols * metrics.cellWidth}px`;
-  cnv.style.height = `${rows * metrics.cellHeight}px`;
-  // Canvas2D draws in CSS px on a device-px backing store → scale the context.
-  // WebGL2 scales via gl.viewport using the dpr handed to setDpr.
-  if (ctx2d) ctx2d.setTransform(ratio, 0, 0, ratio, 0, 0);
-  renderer?.setDpr?.(ratio);
-  controller.resize(cols, rows);
+  // The canvas is sized in the commit callback, not here — see `sizeCanvas`.
+  controller.resize(cols, rows, { hold: opts.hold ?? false });
   emit("resized", cols, rows);
 }
 
@@ -308,7 +316,7 @@ function scheduleResize(): void {
   if (resizeTimer != null) clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => {
     resizeTimer = null;
-    applySize();
+    applySize({ hold: true });
   }, 80);
 }
 
@@ -425,6 +433,7 @@ async function mountArchived(c: HTMLCanvasElement): Promise<void> {
   });
   controller.onAfterPaint = () => updateScrollUi();
   controller.onScroll = () => updateScrollUi();
+  // No onResizeCommit: archived panes size the canvas in applySize' early return.
 
   applySize();
   controller.repaint();
@@ -485,6 +494,7 @@ onMounted(async () => {
   controller.ime.onPreedit = () => controller?.repaint();
   controller.onAfterPaint = () => updateScrollUi();
   controller.onScroll = () => updateScrollUi(); // sub-line scrollbar tracking
+  controller.onResizeCommit = (cols, rows) => sizeCanvas(cols, rows);
 
   session.connect();
   registerGridSession(props.sessionId!, session, renderKind);

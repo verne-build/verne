@@ -463,9 +463,9 @@ describe('TerminalController', () => {
     expect(controller.hasSelection()).toBe(false);
   });
 
-  it('resize tells both the renderer and the server', () => {
+  it('resize tells the server immediately; the renderer resizes on commit', () => {
     const { controller, renderer, sock } = setup();
-    controller.resize(100, 30);
+    controller.resize(100, 30, { hold: false }); // no frame worth holding
     expect(renderer.lastResize).toEqual([100, 30, 1]);
     expect(JSON.parse(sock.sent.at(-1)!)).toEqual({ type: 'resize', cols: 100, rows: 30 });
   });
@@ -737,6 +737,138 @@ describe('TerminalController read-only (archived snapshot)', () => {
     controller.selectionUpdate(24, 0);
     expect(controller.hasSelection()).toBe(true);
     expect(controller.copySelection()).toBe('hel');
+  });
+});
+
+describe('resize hold (pre-resize frame survives the reflow)', () => {
+  /** Controller with an injectable hold deadline and a recorded commit hook. */
+  function setupHold() {
+    let fire: (() => void) | null = null;
+    const store = new GridStore();
+    store.applySync({
+      type: 'sync', rev: 1, cols: 10, rows: 4, cursor: [0, 0], altScreen: false,
+      modes: MODES(), totalLines: 100, runs: [],
+    });
+    const transport = new SpyTransport(store);
+    const renderer = new FakeRenderer();
+    const commits: [number, number][] = [];
+    const controller = new TerminalController({
+      store, transport, renderer, metrics: METRICS, schedule: (cb) => cb(),
+      setTimer: (cb) => { fire = cb; return 1; },
+      clearTimer: () => { fire = null; },
+    });
+    controller.onResizeCommit = (c, r) => commits.push([c, r]);
+    transport.onUpdate?.(); // settle the seeded sync so later syncs are detectable
+    renderer.paints = 0;
+    const update = () => transport.onUpdate?.();
+    /** The daemon's post-resize reply: the reflowed, not-yet-repainted screen. */
+    const intermediateSync = (cols: number, rows: number) => {
+      store.applySync({
+        type: 'sync', rev: 2, cols, rows, cursor: [0, 0], altScreen: false,
+        modes: MODES(), totalLines: 100, runs: [],
+      });
+      update();
+    };
+    const delta = (rev: number, text: string) => {
+      store.applyDelta({
+        type: 'delta', rev, cursor: [0, 0], modes: MODES(), totalLines: 100,
+        runs: [{ line: 0, startCol: 0, cells: [...text].map((c) => textCell(c)), wrapped: false }],
+      });
+      update();
+    };
+    return {
+      store, transport, renderer, controller, commits, delta, intermediateSync,
+      deadline: () => fire?.(),
+      pending: () => fire != null,
+    };
+  }
+
+  it('sends the resize frame immediately but paints nothing yet', () => {
+    const { controller, transport, renderer, commits } = setupHold();
+    controller.resize(100, 30);
+    expect(transport.resizes).toEqual([{ cols: 100, rows: 30 }]); // SIGWINCH now
+    expect(renderer.paints).toBe(0); // pre-resize frame still on screen
+    expect(renderer.lastResize).toBeNull(); // renderer viewport untouched
+    expect(commits).toEqual([]); // canvas not resized (would clear it)
+  });
+
+  it('keeps applying frames to the store while painting is suppressed', () => {
+    const { controller, store, renderer, transport, intermediateSync } = setupHold();
+    controller.resize(100, 30);
+    // Live output still in flight when the SIGWINCH landed: applied, not painted.
+    store.applyDelta({
+      type: 'delta', rev: 2, cursor: [1, 2], modes: MODES(), totalLines: 140, runs: [],
+    });
+    transport.onUpdate?.();
+    expect(store.totalLines).toBe(140);
+    expect(store.cursor).toEqual([1, 2]);
+    expect(renderer.paints).toBe(0);
+    // The daemon's reflowed-but-unrepainted snapshot: applied, still not painted.
+    intermediateSync(100, 30);
+    expect(store.cols).toBe(100);
+    expect(store.rows).toBe(30);
+    expect(renderer.paints).toBe(0);
+  });
+
+  it('a delta arriving before the post-resize sync does not release the hold', () => {
+    const { controller, renderer, delta, commits } = setupHold();
+    controller.resize(100, 30);
+    delta(2, 'noise'); // in-flight output from before the SIGWINCH
+    expect(renderer.paints).toBe(0);
+    expect(commits).toEqual([]);
+  });
+
+  it('the first delta after the post-resize sync releases the hold and paints', () => {
+    const { controller, renderer, commits, delta, intermediateSync, pending } = setupHold();
+    controller.resize(100, 30);
+    intermediateSync(100, 30);
+    expect(commits).toEqual([]); // the sync itself is not the program's repaint
+    delta(3, 'repaint'); // the program's own post-SIGWINCH repaint
+    expect(commits).toEqual([[100, 30]]); // canvas resized at commit, not before
+    expect(renderer.lastResize).toEqual([100, 30, 1]);
+    expect(renderer.paints).toBeGreaterThan(0);
+    expect(pending()).toBe(false); // deadline disarmed
+  });
+
+  it('the deadline releases the hold when the program never repaints', () => {
+    const { controller, renderer, commits, deadline } = setupHold();
+    controller.resize(100, 30);
+    expect(renderer.paints).toBe(0);
+    deadline(); // dead child / idle shell: no repaint ever arrives
+    expect(commits).toEqual([[100, 30]]);
+    expect(renderer.lastResize).toEqual([100, 30, 1]);
+    expect(renderer.paints).toBeGreaterThan(0);
+  });
+
+  it('a second resize supersedes the first and re-arms the deadline', () => {
+    const { controller, commits, deadline, intermediateSync, delta } = setupHold();
+    controller.resize(100, 30);
+    controller.resize(120, 40);
+    intermediateSync(120, 40);
+    delta(3, 'x');
+    expect(commits).toEqual([[120, 40]]); // commits once, at the latest size
+    deadline(); // stale timer was cleared → no second commit
+    expect(commits).toEqual([[120, 40]]);
+  });
+
+  it('hold:false commits synchronously (mount / renderer rebuild)', () => {
+    const { controller, renderer, commits, pending } = setupHold();
+    controller.resize(100, 30, { hold: false });
+    expect(commits).toEqual([[100, 30]]);
+    expect(renderer.lastResize).toEqual([100, 30, 1]);
+    expect(renderer.paints).toBeGreaterThan(0);
+    expect(pending()).toBe(false);
+  });
+
+  it('repaint() is suppressed during the hold and resumes after commit', () => {
+    const { controller, renderer, deadline } = setupHold();
+    controller.resize(100, 30);
+    controller.repaint();
+    expect(renderer.paints).toBe(0);
+    deadline();
+    const after = renderer.paints;
+    controller.repaint();
+    expect(renderer.paints).toBe(after + 1);
   });
 });
 

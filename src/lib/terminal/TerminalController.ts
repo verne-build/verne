@@ -41,6 +41,12 @@ const TAIL_PREFETCH_SCREENS = 2;
  *  where the rows just above the tail keep scrolling away before they're read. */
 const TAIL_PREFETCH_THROTTLE_MS = 120;
 
+/** Max time (ms) to keep showing the pre-resize frame while waiting for the
+ *  program's own post-SIGWINCH repaint. Long enough for a full-screen TUI redraw
+ *  (tens of ms typical), short enough that a program which never repaints (dead
+ *  child, plain idle shell) doesn't leave a visibly stale pane. */
+const RESIZE_HOLD_MS = 200;
+
 /** The transport a controller drives: the live socket-backed `GridSession`, or a
  *  no-op `StaticGridTransport` for a frozen archived snapshot. Structural so both
  *  satisfy it without a shared base class. Covers exactly the surface the
@@ -81,6 +87,9 @@ export interface ControllerDeps {
    *  in tests). Returns a handle passed back to `clearAutoScroll`. */
   setAutoScroll?: (cb: () => void, ms: number) => unknown;
   clearAutoScroll?: (handle: unknown) => void;
+  /** One-shot timer for the resize hold deadline (setTimeout in the app). */
+  setTimer?: (cb: () => void, ms: number) => unknown;
+  clearTimer?: (handle: unknown) => void;
 }
 
 export class TerminalController {
@@ -97,6 +106,10 @@ export class TerminalController {
   /** Called on every continuous wheel step so the host can move the scrollbar
    *  thumb sub-line, even when the content row (and thus the paint) didn't change. */
   onScroll?: () => void;
+  /** Called when a resize commits, immediately before the renderer is resized and
+   *  repainted. The host resizes the canvas backing store here — doing it earlier
+   *  would clear the very frame the hold is preserving. */
+  onResizeCommit?: (cols: number, rows: number) => void;
   private metrics: FontMetrics;
   private schedule: (cb: () => void) => void;
   private clock: () => number;
@@ -119,6 +132,11 @@ export class TerminalController {
   private dragPointer: { px: number; py: number } | null = null;
   private setAutoScroll: (cb: () => void, ms: number) => unknown;
   private clearAutoScroll: (handle: unknown) => void;
+  private setTimer: (cb: () => void, ms: number) => unknown;
+  private clearTimer: (handle: unknown) => void;
+  /** In-flight resize hold: painting is suppressed (the canvas still shows the
+   *  pre-resize frame) until the program repaints or the deadline fires. */
+  private hold: { cols: number; rows: number; sawSync: boolean; timer: unknown } | null = null;
 
   /** reqId of the latest in-flight scrollback fetch; cancelled when superseded. */
   private lastFetchReqId = 0;
@@ -140,9 +158,12 @@ export class TerminalController {
     this.clock = deps.clock ?? (() => performance.now());
     this.setAutoScroll = deps.setAutoScroll ?? ((cb, ms) => setInterval(cb, ms) as unknown);
     this.clearAutoScroll = deps.clearAutoScroll ?? ((h) => clearInterval(h as ReturnType<typeof setInterval>));
+    this.setTimer = deps.setTimer ?? ((cb, ms) => setTimeout(cb, ms) as unknown);
+    this.clearTimer = deps.clearTimer ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
 
     this.transport.onUpdate = () => {
-      if (this.store.syncGen !== this.lastSyncGen) {
+      const synced = this.store.syncGen !== this.lastSyncGen;
+      if (synced) {
         this.lastSyncGen = this.store.syncGen;
         // A sync may have reflowed the grid → absolute-line selection anchors
         // are stale. Drop the selection rather than highlight the wrong text.
@@ -151,6 +172,13 @@ export class TerminalController {
         // aren't deduped against dead reqIds (store clears pendingHistory in applySync).
         this.transport.cancelAllFetches();
         this.lastFetchReqId = 0;
+      }
+      // Resize hold: the daemon answers a resize with a full sync of the screen
+      // reflowed but NOT yet repainted by the program. Keep suppressing paints
+      // through it; the first delta after it is the program's own repaint.
+      if (this.hold) {
+        if (synced) this.hold.sawSync = true;
+        else if (this.hold.sawSync) this.commitResize();
       }
       this.requestPaint();
       // Following the tail → warm the cache just above it for an instant first
@@ -167,6 +195,7 @@ export class TerminalController {
   }
 
   private requestPaint(): void {
+    if (this.hold) return; // holding the pre-resize frame
     if (this.paintQueued) return;
     this.paintQueued = true;
     this.schedule(() => {
@@ -178,6 +207,7 @@ export class TerminalController {
 
   /** Force an immediate repaint (e.g. after theme/font change). */
   repaint(): void {
+    if (this.hold) return; // holding the pre-resize frame
     this.renderer.paint(this.store);
     this.onAfterPaint?.();
   }
@@ -568,12 +598,38 @@ export class TerminalController {
     return { ...hit, start: startCol, len: indexToCol(m, hit.start + hit.len) - startCol };
   }
 
-  resize(cols: number, rows: number): void {
+  /** Resize the grid. The resize frame (→ SIGWINCH) always goes out immediately.
+   *  With `hold` (the default, i.e. a pane/window resize), painting is suppressed
+   *  until the program's own repaint lands so the reflowed-but-unrepainted
+   *  intermediate never reaches the screen; the store keeps applying every frame
+   *  throughout. Pass `hold: false` when there is no frame worth holding (mount,
+   *  renderer rebuild, font/padding change) — the commit then runs synchronously. */
+  resize(cols: number, rows: number, opts: { hold?: boolean } = {}): void {
     this.transport.cancelAllFetches();
     this.store.clearPendingHistory();
     this.lastFetchReqId = 0;
-    this.renderer.resize(cols, rows, 1);
+    // Never delay SIGWINCH: the program needs its new size as early as possible.
     this.transport.resize(cols, rows);
+    if (this.hold) this.clearTimer(this.hold.timer);
+    this.hold = { cols, rows, sawSync: false, timer: null };
+    if (opts.hold === false) {
+      this.commitResize();
+      return;
+    }
+    this.hold.timer = this.setTimer(() => this.commitResize(), RESIZE_HOLD_MS);
+  }
+
+  /** End the hold: size the canvas (host), the renderer, and repaint. Safe to
+   *  call when no hold is active. */
+  commitResize(): void {
+    const h = this.hold;
+    if (!h) return;
+    this.clearTimer(h.timer);
+    this.hold = null;
+    this.onResizeCommit?.(h.cols, h.rows); // host resizes the canvas → clears it
+    this.renderer.resize(h.cols, h.rows, 1);
+    this.store.markAllDirty(); // the cleared canvas needs every row redrawn
+    this.requestPaint();
   }
 
   private snapToBottomOnInput(): void {
@@ -584,6 +640,8 @@ export class TerminalController {
   }
 
   dispose(): void {
+    if (this.hold) this.clearTimer(this.hold.timer);
+    this.hold = null;
     this.stopAutoScroll();
     this.transport.dispose();
     this.renderer.dispose();
