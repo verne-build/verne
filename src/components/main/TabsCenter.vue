@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, onUnmounted, type Ref } from "vue";
-import { Folder, PanelRight } from "@lucide/vue";
+import { Folder, PanelRight, PanelBottom } from "@lucide/vue";
+import PanelBottomFilled from "@/components/icons/PanelBottomFilled.vue";
 import { ask } from "@/platform";
 import { sessionEndAction, shouldConfirmArchive } from "@/lib/sessionEnd";
 import { useWorkspaceStore } from "@/stores/workspace";
@@ -34,6 +35,15 @@ const pickerDirectoryName = computed(() => {
   const id = store.pendingPicker?.dirId;
   return store.directories.find((directory) => directory.id === id)?.name ?? "Workspace";
 });
+
+const bottomPanelOpen = computed(() => {
+  const state = dirId.value ? store.bottomPanelFor(dirId.value) : null;
+  return !!state?.tabs.length && !state.collapsed;
+});
+
+function toggleBottomPanel() {
+  window.dispatchEvent(new CustomEvent("menu-action", { detail: { action: "toggleBottomPanel" } }));
+}
 
 const welcome = computed(() =>
   firstRunView({
@@ -111,6 +121,27 @@ onUnmounted(() => {
       <div v-if="leftCollapsed" class="shrink-0 w-[128px]" />
       <div class="flex-1" />
       <TooltipProvider :delay-duration="250">
+        <Tooltip v-if="showRightOverlay">
+          <TooltipTrigger as-child>
+            <Button
+              type="button"
+              size="icon-xs"
+              variant="ghost"
+              class="text-muted-foreground pointer-events-auto"
+              :aria-label="bottomPanelOpen ? 'Hide Bottom Panel' : 'Show Bottom Panel'"
+              @click="toggleBottomPanel"
+            >
+              <PanelBottomFilled v-if="bottomPanelOpen" class="size-3.5" />
+              <PanelBottom v-else class="size-3.5" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" class="flex items-center gap-2">
+            <span>{{ bottomPanelOpen ? "Hide Bottom Panel" : "Show Bottom Panel" }}</span>
+            <KbdGroup>
+              <Kbd v-for="(key, i) in shortcuts.displayKeys('toggle-bottom-panel')" :key="i">{{ key }}</Kbd>
+            </KbdGroup>
+          </TooltipContent>
+        </Tooltip>
         <Tooltip v-if="showRightOverlay">
           <TooltipTrigger as-child>
             <Button

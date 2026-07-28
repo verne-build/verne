@@ -340,7 +340,7 @@ onUnmounted(() => {
       :class="[
         compact ? 'h-9' : 'h-11.5',
         isActive ? 'border-border text-foreground' : 'border-border text-muted-foreground',
-        reserveRightOverlay ? (compact ? 'pr-14' : 'pr-9') : 'pr-1',
+        reserveRightOverlay ? 'pr-14' : 'pr-1',
         reserveLeftOverlay ? 'pl-[133px]' : 'pl-4',
       ]"
     >
