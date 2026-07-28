@@ -5,7 +5,6 @@ import { useProjectIcons } from "./composables/useProjectIcons";
 import { useWorkspaceStore } from "./stores/workspace";
 import { useRpc } from "./composables/useRpc";
 import RightPanel from "./components/RightPanel.vue";
-import ResourceMonitor from "./components/ResourceMonitor.vue";
 import ThemeSelector from "./components/ThemeSelector.vue";
 import { Toaster } from "./components/ui/sonner";
 import { PanelLeft, FolderOpen, Check, Search } from "@lucide/vue";
@@ -41,6 +40,7 @@ import TabsCenter from "@/components/main/TabsCenter.vue";
 import BottomPanel from "@/components/main/BottomPanel.vue";
 import WelcomeHero from "@/components/main/WelcomeHero.vue";
 import Sidebar from "@/components/sidebar/Sidebar.vue";
+import NewSessionButton from "@/components/sidebar/NewSessionButton.vue";
 import KeyboardShortcutsModal from "@/components/KeyboardShortcutsModal.vue";
 import CommandPalette from "@/components/CommandPalette.vue";
 import { setSplitterDragging, flushTerminalLayouts } from "@/composables/useTerminal";
@@ -852,12 +852,16 @@ onUnmounted(() => {
           class="macos-vibrancy-sidebar"
         >
           <div class="h-full flex flex-col">
-            <!-- Traffic light spacer + drag region + resource monitor.
+            <!-- Traffic light spacer + drag region + New Session.
                  (Left toggle + search live in the persistent overlay above.) -->
             <div
               class="drag-region h-11.5 shrink-0 flex items-center justify-end pr-1"
             >
-              <ResourceMonitor v-if="!showSettings" class="relative z-10" />
+              <NewSessionButton
+                v-if="!showSettings"
+                class="relative z-10"
+                @new-session="newTerminal"
+              />
             </div>
             <SettingsSidebar
               v-if="showSettings"
