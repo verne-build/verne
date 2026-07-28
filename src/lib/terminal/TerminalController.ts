@@ -138,7 +138,12 @@ export class TerminalController {
   private setTimer: (cb: () => void, ms: number) => unknown;
   private clearTimer: (handle: unknown) => void;
   /** In-flight resize hold: painting is suppressed (the canvas still shows the
-   *  pre-resize frame) until the program repaints or the deadline fires. */
+   *  pre-resize frame) until the program repaints or the deadline fires.
+   *  Known window: pointer mapping (pixelToCell) reads the store's NEW cols/rows
+   *  while the canvas still shows the old frame, so click/word-select and link
+   *  hover map to the wrong cells for the hold's duration. Fixing it needs a
+   *  shadow copy of the pre-resize grid; ≤200ms mid-resize was judged not worth
+   *  it. */
   private hold: { cols: number; rows: number; sawSync: boolean; timer: unknown } | null = null;
 
   /** reqId of the latest in-flight scrollback fetch; cancelled when superseded. */
