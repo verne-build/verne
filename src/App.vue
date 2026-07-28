@@ -508,6 +508,15 @@ function handleGlobalKeydown(e: KeyboardEvent) {
     setTimeout(() => { invoke("notify_test").catch(() => {}); }, 3000);
     return;
   }
+  // ⌃` toggles the bottom panel. Capture phase on window, before GridTerminal's
+  // element handler, so a focused terminal can never swallow it (stopPropagation
+  // is what keeps the key off the PTY).
+  if (shortcuts.matches("toggle-bottom-panel", e)) {
+    e.preventDefault();
+    e.stopPropagation();
+    toggleBottomPanel();
+    return;
+  }
   // Split the focused terminal pane. Only when a terminal owns focus, so Monaco's
   // ⌘D (add-selection-to-next-match) is untouched. Bindings are Cmd-only.
   if (shortcuts.matches("split-pane-h", e) || shortcuts.matches("split-pane-v", e)) {

@@ -12,22 +12,22 @@ const split = (...ids: string[]): LayoutNode => ({
 describe("bottomListRows", () => {
   it("emits one row for a solo group, carrying its pane id", () => {
     expect(bottomListRows(["g1"], () => leaf("p1"))).toEqual([
-      { kind: "group", groupId: "g1", paneId: "p1", depth: 0, isLast: false },
+      { kind: "group", groupId: "g1", paneId: "p1", depth: 0 },
     ]);
   });
 
   it("expands a split group into indented pane rows in layout order", () => {
     const rows = bottomListRows(["g1"], () => split("p1", "p2"));
     expect(rows).toEqual([
-      { kind: "group", groupId: "g1", paneId: "p1", depth: 0, isLast: false },
-      { kind: "pane", groupId: "g1", paneId: "p1", depth: 1, isLast: false },
-      { kind: "pane", groupId: "g1", paneId: "p2", depth: 1, isLast: true },
+      { kind: "group", groupId: "g1", paneId: "p1", depth: 0 },
+      { kind: "pane", groupId: "g1", paneId: "p1", depth: 1 },
+      { kind: "pane", groupId: "g1", paneId: "p2", depth: 1 },
     ]);
   });
 
-  it("marks only the final pane row as last, for the L-shaped connector", () => {
+  it("emits one pane row per leaf, in layout order", () => {
     const rows = bottomListRows(["g1"], () => split("p1", "p2", "p3"));
-    expect(rows.filter((r) => r.kind === "pane").map((r) => r.isLast)).toEqual([false, false, true]);
+    expect(rows.filter((r) => r.kind === "pane").map((r) => r.paneId)).toEqual(["p1", "p2", "p3"]);
   });
 
   it("follows the given group order", () => {
@@ -38,7 +38,7 @@ describe("bottomListRows", () => {
   it("skips a group whose arrangement is missing", () => {
     const layouts: Record<string, LayoutNode | null> = { g1: null, g2: leaf("p2") };
     expect(bottomListRows(["g1", "g2"], (id) => layouts[id] ?? null)).toEqual([
-      { kind: "group", groupId: "g2", paneId: "p2", depth: 0, isLast: false },
+      { kind: "group", groupId: "g2", paneId: "p2", depth: 0 },
     ]);
   });
 

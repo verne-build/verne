@@ -68,3 +68,25 @@ describe("matchesEvent", () => {
     expect(matchesEvent("Cmd+D", ev({ metaKey: true, ctrlKey: true, key: "d" }))).toBe(false);
   });
 });
+
+describe("Ctrl+` (bottom panel toggle)", () => {
+  const ev = (over: Partial<KeyboardEvent>) =>
+    ({ key: "`", ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...over }) as KeyboardEvent;
+
+  it("matches a ctrl+backtick press", () => {
+    expect(matchesEvent("Ctrl+`", ev({ ctrlKey: true }))).toBe(true);
+  });
+
+  it("does not match a bare backtick", () => {
+    expect(matchesEvent("Ctrl+`", ev({}))).toBe(false);
+  });
+
+  it("does not match cmd+backtick (macOS window cycling)", () => {
+    expect(matchesEvent("Ctrl+`", ev({ metaKey: true }))).toBe(false);
+  });
+
+  it("does not collide with ctrl+shift+backtick (focus session)", () => {
+    expect(matchesEvent("Ctrl+`", ev({ ctrlKey: true, shiftKey: true }))).toBe(false);
+    expect(matchesEvent("Ctrl+Shift+`", ev({ ctrlKey: true, shiftKey: true }))).toBe(true);
+  });
+});

@@ -221,14 +221,14 @@ function onDragEnd(e: DragEndPayload) {
               class="block"
             >
               <div
-                class="group flex h-7 cursor-default items-center gap-1.5 pr-1 pl-2 data-[dragging=true]:opacity-50"
-                :class="isActive(row) ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent/50'"
+                class="group flex h-7 cursor-default select-none items-center gap-1.5 mx-1 mb-0.5 pr-1 rounded-md data-[dragging=true]:opacity-50 pl-2"
+                :class="isActive(row) ? 'bg-[var(--color-tab-active-bg)] text-[var(--color-foreground)]' : 'text-[var(--color-soft-foreground)] hover:bg-[color-mix(in_oklch,var(--color-border)_25%,transparent)]'"
                 @click="select(row)"
                 @dblclick="startRename(row)"
               >
                 <Columns2
                   v-if="(splitCounts.get(row.groupId) ?? 0) > 1"
-                  class="size-3.5 shrink-0"
+                  class="size-3.5 shrink-0 text-[var(--color-foreground)]"
                   aria-hidden="true"
                 />
                 <StatusIndicator
@@ -236,7 +236,7 @@ function onDragEnd(e: DragEndPayload) {
                   :state="rowState.get(rowKey(row))!"
                   class="size-3 shrink-0"
                 />
-                <SquareTerminal v-else class="size-3.5 shrink-0" aria-hidden="true" />
+                <SquareTerminal v-else class="size-3.5 shrink-0 text-[var(--color-foreground)]" aria-hidden="true" />
                 <input
                   v-if="renamingId === row.groupId"
                   type="text"
@@ -264,25 +264,22 @@ function onDragEnd(e: DragEndPayload) {
             </SortableItem>
             <div
               v-else
-              class="group flex h-7 cursor-default items-center gap-1.5 pr-1 pl-2"
-              :class="isActive(row) ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent/50'"
+              class="group flex h-7 cursor-default select-none items-center gap-1.5 ml-4 mr-1 mb-0.5 pr-1 rounded-md pl-1.5"
+              :class="isActive(row) ? 'bg-[var(--color-tab-active-bg)] text-[var(--color-foreground)]' : 'text-[var(--color-soft-foreground)] hover:bg-[color-mix(in_oklch,var(--color-border)_25%,transparent)]'"
               @click="select(row)"
             >
-              <!-- Tree connector: ├ for a middle pane, └ for the last, so the
-                   row reads as branching off its group. -->
-              <span class="relative h-7 w-3 shrink-0" aria-hidden="true">
-                <span
-                  class="absolute left-0 top-0 w-px bg-border"
-                  :class="row.isLast ? 'h-1/2' : 'h-full'"
-                />
-                <span class="absolute left-0 top-1/2 h-px w-2 bg-border" />
-              </span>
+              <!-- └ carried by the item itself: a corner glyph inside the row,
+                   not a rule spanning rows, so nothing has to line up. -->
+              <span
+                class="mb-1 h-2 w-2 shrink-0 rounded-bl-[3px] border-b border-l border-[color-mix(in_oklch,var(--color-soft-foreground)_70%,transparent)]"
+                aria-hidden="true"
+              />
               <StatusIndicator
                 v-if="rowState.get(rowKey(row))"
                 :state="rowState.get(rowKey(row))!"
                 class="size-3 shrink-0"
               />
-              <SquareTerminal v-else class="size-3.5 shrink-0" aria-hidden="true" />
+              <SquareTerminal v-else class="size-3.5 shrink-0 text-[var(--color-foreground)]" aria-hidden="true" />
               <span class="min-w-0 flex-1 truncate">{{ rowLabel.get(rowKey(row)) }}</span>
               <Button
                 size="icon-xs"

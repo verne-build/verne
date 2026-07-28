@@ -116,7 +116,15 @@ export function buildAppMenu(getWindow: () => BrowserWindow, onRestartDaemon?: (
       submenu: [
         { label: "Toggle Left Panel", accelerator: accel("toggle-left-panel"), click: () => send("toggleLeftPanel") },
         { label: "Toggle Right Panel", accelerator: accel("toggle-right-panel"), click: () => send("toggleRightPanel") },
-        { label: "Toggle Bottom Panel", accelerator: accel("toggle-bottom-panel"), click: () => send("toggleBottomPanel") },
+        // registerAccelerator:false — the menu SHOWS ⌃` but doesn't own the key, so
+        // the renderer's capture-phase handler wins over a focused terminal
+        // (a menu-owned accelerator left the key reaching the PTY instead).
+        {
+          label: "Toggle Bottom Panel",
+          accelerator: accel("toggle-bottom-panel"),
+          registerAccelerator: false,
+          click: () => send("toggleBottomPanel"),
+        },
         { type: "separator" },
         { label: "Focus File Explorer", accelerator: accel("focus-file-explorer"), click: () => send("focusExplorer") },
         { label: "Focus Source Control", accelerator: accel("focus-source-control"), click: () => send("focusSourceControl") },
