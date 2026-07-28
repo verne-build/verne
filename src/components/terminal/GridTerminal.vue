@@ -11,6 +11,11 @@ import { useSettings } from '../../composables/useSettings';
 import { useTheme } from '../../composables/useTheme';
 import { GridStore } from '../../lib/terminal/GridStore';
 import { GridSession } from '../../lib/terminal/GridSession';
+import {
+  acquireLiveGridRuntime,
+  hasRetainedGridFrame,
+  type LiveGridRuntimeLease,
+} from '../../lib/terminal/liveGridRuntime';
 import { TerminalController } from '../../lib/terminal/TerminalController';
 import { StaticGridTransport } from '../../lib/terminal/StaticGridTransport';
 import {
@@ -113,6 +118,7 @@ function themePalette(): Palette {
 
 let controller: TerminalController | null = null;
 let session: GridSession | null = null;
+let runtimeLease: LiveGridRuntimeLease | null = null;
 let renderer: TerminalRenderer | null = null;
 /** 'webgl2' until a context loss demotes us to 'canvas2d'. */
 let renderKind: 'webgl2' | 'canvas2d' = 'canvas2d';
@@ -468,6 +474,7 @@ onMounted(async () => {
   cnv = c;
 
   metrics = measure();
+  metricsDpr = window.devicePixelRatio || 1;
   bgColor.value = paletteFromTheme().background;
 
   // Exactly one source of truth: reject both/neither id (a live PTY and a frozen
@@ -484,17 +491,29 @@ onMounted(async () => {
     return;
   }
 
-  const store = new GridStore();
-
   const made = createRenderer(c, rendererOptions());
   renderer = made.renderer;
   renderKind = made.kind;
   ctx2d = made.kind === 'canvas2d' ? c.getContext('2d') : null;
   bindCanvasEvents(c);
 
-  const port = await useRpc().request.getWsPort({});
-  const url = `ws://127.0.0.1:${port}/session/${props.sessionId}?proto=grid`;
-  session = new GridSession(url, store);
+  runtimeLease = await acquireLiveGridRuntime(props.sessionId!, async () => {
+    const port = await useRpc().request.getWsPort({});
+    const store = new GridStore();
+    const liveSession = new GridSession(
+      `ws://127.0.0.1:${port}/session/${props.sessionId}?proto=grid`,
+      store,
+    );
+    liveSession.connect();
+    return { store, session: liveSession };
+  });
+  if (disposed) {
+    runtimeLease.release();
+    runtimeLease = null;
+    return;
+  }
+  const { store, session: liveSession } = runtimeLease.runtime;
+  session = liveSession;
 
   controller = new TerminalController({
     store,
@@ -511,9 +530,18 @@ onMounted(async () => {
   controller.onScroll = () => updateScrollUi(); // sub-line scrollbar tracking
   controller.onResizeCommit = (cols, rows) => sizeCanvas(cols, rows);
 
-  session.connect();
   registerGridSession(props.sessionId!, session, renderKind);
-  applySize();
+  if (hasRetainedGridFrame(runtimeLease)) {
+    lastAppliedCols = store.cols;
+    lastAppliedRows = store.rows;
+    sizeCanvas(store.cols, store.rows);
+    renderer.resize(store.cols, store.rows, 1);
+    store.markAllDirty();
+    controller.repaint();
+    applySize({ hold: true });
+  } else {
+    applySize();
+  }
 
   resizeObserver = new ResizeObserver(() => scheduleResize());
   if (container.value) resizeObserver.observe(container.value);
@@ -986,7 +1014,13 @@ onBeforeUnmount(() => {
   if (resizeTimer != null) clearTimeout(resizeTimer);
   if (searchDebounce != null) clearTimeout(searchDebounce);
   if (a11yTimer != null) clearTimeout(a11yTimer);
-  controller?.dispose();
+  if (archived.value) {
+    controller?.dispose();
+  } else {
+    controller?.dispose({ disposeTransport: false });
+    runtimeLease?.release();
+    runtimeLease = null;
+  }
   controller = null;
   session = null;
   renderer = null;

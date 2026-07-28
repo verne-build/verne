@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GridStore } from './GridStore';
 import type { GridSession } from './GridSession';
-import { LiveGridRuntimeRegistry, LIVE_GRID_RUNTIME_GRACE_MS } from './liveGridRuntime';
+import {
+  hasRetainedGridFrame,
+  LiveGridRuntimeRegistry,
+  LIVE_GRID_RUNTIME_GRACE_MS,
+} from './liveGridRuntime';
 
 function runtime() {
   return {
@@ -9,6 +13,41 @@ function runtime() {
     session: { dispose: vi.fn() } as unknown as GridSession,
   };
 }
+
+describe('hasRetainedGridFrame', () => {
+  it('rejects a fresh empty store', () => {
+    expect(hasRetainedGridFrame({
+      runtime: runtime(),
+      retained: false,
+      release: () => {},
+    })).toBe(false);
+  });
+
+  it('accepts a retained store seeded with a sync frame', () => {
+    const value = runtime();
+    value.store.applySync({
+      type: 'sync',
+      rev: 1,
+      cols: 80,
+      rows: 24,
+      cursor: [0, 0],
+      altScreen: false,
+      modes: {
+        mouseReporting: false,
+        altScreen: false,
+        appCursor: false,
+        bracketedPaste: false,
+      },
+      totalLines: 24,
+      runs: [],
+    });
+    expect(hasRetainedGridFrame({
+      runtime: value,
+      retained: true,
+      release: () => {},
+    })).toBe(true);
+  });
+});
 
 describe('LiveGridRuntimeRegistry', () => {
   afterEach(() => vi.useRealTimers());

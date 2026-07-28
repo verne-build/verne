@@ -14,6 +14,11 @@ export interface LiveGridRuntimeLease {
   release(): void;
 }
 
+export function hasRetainedGridFrame(lease: LiveGridRuntimeLease): boolean {
+  const { store } = lease.runtime;
+  return lease.retained && store.syncGen > 0 && store.cols > 0 && store.rows > 0;
+}
+
 interface Entry {
   owner: number;
   runtime?: LiveGridRuntime;
