@@ -1014,10 +1014,14 @@ onBeforeUnmount(() => {
   if (resizeTimer != null) clearTimeout(resizeTimer);
   if (searchDebounce != null) clearTimeout(searchDebounce);
   if (a11yTimer != null) clearTimeout(a11yTimer);
-  if (archived.value) {
-    controller?.dispose();
+  if (!controller) {
+    renderer?.dispose();
+  } else if (archived.value) {
+    controller.dispose();
   } else {
-    controller?.dispose({ disposeTransport: false });
+    controller.dispose({ disposeTransport: false });
+  }
+  if (!archived.value) {
     runtimeLease?.release();
     runtimeLease = null;
   }

@@ -158,6 +158,7 @@ describe('GridTerminal retained runtime handoff', () => {
     testState.controllerSetMetrics.mockReset();
     testState.controllerRepaint.mockReset();
     testState.rendererResize.mockReset();
+    fakeRenderer.dispose.mockReset();
 
     host = document.createElement('div');
     document.body.append(host);
@@ -185,5 +186,22 @@ describe('GridTerminal retained runtime handoff', () => {
       { hold: true },
     );
     expect(testState.controllerCommitResize).not.toHaveBeenCalled();
+  });
+
+  it('disposes the renderer once when unmounted during runtime acquisition', async () => {
+    let resolveAcquire!: (lease: unknown) => void;
+    testState.acquire.mockReturnValue(new Promise((resolve) => {
+      resolveAcquire = resolve;
+    }));
+    app!.mount(host);
+    await flush();
+
+    app!.unmount();
+    app = null;
+    expect(fakeRenderer.dispose).toHaveBeenCalledOnce();
+
+    resolveAcquire(testState.lease);
+    await flush();
+    expect(fakeRenderer.dispose).toHaveBeenCalledOnce();
   });
 });
