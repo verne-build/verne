@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { CircleHelp, Settings } from "@lucide/vue";
 import SessionsSidebar from "./SessionsSidebar.vue";
+import ResourceMonitor from "@/components/ResourceMonitor.vue";
 import { Button } from "@/components/ui/button";
 import { Kbd, KbdGroup } from "@/components/ui/kbd";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -17,12 +18,16 @@ const shortcuts = useShortcuts();
     </div>
     <footer class="flex shrink-0 items-center justify-end gap-0.5 border-t border-border px-1 py-1">
       <TooltipProvider :delay-duration="300">
+        <span class="contents" data-control="resource-monitor">
+          <ResourceMonitor />
+        </span>
         <Tooltip>
           <TooltipTrigger as-child>
             <Button
               variant="ghost"
               size="icon-xs"
               class="text-muted-foreground hover:text-foreground"
+              data-control="keyboard-shortcuts"
               @click="emit('open-shortcuts')"
             >
               <CircleHelp class="size-3.5" />
@@ -41,6 +46,7 @@ const shortcuts = useShortcuts();
               variant="ghost"
               size="icon-xs"
               class="text-muted-foreground hover:text-foreground"
+              data-control="settings"
               @click="emit('open-settings')"
             >
               <Settings class="size-3.5" />
