@@ -166,6 +166,51 @@ export class TerminalController {
   private searchActive = -1;
   /** reqId of the latest in-flight search; replies with other ids are stale. */
   private searchReqId = 0;
+  private readonly handleTransportUpdate: () => void = () => {
+    const synced = this.store.syncGen !== this.lastSyncGen;
+    if (synced) {
+      this.lastSyncGen = this.store.syncGen;
+      // A sync may have reflowed the grid → absolute-line selection anchors
+      // are stale. Drop the selection rather than highlight the wrong text.
+      if (this.sel) this.clearSelection();
+      // Resync invalidates outstanding fetches; clear so post-resync fetches
+      // aren't deduped against dead reqIds (store clears pendingHistory in applySync).
+      this.transport.cancelAllFetches();
+      this.lastFetchReqId = 0;
+    }
+    const newDelta = this.store.deltaGen !== this.lastDeltaGen;
+    this.lastDeltaGen = this.store.deltaGen;
+    // Resize hold: the daemon answers a resize with a full sync of the screen
+    // reflowed but NOT yet repainted by the program. Keep suppressing paints
+    // through it; real DELTAs after it restart a short quiet window so a TUI's
+    // clear/home and content phases land as one visible repaint.
+    // Must be a delta, not merely "not a sync": the width reflow drops the
+    // history cache, so `history` frames stream back within milliseconds and
+    // would otherwise release the hold onto the mangled intermediate.
+    if (this.hold) {
+      // Only the snapshot for THIS resize counts — a sync still carrying the
+      // previous geometry (two resizes in flight) must not arm the release.
+      if (synced) {
+        if (this.hold.settleTimer != null) {
+          this.clearTimer(this.hold.settleTimer);
+          this.hold.settleTimer = null;
+        }
+        this.hold.sawSync = this.store.cols === this.hold.cols && this.store.rows === this.hold.rows;
+      } else if (newDelta && this.hold.sawSync) {
+        const hold = this.hold;
+        if (hold.settleTimer != null) this.clearTimer(hold.settleTimer);
+        hold.settleTimer = this.setTimer(() => {
+          if (this.hold === hold) this.commitResize();
+        }, RESIZE_SETTLE_MS);
+      }
+    }
+    this.requestPaint();
+    // Following the tail → warm the cache just above it for an instant first
+    // scroll-up; scrolled up → the window may have shifted, refill it.
+    if (this.store.atBottom()) this.prefetchAboveTail();
+    else this.fetchVisible();
+  };
+  private readonly handleTransportSearchResult = (r: SearchResultFrame) => this.onSearchResult(r);
 
   constructor(deps: ControllerDeps) {
     this.store = deps.store;
@@ -180,56 +225,15 @@ export class TerminalController {
     this.clearAutoScroll = deps.clearAutoScroll ?? ((h) => clearInterval(h as ReturnType<typeof setInterval>));
     this.setTimer = deps.setTimer ?? ((cb, ms) => setTimeout(cb, ms) as unknown);
     this.clearTimer = deps.clearTimer ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
+    this.lastSyncGen = this.store.syncGen;
+    this.lastDeltaGen = this.store.deltaGen;
 
-    this.transport.onUpdate = () => {
-      const synced = this.store.syncGen !== this.lastSyncGen;
-      if (synced) {
-        this.lastSyncGen = this.store.syncGen;
-        // A sync may have reflowed the grid → absolute-line selection anchors
-        // are stale. Drop the selection rather than highlight the wrong text.
-        if (this.sel) this.clearSelection();
-        // Resync invalidates outstanding fetches; clear so post-resync fetches
-        // aren't deduped against dead reqIds (store clears pendingHistory in applySync).
-        this.transport.cancelAllFetches();
-        this.lastFetchReqId = 0;
-      }
-      const newDelta = this.store.deltaGen !== this.lastDeltaGen;
-      this.lastDeltaGen = this.store.deltaGen;
-      // Resize hold: the daemon answers a resize with a full sync of the screen
-      // reflowed but NOT yet repainted by the program. Keep suppressing paints
-      // through it; real DELTAs after it restart a short quiet window so a TUI's
-      // clear/home and content phases land as one visible repaint.
-      // Must be a delta, not merely "not a sync": the width reflow drops the
-      // history cache, so `history` frames stream back within milliseconds and
-      // would otherwise release the hold onto the mangled intermediate.
-      if (this.hold) {
-        // Only the snapshot for THIS resize counts — a sync still carrying the
-        // previous geometry (two resizes in flight) must not arm the release.
-        if (synced) {
-          if (this.hold.settleTimer != null) {
-            this.clearTimer(this.hold.settleTimer);
-            this.hold.settleTimer = null;
-          }
-          this.hold.sawSync = this.store.cols === this.hold.cols && this.store.rows === this.hold.rows;
-        } else if (newDelta && this.hold.sawSync) {
-          const hold = this.hold;
-          if (hold.settleTimer != null) this.clearTimer(hold.settleTimer);
-          hold.settleTimer = this.setTimer(() => {
-            if (this.hold === hold) this.commitResize();
-          }, RESIZE_SETTLE_MS);
-        }
-      }
-      this.requestPaint();
-      // Following the tail → warm the cache just above it for an instant first
-      // scroll-up; scrolled up → the window may have shifted, refill it.
-      if (this.store.atBottom()) this.prefetchAboveTail();
-      else this.fetchVisible();
-    };
+    this.transport.onUpdate = this.handleTransportUpdate;
     this.ime.onCommit = (text) => {
       if (this.readOnly) return;
       this.transport.sendText(text);
     };
-    this.transport.onSearchResult = (r) => this.onSearchResult(r);
+    this.transport.onSearchResult = this.handleTransportSearchResult;
     // onPreedit is wired by the host to the renderer's inline preedit overlay.
   }
 
@@ -705,11 +709,15 @@ export class TerminalController {
     }
   }
 
-  dispose(): void {
+  dispose(opts: { disposeTransport?: boolean } = {}): void {
     if (this.hold) this.clearResizeTimers(this.hold);
     this.hold = null;
     this.stopAutoScroll();
-    this.transport.dispose();
+    if (this.transport.onUpdate === this.handleTransportUpdate) this.transport.onUpdate = undefined;
+    if (this.transport.onSearchResult === this.handleTransportSearchResult) {
+      this.transport.onSearchResult = undefined;
+    }
+    if (opts.disposeTransport ?? true) this.transport.dispose();
     this.renderer.dispose();
   }
 }

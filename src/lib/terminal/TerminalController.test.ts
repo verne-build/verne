@@ -155,6 +155,41 @@ describe('TerminalController', () => {
     expect(renderer.paints).toBe(1);
   });
 
+  it('can detach its renderer without disposing a retained transport', () => {
+    const { controller, session, renderer } = setup();
+    const disposeTransport = vi.spyOn(session, 'dispose');
+    const disposeRenderer = vi.spyOn(renderer, 'dispose');
+    controller.dispose({ disposeTransport: false });
+    expect(disposeTransport).not.toHaveBeenCalled();
+    expect(disposeRenderer).toHaveBeenCalledOnce();
+    expect(session.onUpdate).toBeUndefined();
+  });
+
+  it('still disposes its transport by default', () => {
+    const { controller, session } = setup();
+    const disposeTransport = vi.spyOn(session, 'dispose');
+    controller.dispose();
+    expect(disposeTransport).toHaveBeenCalledOnce();
+  });
+
+  it('does not treat retained store generations as fresh frames', () => {
+    const { store, session, renderer } = setup();
+    const cancelAllFetches = vi.spyOn(session, 'cancelAllFetches');
+    const next = new TerminalController({
+      store,
+      transport: session,
+      renderer,
+      metrics: METRICS,
+      schedule: (cb) => cb(),
+    });
+    store.applyDelta({
+      type: 'delta', rev: 2, cursor: [0, 0], modes: MODES(), totalLines: 100, runs: [],
+    });
+    session.onUpdate?.();
+    expect(cancelAllFetches).not.toHaveBeenCalled();
+    next.dispose();
+  });
+
   it('forwards mouse when reporting is on, else returns the cell for selection', () => {
     const on = setup(MODES({ mouseReporting: true }));
     expect(on.controller.handlePointer('down', 0, 20, 33)).toBeNull();
