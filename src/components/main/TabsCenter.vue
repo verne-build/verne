@@ -112,11 +112,15 @@ onUnmounted(() => {
 
 <template>
   <div class="flex flex-col h-full bg-[var(--editor-bg)] relative">
-    <!-- Orphaned TabBar affordances: traffic-light clearance + right-panel
-         re-expand. Absolute row so it doesn't reserve layout height. -->
+    <!-- Orphaned TabBar affordances: traffic-light clearance + panel toggles.
+         Absolute row so it doesn't reserve layout height. The transparent
+         border-b mirrors the bordered bars this overlays (pane header, file tab
+         bar): border-box shrinks their content box to 45px, so without it these
+         buttons centre half a pixel lower and visibly jump when the right panel
+         opens. -->
     <div
       v-if="leftCollapsed || showRightOverlay"
-      class="absolute top-0 left-0 right-0 h-11.5 flex items-center justify-between z-10 pointer-events-none"
+      class="absolute top-0 left-0 right-0 h-11.5 border-b border-transparent flex items-center justify-between z-10 pointer-events-none"
     >
       <div v-if="leftCollapsed" class="shrink-0 w-[128px]" />
       <div class="flex-1" />
