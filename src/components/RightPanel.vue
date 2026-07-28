@@ -41,7 +41,7 @@ import { scSelectionStillChanged } from "@/lib/scSelectionReconcile";
 import type { GitStatus } from "@/types";
 
 const props = defineProps<{ maximized?: boolean }>();
-const emit = defineEmits<{ toggleRight: []; toggleMaximize: [] }>();
+const emit = defineEmits<{ toggleRight: []; toggleMaximize: []; toggleBottom: [] }>();
 
 const store = useWorkspaceStore();
 const {
@@ -396,6 +396,7 @@ function revertScFile() {
       :maximized="maximized"
       @toggle-right="emit('toggleRight')"
       @toggle-maximize="emit('toggleMaximize')"
+      @toggle-bottom="emit('toggleBottom')"
       @promote="promoteTab"
     />
 

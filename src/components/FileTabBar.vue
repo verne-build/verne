@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, onBeforeUnmount, ref, reactive, watch } from "vue";
 import type { FilePanelTab, FilePanelBrowserTab } from "@/types";
 import { COMMITS_TAB_ID } from "@/types";
-import { X, GitBranch, Files, Maximize2, Minimize2, PencilLine, Globe, Asterisk, Search } from "@lucide/vue";
+import { X, GitBranch, Files, Maximize2, Minimize2, PencilLine, Globe, Asterisk, Search, PanelBottom } from "@lucide/vue";
 import { toast } from "vue-sonner";
 import { DragDropProvider } from "@dnd-kit/vue";
 import { closestCorners } from "@dnd-kit/collision";
@@ -54,6 +54,7 @@ const emit = defineEmits<{
   reorder: [ids: string[]];
   reorderBrowser: [ids: string[]];
   toggleMaximize: [];
+  toggleBottom: [];
   promote: [id: string];
 }>();
 
@@ -590,6 +591,26 @@ function onDragEnd(e: DragEndPayload) {
             </Button>
           </TooltipTrigger>
           <TooltipContent side="bottom">{{ props.maximized ? "Restore Panel" : "Maximize Panel" }}</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger as-child>
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              class="text-muted-foreground ml-0.5"
+              tabindex="0"
+              aria-label="Toggle Bottom Panel"
+              @click="emit('toggleBottom')"
+            >
+              <PanelBottom class="size-3.5" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" class="flex items-center gap-2">
+            <span>Toggle Bottom Panel</span>
+            <KbdGroup>
+              <Kbd v-for="(key, i) in shortcuts.displayKeys('toggle-bottom-panel')" :key="i">{{ key }}</Kbd>
+            </KbdGroup>
+          </TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger as-child>

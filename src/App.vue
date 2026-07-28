@@ -949,6 +949,7 @@ onUnmounted(() => {
                       :maximized="fileMaximized"
                       @toggle-right="rightCollapsed = !rightCollapsed"
                       @toggle-maximize="fileMaximized = !fileMaximized"
+                      @toggle-bottom="toggleBottomPanel"
                     />
                   </ResizablePanel>
                 </template>
