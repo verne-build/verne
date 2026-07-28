@@ -36,6 +36,7 @@ import {
   pruneBottomTabs,
   reorderBottomTabs,
   serializeBottomPanelMap,
+  setGroupName,
   type BottomPanelState,
 } from "@/lib/bottomPanel";
 import { shouldApplyAgentRevision } from "@/lib/agentStatus";
@@ -463,6 +464,14 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     const state = bottomPanelFor(dirId);
     if (state?.tabs.includes(bottomTabId)) writeBottomPanel(dirId, closeBottomTabState(state, bottomTabId));
     writeArrangement(key, null);
+  }
+
+  /** Name a GROUP. Deliberately not renameTab: a group's name is its own, and
+   *  writing it onto the primary pane would rename that terminal too. */
+  function renameBottomGroup(dirId: string, bottomTabId: string, name: string): void {
+    const state = bottomPanelFor(dirId);
+    if (!state) return;
+    writeBottomPanel(dirId, setGroupName(state, bottomTabId, name));
   }
 
   function activateBottomPanelTab(dirId: string, bottomTabId: string): void {
@@ -1768,6 +1777,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     closeBottomTab,
     unsplitBottomPane,
     activateBottomPanelTab,
+    renameBottomGroup,
     reorderBottomPanelTabs,
     setBottomPanelCollapsed,
     setBottomPanelHeight,

@@ -1415,7 +1415,7 @@ describe("surface keys (bottom panel groundwork)", () => {
     store.selectedDirectoryId = "dir-1";
     // activeSurface only honours "bottom" while the scope has a visible panel.
     store.bottomPanelByScope = {
-      "dir-1": { tabs: ["bt-1"], activeTabId: "bt-1", height: 260, collapsed: false, numbers: { "bt-1": 1 } },
+      "dir-1": { tabs: ["bt-1"], activeTabId: "bt-1", height: 260, collapsed: false, numbers: { "bt-1": 1 }, names: {} },
     };
     store.focusSession(centerTab.id);
 
@@ -1928,5 +1928,49 @@ describe("bottom panel unsplit", () => {
 
     expect(store.bottomPanelFor("dir-1")).toBeNull();
     expect(collectPaneIds(store.arrangementByScope["dir-1"].layout)).toEqual([center.id]);
+  });
+});
+
+describe("bottom group rename", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    setActivePinia(createPinia());
+    setAppStateCalls.length = 0;
+    tabsClosedIds.length = 0;
+    tabsCreateCalls.length = 0;
+    nextId = 0;
+    setLiveTabIds([]);
+    appState.clear();
+    for (const k of Object.keys(tabsListByDir)) delete tabsListByDir[k];
+    setFailArrangementGets(0);
+  });
+
+  it("names the group without touching any terminal's own label", async () => {
+    const store = useWorkspaceStore();
+    store.directories.push(dir("dir-1"));
+    store.selectDirectory(dir("dir-1"));
+    const tab = await store.createBottomTerminal("dir-1");
+    const groupId = store.bottomPanelFor("dir-1")!.tabs[0];
+    const labelBefore = (store.terminalTabsByDirectory["dir-1"] ?? []).find((t) => t.id === tab!.id)?.label;
+
+    store.renameBottomGroup("dir-1", groupId, "build");
+
+    expect(store.bottomPanelFor("dir-1")!.names[groupId]).toBe("build");
+    const after = (store.terminalTabsByDirectory["dir-1"] ?? []).find((t) => t.id === tab!.id);
+    expect(after?.label).toBe(labelBefore);
+    expect(after?.userRenamed).toBeFalsy();
+  });
+
+  it("persists the name", async () => {
+    const store = useWorkspaceStore();
+    store.directories.push(dir("dir-1"));
+    store.selectDirectory(dir("dir-1"));
+    await store.createBottomTerminal("dir-1");
+    const groupId = store.bottomPanelFor("dir-1")!.tabs[0];
+
+    store.renameBottomGroup("dir-1", groupId, "build");
+
+    const write = setAppStateCalls.filter((c) => c.key === "bottom_panel_by_scope").at(-1);
+    expect(JSON.parse(write!.value!)["dir-1"].names[groupId]).toBe("build");
   });
 });

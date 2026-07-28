@@ -15,6 +15,8 @@ import {
   reorderBottomTabs,
   serializeBottomPanelMap,
   groupNumber,
+  groupName,
+  setGroupName,
 } from "./bottomPanel";
 
 describe("surface keys", () => {
@@ -109,7 +111,14 @@ describe("height + persistence", () => {
 
   it("round-trips a map", () => {
     const map = {
-      "dir-1": { tabs: ["bt-1"], activeTabId: "bt-1", height: 300, collapsed: true, numbers: { "bt-1": 1 } },
+      "dir-1": {
+        tabs: ["bt-1"],
+        activeTabId: "bt-1",
+        height: 300,
+        collapsed: true,
+        numbers: { "bt-1": 1 },
+        names: {},
+      },
     };
     expect(parseBottomPanelMap(serializeBottomPanelMap(map))).toEqual(map);
   });
@@ -181,8 +190,71 @@ describe("group numbers", () => {
 
   it("round-trips numbers", () => {
     const map = {
-      "dir-1": { tabs: ["bt-1"], activeTabId: "bt-1", height: 300, collapsed: false, numbers: { "bt-1": 7 } },
+      "dir-1": {
+        tabs: ["bt-1"],
+        activeTabId: "bt-1",
+        height: 300,
+        collapsed: false,
+        numbers: { "bt-1": 7 },
+        names: {},
+      },
     };
     expect(parseBottomPanelMap(serializeBottomPanelMap(map))).toEqual(map);
+  });
+});
+
+describe("group names", () => {
+  it("has no name until one is set", () => {
+    const s = addBottomTab(emptyBottomPanelState(), "bt-1");
+    expect(groupName(s, "bt-1")).toBeUndefined();
+  });
+
+  it("stores a name against the group, not a pane", () => {
+    const s = setGroupName(addBottomTab(emptyBottomPanelState(), "bt-1"), "bt-1", "build");
+    expect(groupName(s, "bt-1")).toBe("build");
+  });
+
+  it("trims, and an empty name clears back to the default", () => {
+    let s = setGroupName(addBottomTab(emptyBottomPanelState(), "bt-1"), "bt-1", "  build  ");
+    expect(groupName(s, "bt-1")).toBe("build");
+    s = setGroupName(s, "bt-1", "   ");
+    expect(groupName(s, "bt-1")).toBeUndefined();
+  });
+
+  it("ignores an unknown group", () => {
+    const s = setGroupName(addBottomTab(emptyBottomPanelState(), "bt-1"), "nope", "x");
+    expect(s.names).toEqual({});
+  });
+
+  it("drops the name when the group closes", () => {
+    let s = setGroupName(addBottomTab(emptyBottomPanelState(), "bt-1"), "bt-1", "build");
+    s = closeBottomTabState(s, "bt-1");
+    expect(s.names).toEqual({});
+  });
+
+  it("drops names for pruned groups", () => {
+    let s = emptyBottomPanelState();
+    for (const id of ["bt-1", "bt-2"]) s = addBottomTab(s, id);
+    s = setGroupName(setGroupName(s, "bt-1", "a"), "bt-2", "b");
+    s = pruneBottomTabs(s, new Set(["bt-2"]));
+    expect(s.names).toEqual({ "bt-2": "b" });
+  });
+
+  it("round-trips names, and tolerates state saved before they existed", () => {
+    const map = {
+      "dir-1": {
+        tabs: ["bt-1"],
+        activeTabId: "bt-1",
+        height: 260,
+        collapsed: false,
+        numbers: { "bt-1": 1 },
+        names: { "bt-1": "build" },
+      },
+    };
+    expect(parseBottomPanelMap(serializeBottomPanelMap(map))).toEqual(map);
+    const legacy = parseBottomPanelMap(
+      '{"dir-1":{"tabs":["bt-1"],"activeTabId":"bt-1","height":260,"collapsed":false,"numbers":{"bt-1":1}}}',
+    );
+    expect(legacy["dir-1"].names).toEqual({});
   });
 });

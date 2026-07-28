@@ -16,6 +16,27 @@ export interface BottomPanelState {
   /** Stable display number per group ("Group 3"). Assigned on create, never
    *  reused, never renumbered by a close or reorder. */
   numbers: Record<string, number>;
+  /** User-set group names. A group's name belongs to the GROUP — renaming one
+   *  must not touch any terminal's own label. Absent = show the default. */
+  names: Record<string, string>;
+}
+
+export function groupName(state: BottomPanelState, bottomTabId: string): string | undefined {
+  return state.names[bottomTabId];
+}
+
+/** Set (or, with a blank name, clear) a group's name. */
+export function setGroupName(
+  state: BottomPanelState,
+  bottomTabId: string,
+  name: string,
+): BottomPanelState {
+  if (!state.tabs.includes(bottomTabId)) return state;
+  const trimmed = name.trim();
+  const names = { ...state.names };
+  if (trimmed) names[bottomTabId] = trimmed;
+  else delete names[bottomTabId];
+  return { ...state, names };
 }
 
 export function groupNumber(state: BottomPanelState, bottomTabId: string): number | undefined {
@@ -47,6 +68,7 @@ export function emptyBottomPanelState(): BottomPanelState {
     height: DEFAULT_BOTTOM_HEIGHT_PX,
     collapsed: false,
     numbers: {},
+    names: {},
   };
 }
 
@@ -79,7 +101,7 @@ export function closeBottomTabState(state: BottomPanelState, bottomTabId: string
   const tabs = state.tabs.filter((id) => id !== bottomTabId);
   const activeTabId =
     state.activeTabId === bottomTabId ? tabs[idx] ?? tabs[idx - 1] ?? undefined : state.activeTabId;
-  return { ...state, tabs, activeTabId };
+  return { ...state, tabs, activeTabId, names: pick(tabs, state.names) };
 }
 
 export function reorderBottomTabs(state: BottomPanelState, from: number, to: number): BottomPanelState {
@@ -99,13 +121,19 @@ export function pruneBottomTabs(
   if (tabs.length === state.tabs.length) return state;
   const activeTabId =
     state.activeTabId && tabs.includes(state.activeTabId) ? state.activeTabId : tabs[0];
-  return { ...state, tabs, activeTabId, numbers: numbersFor(tabs, state.numbers) };
+  return {
+    ...state,
+    tabs,
+    activeTabId,
+    numbers: pick(tabs, state.numbers),
+    names: pick(tabs, state.names),
+  };
 }
 
-/** Keep only live tabs' numbers (closed groups' numbers are gone for good). */
-function numbersFor(tabs: readonly string[], numbers: Record<string, number>): Record<string, number> {
-  const out: Record<string, number> = {};
-  for (const id of tabs) if (numbers[id] !== undefined) out[id] = numbers[id];
+/** Keep only live tabs' entries (a closed group's number/name is gone for good). */
+function pick<T>(tabs: readonly string[], map: Record<string, T>): Record<string, T> {
+  const out: Record<string, T> = {};
+  for (const id of tabs) if (map[id] !== undefined) out[id] = map[id];
   return out;
 }
 
@@ -121,9 +149,13 @@ function normalise(raw: unknown): BottomPanelState | null {
   const numbers: Record<string, number> = {};
   let next = Math.max(0, ...Object.values(rawNumbers).filter((n): n is number => typeof n === "number"));
   for (const id of tabs) numbers[id] = typeof rawNumbers[id] === "number" ? (rawNumbers[id] as number) : ++next;
+  const rawNames = (o.names && typeof o.names === "object" ? o.names : {}) as Record<string, unknown>;
+  const names: Record<string, string> = {};
+  for (const id of tabs) if (typeof rawNames[id] === "string") names[id] = rawNames[id] as string;
   return {
     tabs,
     activeTabId: stored && tabs.includes(stored) ? stored : tabs[0],
+    names,
     height: clampBottomHeight(typeof o.height === "number" ? o.height : DEFAULT_BOTTOM_HEIGHT_PX),
     collapsed: o.collapsed === true,
     numbers,

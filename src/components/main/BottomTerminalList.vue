@@ -6,7 +6,7 @@ import SortableItem from "@/components/dnd/SortableItem.vue";
 import { sortableSensors } from "@/components/dnd/sensors";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { bottomListRows, type BottomListRow } from "@/lib/bottomList";
-import { bottomSurfaceKey, groupNumber } from "@/lib/bottomPanel";
+import { bottomSurfaceKey, groupName, groupNumber } from "@/lib/bottomPanel";
 import { collectPaneIds } from "@/lib/paneLayout";
 import { terminalTitleFrom } from "@/lib/sessionTitle";
 import { resolveDisplayState, aggregateGroupState, stripSpinner } from "@/lib/agentStatus";
@@ -80,12 +80,15 @@ const rowState = computed(() => {
 const rowLabel = computed(() => {
   const m = new Map<string, string>();
   for (const r of rows.value) {
-    // A split group is "Group N" (its panes carry the command names); a solo
-    // group shows its terminal. A user rename beats both.
+    // A named group wins; then "Group N" for a split (its panes carry the
+    // command names); otherwise the terminal's own name.
+    const named = r.kind === "group" && state.value ? groupName(state.value, r.groupId) : undefined;
     const split = r.kind === "group" && panesOf(r.groupId).length > 1;
-    const renamed = paneTab(r.paneId)?.userRenamed;
     const n = state.value ? groupNumber(state.value, r.groupId) : undefined;
-    m.set(rowKey(r), split && !renamed && n !== undefined ? `Group ${n}` : paneName(r.paneId));
+    m.set(
+      rowKey(r),
+      named ?? (split && n !== undefined ? `Group ${n}` : paneName(r.paneId)),
+    );
   }
   return m;
 });
@@ -143,8 +146,10 @@ function splitRow(r: BottomListRow) {
 // ---- rename (group rows only), mirroring the old tab pill's flow ----
 const renamingId = ref<string | null>(null);
 const renameInputEl = ref<HTMLInputElement | null>(null);
+// Seeded with the displayed name — the raw stored label is the numeric one the
+// store assigns at creation, which is not what the user is looking at.
 function renameSeed(r: BottomListRow): string {
-  return paneTab(r.paneId)?.label ?? "";
+  return rowLabel.value.get(rowKey(r)) ?? "";
 }
 function startRename(r: BottomListRow) {
   if (r.kind === "group") renamingId.value = r.groupId;
@@ -152,18 +157,14 @@ function startRename(r: BottomListRow) {
 function cancelRename() {
   renamingId.value = null;
 }
-async function finishRename(r: BottomListRow, value: string) {
+function finishRename(r: BottomListRow, value: string) {
   if (renamingId.value !== r.groupId) return;
   renamingId.value = null;
-  const label = value.trim();
-  if (!label) return;
-  const tab = paneTab(r.paneId);
-  if (!tab || tab.label === label) return;
-  try {
-    await store.renameTab(r.paneId, label);
-  } catch (e) {
-    console.error("[BottomTerminalList] renameTab failed:", e);
-  }
+  const name = value.trim();
+  // Unchanged (the seed is the displayed name) → leave the group on its default
+  // rather than pinning the current command as a manual name.
+  if (name === (rowLabel.value.get(rowKey(r)) ?? "")) return;
+  store.renameBottomGroup(props.dirId, r.groupId, name);
 }
 function onRenameInputMounted(el: HTMLInputElement | null) {
   if (!el) return;
