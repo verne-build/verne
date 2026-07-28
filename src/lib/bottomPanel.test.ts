@@ -14,6 +14,7 @@ import {
   pruneBottomTabs,
   reorderBottomTabs,
   serializeBottomPanelMap,
+  groupNumber,
 } from "./bottomPanel";
 
 describe("surface keys", () => {
@@ -107,7 +108,9 @@ describe("height + persistence", () => {
   });
 
   it("round-trips a map", () => {
-    const map = { "dir-1": { tabs: ["bt-1"], activeTabId: "bt-1", height: 300, collapsed: true } };
+    const map = {
+      "dir-1": { tabs: ["bt-1"], activeTabId: "bt-1", height: 300, collapsed: true, numbers: { "bt-1": 1 } },
+    };
     expect(parseBottomPanelMap(serializeBottomPanelMap(map))).toEqual(map);
   });
 
@@ -123,5 +126,63 @@ describe("height + persistence", () => {
     );
     expect(parsed["dir-1"].height).toBe(MIN_BOTTOM_HEIGHT_PX);
     expect(parsed["dir-1"].activeTabId).toBe("bt-1");
+  });
+});
+
+describe("group numbers", () => {
+  it("assigns 1 to the first group", () => {
+    const s = addBottomTab(emptyBottomPanelState(), "bt-1");
+    expect(groupNumber(s, "bt-1")).toBe(1);
+  });
+
+  it("numbers each new group above the highest in use", () => {
+    let s = emptyBottomPanelState();
+    for (const id of ["bt-1", "bt-2", "bt-3"]) s = addBottomTab(s, id);
+    expect([1, 2, 3].map((_, i) => groupNumber(s, `bt-${i + 1}`))).toEqual([1, 2, 3]);
+  });
+
+  it("keeps existing numbers when a group closes — no renumbering", () => {
+    let s = emptyBottomPanelState();
+    for (const id of ["bt-1", "bt-2", "bt-3"]) s = addBottomTab(s, id);
+    s = closeBottomTabState(s, "bt-1");
+    expect(groupNumber(s, "bt-2")).toBe(2);
+    expect(groupNumber(s, "bt-3")).toBe(3);
+  });
+
+  it("never reuses a closed group's number", () => {
+    let s = emptyBottomPanelState();
+    for (const id of ["bt-1", "bt-2"]) s = addBottomTab(s, id);
+    s = closeBottomTabState(s, "bt-2");
+    s = addBottomTab(s, "bt-3");
+    expect(groupNumber(s, "bt-3")).toBe(3);
+  });
+
+  it("keeps numbers across a reorder", () => {
+    let s = emptyBottomPanelState();
+    for (const id of ["bt-1", "bt-2"]) s = addBottomTab(s, id);
+    s = reorderBottomTabs(s, 0, 1);
+    expect(s.tabs).toEqual(["bt-2", "bt-1"]);
+    expect(groupNumber(s, "bt-1")).toBe(1);
+  });
+
+  it("drops numbers for pruned groups", () => {
+    let s = emptyBottomPanelState();
+    for (const id of ["bt-1", "bt-2"]) s = addBottomTab(s, id);
+    s = pruneBottomTabs(s, new Set(["bt-1"]));
+    expect(s.numbers).toEqual({ "bt-1": 1 });
+  });
+
+  it("backfills positional numbers for state persisted before numbering existed", () => {
+    const parsed = parseBottomPanelMap(
+      '{"dir-1":{"tabs":["bt-1","bt-2"],"activeTabId":"bt-1","height":260,"collapsed":false}}',
+    );
+    expect(parsed["dir-1"].numbers).toEqual({ "bt-1": 1, "bt-2": 2 });
+  });
+
+  it("round-trips numbers", () => {
+    const map = {
+      "dir-1": { tabs: ["bt-1"], activeTabId: "bt-1", height: 300, collapsed: false, numbers: { "bt-1": 7 } },
+    };
+    expect(parseBottomPanelMap(serializeBottomPanelMap(map))).toEqual(map);
   });
 });

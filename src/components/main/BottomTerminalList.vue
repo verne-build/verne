@@ -6,7 +6,7 @@ import SortableItem from "@/components/dnd/SortableItem.vue";
 import { sortableSensors } from "@/components/dnd/sensors";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { bottomListRows, type BottomListRow } from "@/lib/bottomList";
-import { bottomSurfaceKey } from "@/lib/bottomPanel";
+import { bottomSurfaceKey, groupNumber } from "@/lib/bottomPanel";
 import { collectPaneIds } from "@/lib/paneLayout";
 import { terminalTitleFrom } from "@/lib/sessionTitle";
 import { resolveDisplayState, aggregateGroupState, stripSpinner } from "@/lib/agentStatus";
@@ -79,7 +79,14 @@ const rowState = computed(() => {
 });
 const rowLabel = computed(() => {
   const m = new Map<string, string>();
-  for (const r of rows.value) m.set(rowKey(r), paneName(r.paneId));
+  for (const r of rows.value) {
+    // A split group is "Group N" (its panes carry the command names); a solo
+    // group shows its terminal. A user rename beats both.
+    const split = r.kind === "group" && panesOf(r.groupId).length > 1;
+    const renamed = paneTab(r.paneId)?.userRenamed;
+    const n = state.value ? groupNumber(state.value, r.groupId) : undefined;
+    m.set(rowKey(r), split && !renamed && n !== undefined ? `Group ${n}` : paneName(r.paneId));
+  }
   return m;
 });
 const splitCounts = computed(() => {
@@ -257,10 +264,19 @@ function onDragEnd(e: DragEndPayload) {
             </SortableItem>
             <div
               v-else
-              class="group flex h-7 cursor-default items-center gap-1.5 pr-1 pl-6"
+              class="group flex h-7 cursor-default items-center gap-1.5 pr-1 pl-2"
               :class="isActive(row) ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent/50'"
               @click="select(row)"
             >
+              <!-- Tree connector: ├ for a middle pane, └ for the last, so the
+                   row reads as branching off its group. -->
+              <span class="relative h-7 w-3 shrink-0" aria-hidden="true">
+                <span
+                  class="absolute left-0 top-0 w-px bg-border"
+                  :class="row.isLast ? 'h-1/2' : 'h-full'"
+                />
+                <span class="absolute left-0 top-1/2 h-px w-2 bg-border" />
+              </span>
               <StatusIndicator
                 v-if="rowState.get(rowKey(row))"
                 :state="rowState.get(rowKey(row))!"

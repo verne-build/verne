@@ -13,6 +13,13 @@ export interface BottomPanelState {
   /** Expanded height in px. */
   height: number;
   collapsed: boolean;
+  /** Stable display number per group ("Group 3"). Assigned on create, never
+   *  reused, never renumbered by a close or reorder. */
+  numbers: Record<string, number>;
+}
+
+export function groupNumber(state: BottomPanelState, bottomTabId: string): number | undefined {
+  return state.numbers[bottomTabId];
 }
 
 export function bottomSurfaceKey(dirId: string, bottomTabId: string): string {
@@ -34,7 +41,13 @@ export function parseBottomSurfaceKey(
 }
 
 export function emptyBottomPanelState(): BottomPanelState {
-  return { tabs: [], activeTabId: undefined, height: DEFAULT_BOTTOM_HEIGHT_PX, collapsed: false };
+  return {
+    tabs: [],
+    activeTabId: undefined,
+    height: DEFAULT_BOTTOM_HEIGHT_PX,
+    collapsed: false,
+    numbers: {},
+  };
 }
 
 export function clampBottomHeight(px: number): number {
@@ -43,7 +56,15 @@ export function clampBottomHeight(px: number): number {
 
 export function addBottomTab(state: BottomPanelState, bottomTabId: string): BottomPanelState {
   if (state.tabs.includes(bottomTabId)) return activateBottomTab(state, bottomTabId);
-  return { ...state, tabs: [...state.tabs, bottomTabId], activeTabId: bottomTabId };
+  // Above the highest ever issued in this scope, so a closed group's number is
+  // never handed to a different terminal.
+  const next = Math.max(0, ...Object.values(state.numbers)) + 1;
+  return {
+    ...state,
+    tabs: [...state.tabs, bottomTabId],
+    activeTabId: bottomTabId,
+    numbers: { ...state.numbers, [bottomTabId]: next },
+  };
 }
 
 export function activateBottomTab(state: BottomPanelState, bottomTabId: string): BottomPanelState {
@@ -78,7 +99,14 @@ export function pruneBottomTabs(
   if (tabs.length === state.tabs.length) return state;
   const activeTabId =
     state.activeTabId && tabs.includes(state.activeTabId) ? state.activeTabId : tabs[0];
-  return { ...state, tabs, activeTabId };
+  return { ...state, tabs, activeTabId, numbers: numbersFor(tabs, state.numbers) };
+}
+
+/** Keep only live tabs' numbers (closed groups' numbers are gone for good). */
+function numbersFor(tabs: readonly string[], numbers: Record<string, number>): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const id of tabs) if (numbers[id] !== undefined) out[id] = numbers[id];
+  return out;
 }
 
 function normalise(raw: unknown): BottomPanelState | null {
@@ -87,11 +115,18 @@ function normalise(raw: unknown): BottomPanelState | null {
   if (!Array.isArray(o.tabs) || !o.tabs.every((t) => typeof t === "string")) return null;
   const tabs = o.tabs as string[];
   const stored = typeof o.activeTabId === "string" ? o.activeTabId : undefined;
+  const rawNumbers = (o.numbers && typeof o.numbers === "object" ? o.numbers : {}) as Record<string, unknown>;
+  // State persisted before numbering existed has none — backfill positionally
+  // so a restart doesn't leave groups unlabelled.
+  const numbers: Record<string, number> = {};
+  let next = Math.max(0, ...Object.values(rawNumbers).filter((n): n is number => typeof n === "number"));
+  for (const id of tabs) numbers[id] = typeof rawNumbers[id] === "number" ? (rawNumbers[id] as number) : ++next;
   return {
     tabs,
     activeTabId: stored && tabs.includes(stored) ? stored : tabs[0],
     height: clampBottomHeight(typeof o.height === "number" ? o.height : DEFAULT_BOTTOM_HEIGHT_PX),
     collapsed: o.collapsed === true,
+    numbers,
   };
 }
 

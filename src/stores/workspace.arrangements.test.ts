@@ -59,6 +59,7 @@ const rpc = vi.hoisted(() => ({
   })),
   worktreeRemove: vi.fn(async () => true),
   tabsCreate: vi.fn(),
+  tabResize: vi.fn(async (_p: { tabId: string; cols: number; rows: number }) => true),
 }));
 const filePanel = vi.hoisted(() => ({
   dropFilePanelScope: vi.fn(),
@@ -263,6 +264,7 @@ vi.mock("@/composables/useRpc", () => ({
         return tabsUnarchiveNext;
       }),
       tabsReorder: vi.fn(async () => true),
+      tabResize: rpc.tabResize,
       listLiveTabIds: vi.fn(async () => getLiveTabIds()),
       setActiveDirectory: vi.fn(async () => true),
       prewarmFileIndex: vi.fn(async () => true),
@@ -1413,7 +1415,7 @@ describe("surface keys (bottom panel groundwork)", () => {
     store.selectedDirectoryId = "dir-1";
     // activeSurface only honours "bottom" while the scope has a visible panel.
     store.bottomPanelByScope = {
-      "dir-1": { tabs: ["bt-1"], activeTabId: "bt-1", height: 260, collapsed: false },
+      "dir-1": { tabs: ["bt-1"], activeTabId: "bt-1", height: 260, collapsed: false, numbers: { "bt-1": 1 } },
     };
     store.focusSession(centerTab.id);
 
@@ -1588,6 +1590,26 @@ describe("bottom terminal panel", () => {
     expect(fromBottom).toEqual([bottomB!.id]);
     expect(fromBottom).not.toContain(center.id);
     expect(fromCenter).not.toContain(bottomA!.id);
+  });
+
+  it("mirrors viewport size only between bottom tabs in the same panel", () => {
+    const store = useWorkspaceStore();
+    const bottomA = bottomSurfaceKey("dir-1", "group-a");
+    const bottomB = bottomSurfaceKey("dir-1", "group-b");
+    const otherBottom = bottomSurfaceKey("dir-2", "group-c");
+    store.arrangementByScope = {
+      "dir-1": { version: 1, layout: { pane: "center-a" } },
+      [bottomA]: { version: 1, layout: { pane: "bottom-a" } },
+      [bottomB]: { version: 1, layout: { pane: "bottom-b" } },
+      [otherBottom]: { version: 1, layout: { pane: "bottom-c" } },
+    };
+    rpc.tabResize.mockClear();
+
+    store.syncViewportSize("bottom-a", 40, 12);
+
+    expect(rpc.tabResize.mock.calls.map(([request]) => request)).toEqual([
+      { tabId: "bottom-b", cols: 40, rows: 12 },
+    ]);
   });
 });
 

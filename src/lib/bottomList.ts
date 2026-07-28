@@ -18,6 +18,8 @@ export interface BottomListRow {
    *  doesn't change as focus moves within a split. */
   paneId: string;
   depth: 0 | 1;
+  /** Final pane row of its group — the connector renders └ instead of ├. */
+  isLast: boolean;
 }
 
 export function bottomListRows(
@@ -30,9 +32,11 @@ export function bottomListRows(
     if (!layout) continue; // pruned mid-render; the list just skips it
     const panes = collectPaneIds(layout);
     if (!panes.length) continue;
-    rows.push({ kind: "group", groupId, paneId: panes[0], depth: 0 });
+    rows.push({ kind: "group", groupId, paneId: panes[0], depth: 0, isLast: false });
     if (panes.length > 1)
-      for (const paneId of panes) rows.push({ kind: "pane", groupId, paneId, depth: 1 });
+      panes.forEach((paneId, i) =>
+        rows.push({ kind: "pane", groupId, paneId, depth: 1, isLast: i === panes.length - 1 }),
+      );
   }
   return rows;
 }
