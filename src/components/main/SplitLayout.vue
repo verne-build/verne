@@ -80,7 +80,9 @@ onBeforeUnmount(() => {
           :scope-id="scopeId"
           :focused-session-id="focusedSessionId"
           :multi="multi"
-          :reserve-right-overlay="reserveRightOverlay"
+          :reserve-right-overlay="
+            reserveRightOverlay && (node.direction === 'v' || i === node.children.length - 1)
+          "
           :reserve-left-overlay="reserveLeftOverlay && i === 0"
           :end-mode="endMode"
           :compact="compact"

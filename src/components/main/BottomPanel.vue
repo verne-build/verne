@@ -101,7 +101,7 @@ defineExpose({ onLayout });
       :default-size="state?.height ?? MIN_BOTTOM_HEIGHT_PX"
       :min-size="MIN_BOTTOM_HEIGHT_PX"
       size-unit="px"
-      class="flex bg-[var(--editor-bg)] border-t"
+      class="relative flex bg-[var(--editor-bg)] border-t"
     >
       <div class="flex-1 min-w-0">
         <SplitLayout
@@ -111,12 +111,20 @@ defineExpose({ onLayout });
           :scope-id="surfaceKey"
           :focused-session-id="focusedId"
           :multi="splitCount > 1"
+          :reserve-right-overlay="!showList"
           end-mode="close"
           compact
           horizontal-only
         />
       </div>
-      <div class="flex shrink-0 flex-col bg-sidebar" :class="showList ? 'w-56 border-l' : ''">
+      <div
+        class="flex flex-col"
+        :class="
+          showList
+            ? 'w-56 shrink-0 border-l bg-sidebar'
+            : 'absolute right-0 top-0 z-10 h-9'
+        "
+      >
         <TooltipProvider :delay-duration="250">
           <div class="flex h-9 shrink-0 items-center justify-end gap-0.5 border-b px-1">
             <Tooltip>
