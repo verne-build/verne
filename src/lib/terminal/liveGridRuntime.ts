@@ -45,7 +45,7 @@ export class LiveGridRuntimeRegistry {
     const token = ++entry.owner;
 
     if (!entry.runtime) {
-      entry.creating ??= create();
+      entry.creating ??= Promise.resolve().then(create);
       try {
         entry.runtime = await entry.creating;
       } catch (error) {

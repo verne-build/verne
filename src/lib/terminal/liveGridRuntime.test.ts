@@ -66,4 +66,15 @@ describe('LiveGridRuntimeRegistry', () => {
     lease.release();
     await vi.advanceTimersByTimeAsync(LIVE_GRID_RUNTIME_GRACE_MS);
   });
+
+  it('removes a synchronously thrown creation so a later acquire can retry', async () => {
+    const registry = new LiveGridRuntimeRegistry();
+    await expect(registry.acquire('s1', () => {
+      throw new Error('port unavailable');
+    })).rejects.toThrow('port unavailable');
+    expect(registry.has('s1')).toBe(false);
+    const recovered = runtime();
+    const lease = await registry.acquire('s1', async () => recovered);
+    expect(lease.runtime).toBe(recovered);
+  });
 });
