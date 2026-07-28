@@ -1,15 +1,21 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, onUnmounted } from "vue";
 import { useWorkspaceStore } from "@/stores/workspace";
+import { useShortcuts } from "@/composables/useShortcuts";
 import { setSplitterDragging } from "@/composables/useTerminal";
 import { bottomSurfaceKey, MIN_BOTTOM_HEIGHT_PX } from "@/lib/bottomPanel";
 import { paneCount } from "@/lib/paneLayout";
+import { toHorizontal } from "@/lib/bottomList";
 import SplitLayout from "./SplitLayout.vue";
 import BottomTerminalList from "./BottomTerminalList.vue";
 import { ResizableHandle, ResizablePanel } from "@/components/ui/resizable";
 import { confirmCloseTerminals } from "@/composables/useConfirmClose";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Kbd, KbdGroup } from "@/components/ui/kbd";
 import { Plus, PanelBottom } from "@lucide/vue";
+
+const shortcuts = useShortcuts();
 
 const store = useWorkspaceStore();
 
@@ -23,6 +29,11 @@ const surfaceKey = computed(() =>
     : null,
 );
 const arrangement = computed(() => (surfaceKey.value ? store.arrangementFor(surfaceKey.value) : null));
+// Real "v" arrangements can already be on disk (this branch shipped ⌘⇧D
+// splitting before this task landed). Normalise for render only — never
+// migrate the persisted layout — so an old vertical split still shows as one
+// continuous bar instead of two stacked pane headers.
+const horizontalLayout = computed(() => (arrangement.value ? toHorizontal(arrangement.value.layout) : null));
 const focusedId = computed(() => store.bottomFocusedSessionId);
 const splitCount = computed(() => (arrangement.value ? paneCount(arrangement.value.layout) : 0));
 
@@ -94,9 +105,9 @@ defineExpose({ onLayout });
     >
       <div class="flex-1 min-w-0">
         <SplitLayout
-          v-if="arrangement && surfaceKey"
+          v-if="horizontalLayout && surfaceKey"
           :key="surfaceKey"
-          :node="arrangement.layout"
+          :node="horizontalLayout"
           :scope-id="surfaceKey"
           :focused-session-id="focusedId"
           :multi="splitCount > 1"
@@ -106,28 +117,50 @@ defineExpose({ onLayout });
         />
       </div>
       <div class="flex shrink-0 flex-col" :class="showList ? 'w-56 border-l' : ''">
-        <div class="flex h-9 shrink-0 items-center justify-end gap-0.5 border-b bg-sidebar px-1">
-          <Button
-            type="button"
-            size="icon-xs"
-            variant="ghost"
-            class="text-muted-foreground"
-            aria-label="New Terminal"
-            @click="newTerminal"
-          >
-            <Plus class="size-4" />
-          </Button>
-          <Button
-            type="button"
-            size="icon-xs"
-            variant="ghost"
-            class="text-muted-foreground"
-            aria-label="Hide terminal panel"
-            @click="toggleCollapsed"
-          >
-            <PanelBottom class="size-3.5" />
-          </Button>
-        </div>
+        <TooltipProvider :delay-duration="250">
+          <div class="flex h-9 shrink-0 items-center justify-end gap-0.5 border-b bg-sidebar px-1">
+            <Tooltip>
+              <TooltipTrigger as-child>
+                <Button
+                  type="button"
+                  size="icon-xs"
+                  variant="ghost"
+                  class="text-muted-foreground"
+                  aria-label="New Terminal"
+                  @click="newTerminal"
+                >
+                  <Plus class="size-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="top" class="flex items-center gap-2">
+                <span>New Terminal</span>
+                <KbdGroup>
+                  <Kbd v-for="(key, i) in shortcuts.displayKeys('new-terminal')" :key="i">{{ key }}</Kbd>
+                </KbdGroup>
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger as-child>
+                <Button
+                  type="button"
+                  size="icon-xs"
+                  variant="ghost"
+                  class="text-muted-foreground"
+                  aria-label="Hide terminal panel"
+                  @click="toggleCollapsed"
+                >
+                  <PanelBottom class="size-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="top" class="flex items-center gap-2">
+                <span>Hide Panel</span>
+                <KbdGroup>
+                  <Kbd v-for="(key, i) in shortcuts.displayKeys('toggle-bottom-panel')" :key="i">{{ key }}</Kbd>
+                </KbdGroup>
+              </TooltipContent>
+            </Tooltip>
+          </div>
+        </TooltipProvider>
         <BottomTerminalList v-if="showList" :dir-id="dirId!" class="min-h-0 flex-1" />
       </div>
     </ResizablePanel>

@@ -265,8 +265,11 @@ function focusPane() {
   if (store.focusedByScope[props.scopeId] !== props.paneId) store.focusSession(props.paneId);
 }
 
+// Bottom panel splits side-by-side only — coerce here so BOTH split menus
+// (the header dropdown and the terminal's own context menu) can't produce a
+// second stacked bar row.
 function split(direction: "h" | "v", before = false) {
-  void store.splitSessionWithNew(props.paneId, direction, before);
+  void store.splitSessionWithNew(props.paneId, props.horizontalOnly ? "h" : direction, before);
 }
 function splitH() { split("h"); }
 function splitV() { split("v"); }
@@ -546,7 +549,7 @@ onUnmounted(() => {
           Split Right
           <ContextMenuShortcut>{{ shortcutText("split-pane-h") }}</ContextMenuShortcut>
         </ContextMenuItem>
-        <ContextMenuItem v-if="!isArchived" @select="splitV">
+        <ContextMenuItem v-if="!isArchived && !horizontalOnly" @select="splitV">
           Split Down
           <ContextMenuShortcut>{{ shortcutText("split-pane-v") }}</ContextMenuShortcut>
         </ContextMenuItem>

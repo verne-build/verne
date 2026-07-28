@@ -1,7 +1,15 @@
 // Row model for the bottom panel's terminal list. A solo group is one row; a
 // split group is its row plus one indented row per pane, in layout order.
-import { collectPaneIds } from "@/lib/paneLayout";
+import { collectPaneIds, isLeaf } from "@/lib/paneLayout";
 import type { LayoutNode } from "@/types";
+
+/** The bottom panel is side-by-side only (see AGENTS.md / task 5): rewrite
+ *  every "v" direction to "h" when reading a bottom surface's layout for
+ *  render. Persisted state is untouched — this only affects what's shown. */
+export function toHorizontal(node: LayoutNode): LayoutNode {
+  if (isLeaf(node)) return node;
+  return { direction: "h", children: node.children.map(toHorizontal), sizes: node.sizes };
+}
 
 export interface BottomListRow {
   kind: "group" | "pane";

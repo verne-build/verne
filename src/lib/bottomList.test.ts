@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bottomListRows } from "./bottomList";
+import { bottomListRows, toHorizontal } from "./bottomList";
 import type { LayoutNode } from "@/types";
 
 const leaf = (id: string): LayoutNode => ({ pane: id });
@@ -39,5 +39,44 @@ describe("bottomListRows", () => {
 
   it("returns nothing for no groups", () => {
     expect(bottomListRows([], () => null)).toEqual([]);
+  });
+});
+
+describe("toHorizontal", () => {
+  it("leaves a solo leaf unchanged", () => {
+    expect(toHorizontal(leaf("p1"))).toEqual(leaf("p1"));
+  });
+
+  it("leaves a flat h-split unchanged", () => {
+    const node = split("p1", "p2");
+    expect(toHorizontal(node)).toEqual(node);
+  });
+
+  it("rewrites a flat v-split to h", () => {
+    const node: LayoutNode = { direction: "v", children: [leaf("p1"), leaf("p2")], sizes: [50, 50] };
+    expect(toHorizontal(node)).toEqual({
+      direction: "h",
+      children: [leaf("p1"), leaf("p2")],
+      sizes: [50, 50],
+    });
+  });
+
+  it("rewrites every v-split in a nested mix, preserving structure and sizes", () => {
+    const node: LayoutNode = {
+      direction: "v",
+      children: [
+        leaf("p1"),
+        { direction: "h", children: [leaf("p2"), { direction: "v", children: [leaf("p3"), leaf("p4")], sizes: [40, 60] }], sizes: [30, 70] },
+      ],
+      sizes: [25, 75],
+    };
+    expect(toHorizontal(node)).toEqual({
+      direction: "h",
+      children: [
+        leaf("p1"),
+        { direction: "h", children: [leaf("p2"), { direction: "h", children: [leaf("p3"), leaf("p4")], sizes: [40, 60] }], sizes: [30, 70] },
+      ],
+      sizes: [25, 75],
+    });
   });
 });
