@@ -743,16 +743,22 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   }
   const tabGroupName = sessionName;
 
-  /** A mounted full-area terminal reports its grid size; mirror it onto every
-   *  OTHER single-pane scope's PTY so a backgrounded tab is already the right
-   *  size when reactivated (no SIGWINCH jump → no TUI redraw miscount that
-   *  duplicates chrome / garbles text). Gated on the reporter being a single
-   *  pane: only then does its container equal the whole terminal viewport. Split
-   *  arrangements size their panes per-pane on activation, so they're left
-   *  alone. */
+  /** Mirror a full-pane terminal's grid only to hidden tabs that share its exact
+   *  viewport. Center scopes are isolated per directory because their available
+   *  height depends on that directory's bottom panel. Bottom tabs share a
+   *  viewport only with other bottom tabs in the same directory. */
   function syncViewportSize(reporterTabId: string, cols: number, rows: number) {
     if (cols < 1 || rows < 1) return;
-    const layouts = Object.values(arrangementByScope.value).map((a) => a.layout);
+    const entries = Object.entries(arrangementByScope.value);
+    const reporterScope = entries.find(([, a]) => collectPaneIds(a.layout).includes(reporterTabId))?.[0];
+    if (!reporterScope) return;
+    const reporterBottom = parseBottomSurfaceKey(reporterScope);
+    const layouts = entries
+      .filter(([scopeId]) => {
+        if (!reporterBottom) return scopeId === reporterScope;
+        return parseBottomSurfaceKey(scopeId)?.dirId === reporterBottom.dirId;
+      })
+      .map(([, a]) => a.layout);
     for (const tabId of singlePaneResizeTargets(layouts, reporterTabId)) {
       // No-op on the daemon if that tab has no live PTY — cheap and safe.
       void useRpc().request.tabResize({ tabId, cols, rows }).catch(() => {});

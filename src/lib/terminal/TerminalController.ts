@@ -46,6 +46,10 @@ const TAIL_PREFETCH_THROTTLE_MS = 120;
  *  (tens of ms typical), short enough that a program which never repaints (dead
  *  child, plain idle shell) doesn't leave a visibly stale pane. */
 export const RESIZE_HOLD_MS = 200;
+/** Quiet period after the latest post-resize program delta before revealing the
+ *  new frame. Grid deltas are coalesced at 8ms; eight quiet intervals cover the
+ *  measured multi-delta Codex redraw gap. */
+export const RESIZE_SETTLE_MS = 64;
 
 /** The transport a controller drives: the live socket-backed `GridSession`, or a
  *  no-op `StaticGridTransport` for a frozen archived snapshot. Structural so both
@@ -90,6 +94,14 @@ export interface ControllerDeps {
   /** One-shot timer for the resize hold deadline (setTimeout in the app). */
   setTimer?: (cb: () => void, ms: number) => unknown;
   clearTimer?: (handle: unknown) => void;
+}
+
+interface ResizeHold {
+  cols: number;
+  rows: number;
+  sawSync: boolean;
+  deadlineTimer: unknown | null;
+  settleTimer: unknown | null;
 }
 
 export class TerminalController {
@@ -144,7 +156,7 @@ export class TerminalController {
    *  hover map to the wrong cells for the hold's duration. Fixing it needs a
    *  shadow copy of the pre-resize grid; ≤200ms mid-resize was judged not worth
    *  it. */
-  private hold: { cols: number; rows: number; sawSync: boolean; timer: unknown } | null = null;
+  private hold: ResizeHold | null = null;
 
   /** reqId of the latest in-flight scrollback fetch; cancelled when superseded. */
   private lastFetchReqId = 0;
@@ -185,7 +197,8 @@ export class TerminalController {
       this.lastDeltaGen = this.store.deltaGen;
       // Resize hold: the daemon answers a resize with a full sync of the screen
       // reflowed but NOT yet repainted by the program. Keep suppressing paints
-      // through it; the first real DELTA after it is the program's own repaint.
+      // through it; real DELTAs after it restart a short quiet window so a TUI's
+      // clear/home and content phases land as one visible repaint.
       // Must be a delta, not merely "not a sync": the width reflow drops the
       // history cache, so `history` frames stream back within milliseconds and
       // would otherwise release the hold onto the mangled intermediate.
@@ -193,9 +206,17 @@ export class TerminalController {
         // Only the snapshot for THIS resize counts — a sync still carrying the
         // previous geometry (two resizes in flight) must not arm the release.
         if (synced) {
+          if (this.hold.settleTimer != null) {
+            this.clearTimer(this.hold.settleTimer);
+            this.hold.settleTimer = null;
+          }
           this.hold.sawSync = this.store.cols === this.hold.cols && this.store.rows === this.hold.rows;
         } else if (newDelta && this.hold.sawSync) {
-          this.commitResize();
+          const hold = this.hold;
+          if (hold.settleTimer != null) this.clearTimer(hold.settleTimer);
+          hold.settleTimer = this.setTimer(() => {
+            if (this.hold === hold) this.commitResize();
+          }, RESIZE_SETTLE_MS);
         }
       }
       this.requestPaint();
@@ -217,6 +238,7 @@ export class TerminalController {
     if (this.paintQueued) return;
     this.paintQueued = true;
     this.schedule(() => {
+      if (!this.paintQueued) return;
       this.paintQueued = false;
       // Re-check: a paint queued before the resize would otherwise land mid-hold
       // (rAF phase is uncorrelated with when the resize arrives).
@@ -631,14 +653,23 @@ export class TerminalController {
     this.lastFetchReqId = 0;
     // Never delay SIGWINCH: the program needs its new size as early as possible.
     this.transport.resize(cols, rows);
-    if (this.hold) this.clearTimer(this.hold.timer);
+    if (this.hold) this.clearResizeTimers(this.hold);
     if (opts.hold === false) {
       this.hold = null;
       this.applyResize(cols, rows);
       return;
     }
-    this.hold = { cols, rows, sawSync: false, timer: null };
-    this.hold.timer = this.setTimer(() => this.commitResize(), RESIZE_HOLD_MS);
+    const hold: ResizeHold = {
+      cols,
+      rows,
+      sawSync: false,
+      deadlineTimer: null,
+      settleTimer: null,
+    };
+    this.hold = hold;
+    hold.deadlineTimer = this.setTimer(() => {
+      if (this.hold === hold) this.commitResize();
+    }, RESIZE_HOLD_MS);
   }
 
   /** End the hold: size the canvas (host), the renderer, and repaint. Safe to
@@ -646,16 +677,25 @@ export class TerminalController {
   commitResize(): void {
     const h = this.hold;
     if (!h) return;
-    this.clearTimer(h.timer);
+    this.clearResizeTimers(h);
     this.hold = null;
     this.applyResize(h.cols, h.rows);
+  }
+
+  private clearResizeTimers(h: ResizeHold): void {
+    if (h.deadlineTimer != null) this.clearTimer(h.deadlineTimer);
+    if (h.settleTimer != null) this.clearTimer(h.settleTimer);
   }
 
   private applyResize(cols: number, rows: number): void {
     this.onResizeCommit?.(cols, rows); // host resizes the canvas → clears it
     this.renderer.resize(cols, rows, 1);
     this.store.markAllDirty(); // the cleared canvas needs every row redrawn
-    this.requestPaint();
+    // Commit paint is synchronous: yielding to rAF after resizing the backing
+    // store lets Chromium composite one cleared frame. Drop any pre-resize rAF.
+    this.paintQueued = false;
+    this.renderer.paint(this.store);
+    this.onAfterPaint?.();
   }
 
   private snapToBottomOnInput(): void {
@@ -666,7 +706,7 @@ export class TerminalController {
   }
 
   dispose(): void {
-    if (this.hold) this.clearTimer(this.hold.timer);
+    if (this.hold) this.clearResizeTimers(this.hold);
     this.hold = null;
     this.stopAutoScroll();
     this.transport.dispose();

@@ -1611,6 +1611,27 @@ describe("bottom terminal panel", () => {
       { tabId: "bottom-b", cols: 40, rows: 12 },
     ]);
   });
+
+  it("does not mirror a center reporter outside its exact center scope", () => {
+    const store = useWorkspaceStore();
+    store.arrangementByScope = {
+      "dir-1": { version: 1, layout: { pane: "center-reporter" } },
+      "dir-2": { version: 1, layout: { pane: "other-center" } },
+      [bottomSurfaceKey("dir-1", "group-a")]: {
+        version: 1,
+        layout: { pane: "same-dir-bottom-a" },
+      },
+      [bottomSurfaceKey("dir-1", "group-b")]: {
+        version: 1,
+        layout: { pane: "same-dir-bottom-b" },
+      },
+    };
+    rpc.tabResize.mockClear();
+
+    store.syncViewportSize("center-reporter", 80, 24);
+
+    expect(rpc.tabResize).not.toHaveBeenCalled();
+  });
 });
 
 describe("bottom panel: active surface invalidation", () => {

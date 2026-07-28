@@ -1,5 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
-import { TerminalController, RESIZE_HOLD_MS, type GridTransport } from './TerminalController';
+import {
+  TerminalController,
+  RESIZE_HOLD_MS,
+  RESIZE_SETTLE_MS,
+  type GridTransport,
+} from './TerminalController';
 import { GridStore } from './GridStore';
 import { GridSession, type GridSocket } from './GridSession';
 import type { TerminalRenderer } from './renderer';
@@ -747,7 +752,9 @@ describe('resize hold (pre-resize frame survives the reflow)', () => {
   function setupHold(opts: { deferPaint?: boolean } = {}) {
     // Distinct handles + a cleared log, so a missing clearTimer is detectable.
     let nextHandle = 1;
-    const timers = new Map<number, { cb: () => void; ms: number }>();
+    let now = 0;
+    const timers = new Map<number, { cb: () => void; ms: number; dueAt: number }>();
+    const callbacks = new Map<number, () => void>();
     const cleared: number[] = [];
     let queuedPaint: (() => void) | null = null;
     const store = new GridStore();
@@ -766,7 +773,8 @@ describe('resize hold (pre-resize frame survives the reflow)', () => {
       },
       setTimer: (cb, ms) => {
         const h = nextHandle++;
-        timers.set(h, { cb, ms });
+        timers.set(h, { cb, ms, dueAt: now + ms });
+        callbacks.set(h, cb);
         return h;
       },
       clearTimer: (h) => {
@@ -805,11 +813,27 @@ describe('resize hold (pre-resize frame survives the reflow)', () => {
       store.applyHistory({ type: 'history', reqId: 1, from, to, runs: [] });
       update();
     };
+    const advance = (ms: number) => {
+      const target = now + ms;
+      while (true) {
+        const next = [...timers]
+          .filter(([, timer]) => timer.dueAt <= target)
+          .sort((a, b) => a[1].dueAt - b[1].dueAt || a[0] - b[0])[0];
+        if (!next) break;
+        const [handle, timer] = next;
+        timers.delete(handle);
+        now = timer.dueAt;
+        timer.cb();
+      }
+      now = target;
+    };
     return {
       store, transport, renderer, controller, commits, delta, intermediateSync, history,
-      /** Fire every armed timer (the hold deadline). */
-      deadline: () => [...timers.values()].forEach((t) => t.cb()),
+      deadline: () => advance(RESIZE_HOLD_MS),
+      advance,
+      fireStale: (handle: number) => callbacks.get(handle)?.(),
       armed: () => [...timers.values()],
+      armedHandles: () => [...timers.keys()],
       cleared: () => cleared,
       flushPaint,
     };
@@ -850,29 +874,70 @@ describe('resize hold (pre-resize frame survives the reflow)', () => {
     expect(commits).toEqual([]);
   });
 
-  it('the first delta after the post-resize sync releases the hold and paints', () => {
-    const { controller, renderer, commits, delta, intermediateSync, armed } = setupHold();
+  it('keeps holding across the recorded 32 ms gap and settles after 64 ms', () => {
+    const { controller, renderer, commits, delta, intermediateSync, armed, advance } = setupHold();
     controller.resize(100, 30);
     intermediateSync(100, 30);
     expect(commits).toEqual([]); // the sync itself is not the program's repaint
-    delta(3, 'repaint'); // the program's own post-SIGWINCH repaint
+    delta(3, 'clear'); // first chunk can be only clear-screen + cursor-home
+    expect(commits).toEqual([]);
+    expect(armed().map((t) => t.ms).sort((a, b) => a - b)).toEqual([
+      RESIZE_SETTLE_MS,
+      RESIZE_HOLD_MS,
+    ]);
+    advance(32);
+    expect(commits).toEqual([]);
+    delta(4, 'content');
+    advance(63);
+    expect(commits).toEqual([]);
+    advance(1);
     expect(commits).toEqual([[100, 30]]); // canvas resized at commit, not before
     expect(renderer.lastResize).toEqual([100, 30, 1]);
     expect(renderer.paints).toBeGreaterThan(0);
     expect(armed()).toEqual([]); // deadline disarmed
   });
 
+  it('restarts the quiet window for each redraw delta', () => {
+    const { controller, commits, delta, intermediateSync, advance, cleared } = setupHold();
+    controller.resize(100, 30);
+    intermediateSync(100, 30);
+    delta(3, 'clear');
+    delta(4, 'content');
+    expect(cleared()).toContain(2); // first settle timer was superseded
+    expect(commits).toEqual([]);
+    advance(RESIZE_SETTLE_MS);
+    expect(commits).toEqual([[100, 30]]);
+  });
+
+  it('invalidates an active quiet window when a newer sync arrives', () => {
+    const { controller, commits, delta, intermediateSync, advance, cleared } = setupHold();
+    controller.resize(100, 30);
+    intermediateSync(100, 30);
+    delta(3, 'early');
+
+    intermediateSync(100, 30); // newer clear/home baseline
+    expect(cleared()).toContain(2); // settle timer, after deadline handle 1
+    advance(RESIZE_SETTLE_MS);
+    expect(commits).toEqual([]);
+
+    delta(4, 'content');
+    advance(RESIZE_SETTLE_MS);
+    expect(commits).toEqual([[100, 30]]);
+  });
+
   it('history frames after the sync do NOT release the hold', () => {
     // The width reflow drops the scrollback cache, so history streams back within
     // milliseconds of the intermediate sync. Releasing on it paints the mangle.
-    const { controller, renderer, commits, history, intermediateSync, delta } = setupHold();
+    const { controller, renderer, commits, history, intermediateSync, delta, advance } = setupHold();
     controller.resize(100, 30);
     intermediateSync(100, 30);
     history(0, 8);
     history(8, 16);
     expect(renderer.paints).toBe(0);
     expect(commits).toEqual([]);
-    delta(3, 'repaint'); // only a real delta releases
+    delta(3, 'repaint'); // only a real delta starts the quiet window
+    expect(commits).toEqual([]);
+    advance(RESIZE_SETTLE_MS);
     expect(commits).toEqual([[100, 30]]);
   });
 
@@ -888,8 +953,9 @@ describe('resize hold (pre-resize frame survives the reflow)', () => {
     flushPaint(); // the pre-resize rAF fires mid-hold
     expect(renderer.paints).toBe(0);
     deadline();
-    flushPaint();
     expect(renderer.paints).toBe(1);
+    flushPaint();
+    expect(renderer.paints).toBe(1); // stale pre-resize rAF was dropped
   });
 
   it('arms the deadline with RESIZE_HOLD_MS', () => {
@@ -898,13 +964,20 @@ describe('resize hold (pre-resize frame survives the reflow)', () => {
     expect(armed().map((t) => t.ms)).toEqual([RESIZE_HOLD_MS]);
   });
 
-  it('dispose clears a live hold timer', () => {
-    const { controller, armed, cleared } = setupHold();
+  it('dispose clears both resize timers and stale callbacks cannot commit', () => {
+    const {
+      controller, commits, delta, intermediateSync, armed, armedHandles, cleared, fireStale,
+    } = setupHold();
     controller.resize(100, 30);
-    const handle = 1;
+    intermediateSync(100, 30);
+    delta(3, 'repaint');
+    const handles = armedHandles();
+    expect(handles).toEqual([1, 2]);
     controller.dispose();
-    expect(cleared()).toContain(handle);
+    expect(cleared()).toEqual(handles);
     expect(armed()).toEqual([]);
+    for (const handle of handles) fireStale(handle);
+    expect(commits).toEqual([]);
   });
 
   it('the deadline releases the hold when the program never repaints', () => {
@@ -917,23 +990,33 @@ describe('resize hold (pre-resize frame survives the reflow)', () => {
     expect(renderer.paints).toBeGreaterThan(0);
   });
 
-  it('a second resize supersedes the first: one timer, cleared, commits at #2', () => {
-    const { controller, commits, deadline, intermediateSync, delta, armed, cleared } = setupHold();
+  it('a second resize clears both old timers and stale callbacks cannot commit', () => {
+    const {
+      controller, commits, intermediateSync, delta, armed, armedHandles, cleared, fireStale, advance,
+    } = setupHold();
     controller.resize(100, 30);
+    intermediateSync(100, 30);
+    delta(3, 'old');
+    const staleHandles = armedHandles();
+    expect(staleHandles).toEqual([1, 2]);
+
     controller.resize(120, 40);
-    expect(cleared()).toEqual([1]); // resize #1's timer explicitly cleared
+    expect(cleared()).toEqual(staleHandles);
     expect(armed().length).toBe(1); // exactly one live deadline
+    for (const handle of staleHandles) fireStale(handle);
+    expect(commits).toEqual([]);
+
     intermediateSync(120, 40);
-    delta(3, 'x');
+    delta(4, 'new');
+    expect(commits).toEqual([]);
+    advance(RESIZE_SETTLE_MS);
     expect(commits).toEqual([[120, 40]]); // commits once, at the latest size
-    deadline(); // nothing stale left to fire
-    expect(commits).toEqual([[120, 40]]);
   });
 
   it('a sync carrying the previous geometry does not arm the release', () => {
     // Two resizes in flight: resize #1's snapshot must not release a hold whose
     // target is #2's size, or the canvas commits ahead of the store.
-    const { controller, store, commits, intermediateSync, delta } = setupHold();
+    const { controller, store, commits, intermediateSync, delta, advance } = setupHold();
     controller.resize(100, 30);
     controller.resize(120, 40);
     intermediateSync(100, 30); // stale snapshot for the superseded resize
@@ -941,6 +1024,7 @@ describe('resize hold (pre-resize frame survives the reflow)', () => {
     expect(commits).toEqual([]);
     intermediateSync(120, 40); // the snapshot for the live resize
     delta(4, 'y');
+    advance(RESIZE_SETTLE_MS);
     expect(commits).toEqual([[120, 40]]);
     expect([store.cols, store.rows]).toEqual([120, 40]); // store agrees with the canvas
   });
