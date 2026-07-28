@@ -127,7 +127,7 @@ onUnmounted(() => {
               type="button"
               size="icon-xs"
               variant="ghost"
-              class="text-muted-foreground pointer-events-auto"
+              class="text-muted-foreground pointer-events-auto ml-0.5"
               :aria-label="bottomPanelOpen ? 'Hide Bottom Panel' : 'Show Bottom Panel'"
               @click="toggleBottomPanel"
             >
@@ -148,7 +148,7 @@ onUnmounted(() => {
               type="button"
               size="icon-xs"
               variant="ghost"
-              class="text-muted-foreground pointer-events-auto mr-1.5"
+              class="text-muted-foreground pointer-events-auto ml-0.5 mr-1.5"
               aria-label="Show right sidebar"
               @click="expandRight"
             >
