@@ -116,9 +116,9 @@ defineExpose({ onLayout });
           horizontal-only
         />
       </div>
-      <div class="flex shrink-0 flex-col" :class="showList ? 'w-56 border-l' : ''">
+      <div class="flex shrink-0 flex-col bg-sidebar" :class="showList ? 'w-56 border-l' : ''">
         <TooltipProvider :delay-duration="250">
-          <div class="flex h-9 shrink-0 items-center justify-end gap-0.5 border-b bg-sidebar px-1">
+          <div class="flex h-9 shrink-0 items-center justify-end gap-0.5 border-b px-1">
             <Tooltip>
               <TooltipTrigger as-child>
                 <Button
