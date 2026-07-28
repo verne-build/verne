@@ -1853,3 +1853,80 @@ describe("bottom panel: load-path prune + hydrate guard", () => {
     expect(persisted["dir-1"].tabs).toHaveLength(1);
   });
 });
+
+describe("bottom panel unsplit", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    setActivePinia(createPinia());
+    setAppStateCalls.length = 0;
+    tabsClosedIds.length = 0;
+    tabsCreateCalls.length = 0;
+    nextId = 0;
+    setLiveTabIds([]);
+    appState.clear();
+    for (const k of Object.keys(tabsListByDir)) delete tabsListByDir[k];
+    setFailArrangementGets(0);
+  });
+
+  async function splitBottomGroup() {
+    const store = useWorkspaceStore();
+    store.directories.push(dir("dir-1"));
+    store.selectDirectory(dir("dir-1"));
+    const first = await store.createBottomTerminal("dir-1");
+    await store.splitSessionWithNew(first!.id, "h");
+    const groupId = store.bottomPanelFor("dir-1")!.tabs[0];
+    const panes = collectPaneIds(store.arrangementByScope[bottomSurfaceKey("dir-1", groupId)].layout);
+    const other = panes.find((id) => id !== first!.id)!;
+    return { store, groupId, first: first!.id, other };
+  }
+
+  it("moves the pane into a new group without killing it", async () => {
+    const { store, groupId, first, other } = await splitBottomGroup();
+
+    store.unsplitBottomPane(other);
+
+    const state = store.bottomPanelFor("dir-1")!;
+    expect(state.tabs).toHaveLength(2);
+    expect(tabsClosedIds).not.toContain(other);
+    // Source group keeps the pane that stayed.
+    expect(collectPaneIds(store.arrangementByScope[bottomSurfaceKey("dir-1", groupId)].layout)).toEqual([first]);
+    // The moved pane is alone in the new group, which is active and focused.
+    const newGroup = state.tabs.find((id) => id !== groupId)!;
+    expect(collectPaneIds(store.arrangementByScope[bottomSurfaceKey("dir-1", newGroup)].layout)).toEqual([other]);
+    expect(state.activeTabId).toBe(newGroup);
+    expect(store.bottomFocusedSessionId).toBe(other);
+  });
+
+  it("gives the new group its own stable number", async () => {
+    const { store, other } = await splitBottomGroup();
+
+    store.unsplitBottomPane(other);
+
+    const state = store.bottomPanelFor("dir-1")!;
+    expect(Object.values(state.numbers).sort()).toEqual([1, 2]);
+  });
+
+  it("is a no-op for a pane that is already alone in its group", async () => {
+    const store = useWorkspaceStore();
+    store.directories.push(dir("dir-1"));
+    store.selectDirectory(dir("dir-1"));
+    const tab = await store.createBottomTerminal("dir-1");
+    const before = JSON.stringify(store.bottomPanelByScope);
+
+    store.unsplitBottomPane(tab!.id);
+
+    expect(JSON.stringify(store.bottomPanelByScope)).toBe(before);
+  });
+
+  it("ignores a center session", async () => {
+    const store = useWorkspaceStore();
+    store.directories.push(dir("dir-1"));
+    store.selectDirectory(dir("dir-1"));
+    const center = await store.newSession("dir-1");
+
+    store.unsplitBottomPane(center.id);
+
+    expect(store.bottomPanelFor("dir-1")).toBeNull();
+    expect(collectPaneIds(store.arrangementByScope["dir-1"].layout)).toEqual([center.id]);
+  });
+});

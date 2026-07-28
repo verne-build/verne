@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 // Columns2 (not SplitSquareHorizontal): the latter's outline is inset to 18x14,
 // so it renders visibly shorter than the 18x18 icons beside it in the title bar.
-import { SquareTerminal, Columns2, PanelRight, PanelLeft, PanelBottom, PanelTop, X, RotateCw, Play } from "@lucide/vue";
+import { SquareTerminal, Columns2, PanelRight, PanelLeft, PanelBottom, PanelTop, X, Trash2, RotateCw, Play } from "@lucide/vue";
 import { ask } from "@/platform";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useRpc } from "@/composables/useRpc";
@@ -410,7 +410,8 @@ onUnmounted(() => {
         :title="endMode === 'close' ? 'Close Terminal' : 'Remove From View'"
         @click="endMode === 'close' ? endSession() : removeFromView()"
       >
-        <X class="size-3.5" />
+        <Trash2 v-if="endMode === 'close'" class="size-3.5" />
+        <X v-else class="size-3.5" />
       </Button>
     </div>
 

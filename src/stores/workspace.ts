@@ -435,6 +435,25 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     }
   }
 
+  /** VS Code's "Unsplit Terminal": move a pane out of its split into a new
+   *  bottom group. Drops the grouping only — the PTY keeps running. */
+  function unsplitBottomPane(sessionId: string): void {
+    const surfaceKey = surfaceKeyFor(sessionId);
+    const parsed = surfaceKey ? parseBottomSurfaceKey(surfaceKey) : null;
+    if (!surfaceKey || !parsed) return; // center sessions have no groups to leave
+    const { dirId } = parsed;
+    const current = arrangementFor(surfaceKey);
+    const state = bottomPanelFor(dirId);
+    if (!current || !state) return;
+    const remaining = removeFromArrangement(current, sessionId);
+    if (!remaining) return; // already alone: nothing to unsplit
+    writeArrangement(surfaceKey, remaining);
+    const newGroupId = crypto.randomUUID();
+    writeArrangement(bottomSurfaceKey(dirId, newGroupId), { version: 1, layout: { pane: sessionId } });
+    writeBottomPanel(dirId, addBottomTab(bottomPanelFor(dirId) ?? state, newGroupId));
+    focusSession(sessionId);
+  }
+
   async function closeBottomTab(dirId: string, bottomTabId: string): Promise<void> {
     const key = bottomSurfaceKey(dirId, bottomTabId);
     const arr = arrangementFor(key);
@@ -1747,6 +1766,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     createBottomTerminal,
     closeBottomPane,
     closeBottomTab,
+    unsplitBottomPane,
     activateBottomPanelTab,
     reorderBottomPanelTabs,
     setBottomPanelCollapsed,

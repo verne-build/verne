@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { SquareTerminal, Columns2, X } from "@lucide/vue";
+import { SquareTerminal, Columns2, Trash2 } from "@lucide/vue";
 import { DragDropProvider } from "@dnd-kit/vue";
 import SortableItem from "@/components/dnd/SortableItem.vue";
 import { sortableSensors } from "@/components/dnd/sensors";
@@ -131,6 +131,11 @@ async function closeAllGroups() {
   for (const groupId of [...groupIds.value]) await closeGroup(groupId);
 }
 
+// Drops the grouping only — the PTY keeps running (VS Code: Unsplit Terminal).
+function unsplitRow(r: BottomListRow) {
+  store.unsplitBottomPane(r.paneId);
+}
+
 function splitRow(r: BottomListRow) {
   void store.splitSessionWithNew(r.paneId, "h");
 }
@@ -258,7 +263,7 @@ function onDragEnd(e: DragEndPayload) {
                   aria-label="Close Group"
                   @click.stop="close(row, $event)"
                 >
-                  <X />
+                  <Trash2 />
                 </Button>
               </div>
             </SortableItem>
@@ -289,13 +294,16 @@ function onDragEnd(e: DragEndPayload) {
                 aria-label="Close Terminal"
                 @click.stop="close(row, $event)"
               >
-                <X />
+                <Trash2 />
               </Button>
             </div>
           </ContextMenuTrigger>
           <ContextMenuContent @close-auto-focus.prevent>
             <ContextMenuItem v-if="row.kind === 'group'" @select="startRename(row)">Rename</ContextMenuItem>
             <ContextMenuItem @select="splitRow(row)">Split Right</ContextMenuItem>
+            <ContextMenuItem v-if="row.kind === 'pane'" @select="unsplitRow(row)">
+              Unsplit Terminal
+            </ContextMenuItem>
             <ContextMenuSeparator />
             <ContextMenuItem @select="close(row)">Close</ContextMenuItem>
             <ContextMenuItem v-if="row.kind === 'group'" :disabled="groupIds.length <= 1" @select="closeAllGroups()">
