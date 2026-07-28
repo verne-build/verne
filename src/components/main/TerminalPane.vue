@@ -62,6 +62,11 @@ const props = defineProps<{
   /** How ⌘W / the pane menu ends this pane. Center sessions archive; bottom
    *  panel terminals are scratch and are killed outright. */
   endMode?: "archive" | "close";
+  /** Bottom panel: the pane headers ARE the panel bar, so they match the bar's
+   *  h-9 instead of the center's h-11.5. */
+  compact?: boolean;
+  /** Bottom panel splits side-by-side only, so the headers stay one row. */
+  horizontalOnly?: boolean;
 }>();
 
 const store = useWorkspaceStore();
@@ -328,8 +333,9 @@ onUnmounted(() => {
   <div class="flex flex-col h-full min-h-0" @focusin="focusPane">
     <!-- Title bar: label + split / close actions -->
     <div
-      class="drag-region flex items-center h-11.5 text-xs bg-sidebar border-b overflow-hidden shrink-0 gap-1.5"
+      class="drag-region flex items-center text-xs bg-sidebar border-b overflow-hidden shrink-0 gap-1.5"
       :class="[
+        compact ? 'h-9' : 'h-11.5',
         isActive ? 'border-border text-foreground' : 'border-border text-muted-foreground',
         reserveRightOverlay ? 'pr-9' : 'pr-1',
         reserveLeftOverlay ? 'pl-[133px]' : 'pl-4',
@@ -367,12 +373,12 @@ onUnmounted(() => {
             <DropdownMenuShortcut>{{ shortcutText("split-pane-h") }}</DropdownMenuShortcut>
           </DropdownMenuItem>
           <DropdownMenuItem @select="split('h', true)"><PanelLeft class="size-3.5" /> Split Left</DropdownMenuItem>
-          <DropdownMenuItem @select="split('v', false)">
+          <DropdownMenuItem v-if="!horizontalOnly" @select="split('v', false)">
             <PanelBottom class="size-3.5" />
             <span>Split Down</span>
             <DropdownMenuShortcut>{{ shortcutText("split-pane-v") }}</DropdownMenuShortcut>
           </DropdownMenuItem>
-          <DropdownMenuItem @select="split('v', true)"><PanelTop class="size-3.5" /> Split Up</DropdownMenuItem>
+          <DropdownMenuItem v-if="!horizontalOnly" @select="split('v', true)"><PanelTop class="size-3.5" /> Split Up</DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuSub>
             <DropdownMenuSubTrigger :disabled="otherSessions.length === 0">

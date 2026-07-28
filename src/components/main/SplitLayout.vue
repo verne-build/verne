@@ -23,6 +23,10 @@ const props = defineProps<{
   reserveLeftOverlay?: boolean;
   /** Forwarded to every pane: how ⌘W / the pane menu ends it. */
   endMode?: "archive" | "close";
+  /** Forwarded to every pane: compact header height. */
+  compact?: boolean;
+  /** Forwarded to every pane: side-by-side splits only. */
+  horizontalOnly?: boolean;
 }>();
 
 const store = useWorkspaceStore();
@@ -52,6 +56,8 @@ onBeforeUnmount(() => {
     :reserve-right-overlay="reserveRightOverlay"
     :reserve-left-overlay="reserveLeftOverlay"
     :end-mode="endMode"
+    :compact="compact"
+    :horizontal-only="horizontalOnly"
   />
   <ResizablePanelGroup
     v-else
@@ -77,6 +83,8 @@ onBeforeUnmount(() => {
           :reserve-right-overlay="reserveRightOverlay"
           :reserve-left-overlay="reserveLeftOverlay && i === 0"
           :end-mode="endMode"
+          :compact="compact"
+          :horizontal-only="horizontalOnly"
         />
       </ResizablePanel>
     </template>
