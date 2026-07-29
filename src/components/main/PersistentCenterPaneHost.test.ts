@@ -27,7 +27,10 @@ vi.mock("vue", async (importOriginal) => {
   return {
     ...actual,
     nextTick: <T>(callback?: () => T) => {
-      if (!nextTickControl.intercept) return actual.nextTick(callback);
+      if (!nextTickControl.intercept) {
+        const tick = actual.nextTick();
+        return callback ? tick.then(callback) : tick;
+      }
       return new Promise<T | void>((resolve) => {
         nextTickControl.pending.push(() => resolve(callback?.()));
       });
