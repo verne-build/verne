@@ -541,7 +541,9 @@ describe("TabsCenter real TerminalPane lifecycle", () => {
 
     testState.store.sessionLifecycle.set("session-a", "exited");
     await flush();
-    expect(root.textContent).toContain("Session exited");
+    const exitOverlay = Array.from(root.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Session exited"));
+    expect(exitOverlay).not.toBeUndefined();
     expect(root.querySelector('[data-grid-session-id="pty:session-a"]')).toBe(grid);
 
     setLayout("dir-1", {
@@ -555,7 +557,10 @@ describe("TabsCenter real TerminalPane lifecycle", () => {
 
     expect(pane("session-a")).toBe(root);
     expect(root.querySelector('[data-grid-session-id="pty:session-a"]')).toBe(grid);
-    expect(root.textContent).toContain("Session exited");
+    expect(Array.from(root.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Session exited"))).toBe(exitOverlay);
+    expect(exitOverlay?.isConnected).toBe(true);
+    expect(root.contains(exitOverlay!)).toBe(true);
     expect(testState.tabsSessionId).toHaveBeenCalledTimes(1);
 
     testState.store.sessionLifecycle.set("session-a", "running");
