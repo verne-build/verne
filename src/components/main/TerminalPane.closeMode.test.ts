@@ -106,6 +106,35 @@ describe("TerminalPane end mode", () => {
     expect(store.closeBottomPane).not.toHaveBeenCalled();
   });
 
+  it("exposes stable pane and terminal-session selectors", async () => {
+    mount({ paneId: "pane-1", scopeId: "dir-1", multi: false });
+    await flush();
+
+    expect(host.querySelector('[data-terminal-pane-id="pane-1"]')).not.toBeNull();
+    expect(host.querySelector('[data-terminal-session-id="pane-1"]')).not.toBeNull();
+  });
+
+  it("uses an ellipsis for the split menu trigger", async () => {
+    mount({ paneId: "pane-1", scopeId: "dir-1", multi: true });
+    await flush();
+
+    expect(buttonByTitle("Split")?.querySelector(".lucide-ellipsis")).toBeTruthy();
+  });
+
+  it("keeps the active split title muted", async () => {
+    mount({
+      paneId: "pane-1",
+      scopeId: "dir-1",
+      multi: true,
+      focusedSessionId: "pane-1",
+    });
+    await flush();
+
+    const title = Array.from(host.querySelectorAll("span")).find((node) => node.textContent === "pane");
+    expect(title?.classList.contains("text-muted-foreground")).toBe(true);
+    expect(title?.classList.contains("text-foreground")).toBe(false);
+  });
+
   it("close mode kills the pane instead of orphaning it into the center", async () => {
     store.tabRuntime.set("pane-1", { foregroundCommand: "vim" });
     mount({

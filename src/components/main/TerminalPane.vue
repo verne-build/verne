@@ -1,8 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-// Columns2 (not SplitSquareHorizontal): the latter's outline is inset to 18x14,
-// so it renders visibly shorter than the 18x18 icons beside it in the title bar.
-import { SquareTerminal, Columns2, PanelRight, PanelLeft, PanelBottom, PanelTop, X, Trash2, RotateCw, Play } from "@lucide/vue";
+import { SquareTerminal, Ellipsis, PanelRight, PanelLeft, PanelBottom, PanelTop, X, Trash2, RotateCw, Play } from "@lucide/vue";
 import { ask } from "@/platform";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useRpc } from "@/composables/useRpc";
@@ -15,7 +13,6 @@ import { agentIconSurfaceForTheme, getAgentIconForSurface } from "@/composables/
 import { useTheme } from "@/composables/useTheme";
 import { sessionEndAction, sessionEndLabel, shouldConfirmArchive } from "@/lib/sessionEnd";
 import { parseBottomSurfaceKey } from "@/lib/bottomPanel";
-import { terminalTitleFrom } from "@/lib/sessionTitle";
 import { confirmCloseTerminals, runningProcessLabel } from "@/composables/useConfirmClose";
 import GridTerminal from "@/components/terminal/GridTerminal.vue";
 import {
@@ -153,22 +150,13 @@ const agentType = computed(() => {
   return runtime ? runtime.agentType : tab.value?.lastAgentType;
 });
 
-const foregroundCommand = computed(() => store.tabRuntime.get(props.paneId)?.foregroundCommand);
-
 // Live agent state (falls back to the persisted last state) — gates the archive
 // confirm so only a mid-work session prompts.
 const agentState = computed(
   () => store.tabRuntime.get(props.paneId)?.agentState ?? tab.value?.lastAgentState,
 );
 
-const panelLabel = computed(() =>
-  terminalTitleFrom({
-    userRenamed: tab.value?.userRenamed,
-    label: tab.value?.label,
-    agentType: agentType.value ?? undefined,
-    foregroundCommand: foregroundCommand.value,
-  }),
-);
+const panelLabel = computed(() => store.sessionName(props.paneId));
 
 const agentIconSurface = computed(() => {
   void activeThemeName.value;
@@ -269,7 +257,12 @@ function focusPane() {
 // (the header dropdown and the terminal's own context menu) can't produce a
 // second stacked bar row.
 function split(direction: "h" | "v", before = false) {
-  void store.splitSessionWithNew(props.paneId, props.horizontalOnly ? "h" : direction, before);
+  const splitDirection = props.horizontalOnly ? "h" : direction;
+  if (parseBottomSurfaceKey(props.scopeId)) {
+    void store.splitSessionWithNew(props.paneId, splitDirection, before);
+    return;
+  }
+  store.openCenterSplitPicker(props.paneId, splitDirection, before);
 }
 function splitH() { split("h"); }
 function splitV() { split("v"); }
@@ -333,7 +326,11 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="flex flex-col h-full min-h-0" @focusin="focusPane">
+  <div
+    class="flex flex-col h-full min-h-0"
+    :data-terminal-pane-id="paneId"
+    @focusin="focusPane"
+  >
     <!-- Title bar: label + split / close actions -->
     <div
       class="drag-region flex items-center text-xs bg-sidebar border-b overflow-hidden shrink-0 gap-1.5"
@@ -350,7 +347,7 @@ onUnmounted(() => {
       <span v-if="reserveLeftOverlay" class="h-4 w-px shrink-0 bg-border mr-1" aria-hidden="true" />
       <img v-if="agentIconSrc" :src="agentIconSrc" class="size-3.5 shrink-0" :alt="panelLabel" />
       <SquareTerminal v-else class="size-3.5 shrink-0" />
-      <span class="truncate flex-1 leading-none" :class="isActive ? 'text-foreground' : ''">{{ panelLabel }}</span>
+      <span class="truncate flex-1 leading-none text-muted-foreground">{{ panelLabel }}</span>
       <Button
         v-if="isArchived && tab?.resumeAvailable"
         data-no-drag
@@ -366,7 +363,7 @@ onUnmounted(() => {
       <DropdownMenu>
         <DropdownMenuTrigger as-child>
           <Button data-no-drag size="icon-xs" variant="ghost" class="text-muted-foreground" title="Split">
-            <Columns2 class="size-3.5" />
+            <Ellipsis class="size-3.5" />
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" size="sm">
@@ -466,6 +463,7 @@ onUnmounted(() => {
           <div
             ref="container"
             :data-session-id="sessionId"
+            :data-terminal-session-id="paneId"
             class="absolute inset-0 overflow-hidden"
             :class="isArchived ? 'opacity-70' : ''"
           >

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, onMounted, onUnmounted, type Ref } from "vue";
+import { computed, inject, onMounted, onUnmounted, provide, watch, type Ref } from "vue";
 import { Folder, PanelRight, PanelBottom } from "@lucide/vue";
 import PanelBottomFilled from "@/components/icons/PanelBottomFilled.vue";
 import { ask } from "@/platform";
@@ -9,9 +9,15 @@ import { useRpc } from "@/composables/useRpc";
 import { useShortcuts } from "@/composables/useShortcuts";
 import { paneCount } from "@/lib/paneLayout";
 import { firstRunView } from "@/lib/firstRunView";
+import { deriveCenterPanePlacements } from "@/lib/centerPanePlacement";
 import NewSessionPicker from "./NewSessionPicker.vue";
+import PersistentCenterPaneHost from "./PersistentCenterPaneHost.vue";
 import SplitLayout from "./SplitLayout.vue";
 import WelcomeHero from "./WelcomeHero.vue";
+import {
+  centerPaneAnchorRegistryKey,
+  createCenterPaneAnchorRegistry,
+} from "./centerPaneAnchorRegistry";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Kbd, KbdGroup } from "@/components/ui/kbd";
@@ -19,6 +25,11 @@ import { Kbd, KbdGroup } from "@/components/ui/kbd";
 const store = useWorkspaceStore();
 const rpc = useRpc();
 const shortcuts = useShortcuts();
+const centerPaneAnchorRegistry = createCenterPaneAnchorRegistry();
+provide(centerPaneAnchorRegistryKey, centerPaneAnchorRegistry);
+
+const persistentCenterPanesEnabled = import.meta.env.DEV
+  && window.localStorage.getItem("verne:persistent-center-panes") === "1";
 
 const rightCollapsed = inject<Ref<boolean>>("rightCollapsed");
 const leftCollapsed = inject<Ref<boolean>>("leftCollapsed");
@@ -29,8 +40,22 @@ function expandRight() {
 const dirId = computed(() => store.selectedDirectoryId);
 const showRightOverlay = computed(() => !!dirId.value && !!rightCollapsed?.value);
 const arrangement = computed(() =>
-  dirId.value ? store.arrangementFor(dirId.value) : null,
+  dirId.value ? store.centerDisplayArrangementFor(dirId.value) : null,
 );
+const centerPanePlacements = computed(() => {
+  if (!persistentCenterPanesEnabled || !dirId.value || !arrangement.value || store.pendingPicker)
+    return [];
+  return deriveCenterPanePlacements(arrangement.value.layout, {
+    scopeId: dirId.value,
+    focusedSessionId: store.focusedSessionId,
+    reserveRightOverlay: showRightOverlay.value,
+    reserveLeftOverlay: !!leftCollapsed?.value,
+  });
+});
+
+watch(dirId, (nextDirectoryId, previousDirectoryId) => {
+  if (previousDirectoryId !== nextDirectoryId) centerPaneAnchorRegistry.clear();
+}, { flush: "sync" });
 const pickerDirectoryName = computed(() => {
   const id = store.pendingPicker?.dirId;
   return store.directories.find((directory) => directory.id === id)?.name ?? "Workspace";
@@ -105,6 +130,7 @@ onMounted(() => {
   window.addEventListener("kill-active-terminal-session", onKillActiveSession);
 });
 onUnmounted(() => {
+  centerPaneAnchorRegistry.clear();
   window.removeEventListener("close-active-terminal-tab", onCloseActiveTerminal);
   window.removeEventListener("kill-active-terminal-session", onKillActiveSession);
 });
@@ -188,16 +214,36 @@ onUnmounted(() => {
           class="flex-1 min-h-0"
         />
       </div>
-      <SplitLayout
-        v-else-if="arrangement"
-        :key="dirId"
-        :node="arrangement.layout"
-        :scope-id="dirId"
-        :focused-session-id="store.focusedSessionId"
-        :multi="paneCount(arrangement.layout) > 1"
-        :reserve-right-overlay="showRightOverlay"
-        :reserve-left-overlay="!!leftCollapsed"
-      />
+      <template v-else-if="arrangement">
+        <div
+          v-if="persistentCenterPanesEnabled"
+          :key="dirId"
+          class="flex-1 min-h-0"
+        >
+          <SplitLayout
+            :node="arrangement.layout"
+            :scope-id="dirId"
+            :focused-session-id="store.focusedSessionId"
+            :multi="paneCount(arrangement.layout) > 1"
+            :reserve-right-overlay="showRightOverlay"
+            :reserve-left-overlay="!!leftCollapsed"
+            center-display
+            persistent-center-panes
+          />
+          <PersistentCenterPaneHost :placements="centerPanePlacements" />
+        </div>
+        <SplitLayout
+          v-else
+          :key="dirId"
+          :node="arrangement.layout"
+          :scope-id="dirId"
+          :focused-session-id="store.focusedSessionId"
+          :multi="paneCount(arrangement.layout) > 1"
+          :reserve-right-overlay="showRightOverlay"
+          :reserve-left-overlay="!!leftCollapsed"
+          center-display
+        />
+      </template>
       <!-- A selected scope without an arrangement intentionally reaches the
            picker branch above; keep this fallback for incomplete hydration. -->
       <div v-else class="flex-1 min-h-0 bg-[var(--editor-bg)]" />
