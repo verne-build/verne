@@ -67,6 +67,24 @@ describe('LiveGridRuntimeRegistry', () => {
     await vi.advanceTimersByTimeAsync(LIVE_GRID_RUNTIME_GRACE_MS);
   });
 
+  it('reclaims an existing runtime synchronously', async () => {
+    vi.useFakeTimers();
+    const registry = new LiveGridRuntimeRegistry();
+    const firstRuntime = runtime();
+    const first = await registry.acquire('s1', async () => firstRuntime);
+    first.release();
+
+    const second = registry.acquireRetained('s1');
+
+    expect(second).not.toBeNull();
+    expect(second?.runtime).toBe(firstRuntime);
+    expect(second?.retained).toBe(true);
+    await vi.advanceTimersByTimeAsync(LIVE_GRID_RUNTIME_GRACE_MS);
+    expect(firstRuntime.session.dispose).not.toHaveBeenCalled();
+    second?.release();
+    await vi.advanceTimersByTimeAsync(LIVE_GRID_RUNTIME_GRACE_MS);
+  });
+
   it('disposes an unreclaimed runtime after the grace period', async () => {
     vi.useFakeTimers();
     const registry = new LiveGridRuntimeRegistry();

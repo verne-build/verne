@@ -531,20 +531,40 @@ describe("TabsCenter real TerminalPane lifecycle", () => {
     expect(testState.decrementMountedTerminalViewCount).not.toHaveBeenCalled();
   });
 
-  it("keeps an exited pane overlay without resolving or replacing the terminal", async () => {
-    testState.store.sessionLifecycle.set("session-a", "exited");
+  it("keeps the live grid and exit overlay through picker split and cancel", async () => {
     await mountTabs({ realTerminal: true });
     const root = pane("session-a");
+    const grid = root.querySelector('[data-grid-session-id="pty:session-a"]');
 
+    expect(grid).not.toBeNull();
+    expect(testState.tabsSessionId).toHaveBeenCalledTimes(1);
+
+    testState.store.sessionLifecycle.set("session-a", "exited");
+    await flush();
     expect(root.textContent).toContain("Session exited");
-    expect(testState.tabsSessionId).not.toHaveBeenCalled();
+    expect(root.querySelector('[data-grid-session-id="pty:session-a"]')).toBe(grid);
+
+    setLayout("dir-1", {
+      direction: "h",
+      children: [{ pane: "session-a" }, { pane: "center-picker:test" }],
+      sizes: [50, 50],
+    });
+    await flush();
+    setLayout("dir-1", { pane: "session-a" });
+    await flush();
+
+    expect(pane("session-a")).toBe(root);
+    expect(root.querySelector('[data-grid-session-id="pty:session-a"]')).toBe(grid);
+    expect(root.textContent).toContain("Session exited");
+    expect(testState.tabsSessionId).toHaveBeenCalledTimes(1);
 
     testState.store.sessionLifecycle.set("session-a", "running");
     await flush();
 
     expect(pane("session-a")).toBe(root);
+    expect(root.querySelector('[data-grid-session-id="pty:session-a"]')).toBe(grid);
     expect(root.textContent).not.toContain("Session exited");
-    expect(testState.tabsSessionId).not.toHaveBeenCalled();
+    expect(testState.tabsSessionId).toHaveBeenCalledTimes(1);
     expect(testState.incrementMountedTerminalViewCount).toHaveBeenCalledTimes(1);
     expect(testState.decrementMountedTerminalViewCount).not.toHaveBeenCalled();
   });

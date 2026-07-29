@@ -13,6 +13,7 @@ import { GridStore } from '../../lib/terminal/GridStore';
 import { GridSession } from '../../lib/terminal/GridSession';
 import {
   acquireLiveGridRuntime,
+  acquireRetainedLiveGridRuntime,
   hasRetainedGridFrame,
   type LiveGridRuntimeLease,
 } from '../../lib/terminal/liveGridRuntime';
@@ -497,16 +498,17 @@ onMounted(async () => {
   ctx2d = made.kind === 'canvas2d' ? c.getContext('2d') : null;
   bindCanvasEvents(c);
 
-  runtimeLease = await acquireLiveGridRuntime(props.sessionId!, async () => {
-    const port = await useRpc().request.getWsPort({});
-    const store = new GridStore();
-    const liveSession = new GridSession(
-      `ws://127.0.0.1:${port}/session/${props.sessionId}?proto=grid`,
-      store,
-    );
-    liveSession.connect();
-    return { store, session: liveSession };
-  });
+  runtimeLease = acquireRetainedLiveGridRuntime(props.sessionId!)
+    ?? await acquireLiveGridRuntime(props.sessionId!, async () => {
+      const port = await useRpc().request.getWsPort({});
+      const store = new GridStore();
+      const liveSession = new GridSession(
+        `ws://127.0.0.1:${port}/session/${props.sessionId}?proto=grid`,
+        store,
+      );
+      liveSession.connect();
+      return { store, session: liveSession };
+    });
   if (disposed) {
     runtimeLease.release();
     runtimeLease = null;

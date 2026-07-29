@@ -33,6 +33,17 @@ export class LiveGridRuntimeRegistry {
     return this.entries.has(sessionId);
   }
 
+  acquireRetained(sessionId: string): LiveGridRuntimeLease | null {
+    const entry = this.entries.get(sessionId);
+    if (!entry?.runtime) return null;
+    if (entry.disposalTimer) {
+      clearTimeout(entry.disposalTimer);
+      entry.disposalTimer = undefined;
+    }
+    const token = ++entry.owner;
+    return this.lease(sessionId, entry, token, entry.runtime, true);
+  }
+
   async acquire(
     sessionId: string,
     create: () => Promise<LiveGridRuntime>,
@@ -96,4 +107,10 @@ export function acquireLiveGridRuntime(
   create: () => Promise<LiveGridRuntime>,
 ): Promise<LiveGridRuntimeLease> {
   return registry.acquire(sessionId, create);
+}
+
+export function acquireRetainedLiveGridRuntime(
+  sessionId: string,
+): LiveGridRuntimeLease | null {
+  return registry.acquireRetained(sessionId);
 }
