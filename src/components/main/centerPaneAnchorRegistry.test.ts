@@ -130,6 +130,8 @@ describe("CenterPaneAnchorRegistry", () => {
     handoffTarget.remove();
     capturedNewTarget.append(capturedInput);
     document.body.append(handoffInput);
+    const handoffReplacementTarget = connectedElement();
+    registry.register("center-pane:dir-1:session-b", handoffReplacementTarget);
 
     registry.restoreCapturedFocus(anchorId);
     registry.restoreCapturedFocus("center-pane:dir-1:session-b");
