@@ -3,6 +3,8 @@ import { onBeforeUnmount } from "vue";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { setSplitterDragging } from "@/composables/useTerminal";
 import { isLeaf, firstLeaf, nodeKey } from "@/lib/paneLayout";
+import { isCenterSessionPickerId } from "@/lib/centerSessionPicker";
+import { centerPaneAnchorId } from "@/lib/centerPanePlacement";
 import type { LayoutNode } from "@/types";
 import {
   ResizableHandle,
@@ -10,6 +12,8 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import TerminalPane from "./TerminalPane.vue";
+import CenterPaneAnchor from "./CenterPaneAnchor.vue";
+import CenterSplitSessionPicker from "./CenterSplitSessionPicker.vue";
 
 const props = defineProps<{
   node: LayoutNode;
@@ -27,6 +31,10 @@ const props = defineProps<{
   compact?: boolean;
   /** Forwarded to every pane: side-by-side splits only. */
   horizontalOnly?: boolean;
+  /** Resize a renderer-only center arrangement without persisting picker leaves. */
+  centerDisplay?: boolean;
+  /** Temporarily render center session leaves as persistent-pane anchors. */
+  persistentCenterPanes?: boolean;
 }>();
 
 const store = useWorkspaceStore();
@@ -37,6 +45,7 @@ let saveTimer: ReturnType<typeof setTimeout> | null = null;
 function onLayout(sizes: number[]) {
   if (isLeaf(props.node)) return;
   const k = nodeKey(props.node);
+  if (props.centerDisplay && store.setCenterDisplayArrangementSizes(props.scopeId, k, sizes)) return;
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => store.setArrangementSizes(props.scopeId, k, sizes), 400);
 }
@@ -47,8 +56,20 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
+  <CenterSplitSessionPicker
+    v-if="isLeaf(node) && isCenterSessionPickerId(node.pane)"
+    :directory-id="scopeId"
+    :picker-id="node.pane"
+    :source-session-id="store.centerSplitPickerSource(node.pane) ?? ''"
+    :reserve-right-overlay="reserveRightOverlay"
+    :reserve-left-overlay="reserveLeftOverlay"
+  />
+  <CenterPaneAnchor
+    v-else-if="isLeaf(node) && centerDisplay && persistentCenterPanes"
+    :anchor-id="centerPaneAnchorId(scopeId, node.pane)"
+  />
   <TerminalPane
-    v-if="isLeaf(node)"
+    v-else-if="isLeaf(node)"
     :pane-id="node.pane"
     :scope-id="scopeId"
     :focused-session-id="focusedSessionId"
@@ -87,6 +108,8 @@ onBeforeUnmount(() => {
           :end-mode="endMode"
           :compact="compact"
           :horizontal-only="horizontalOnly"
+          :center-display="centerDisplay"
+          :persistent-center-panes="persistentCenterPanes"
         />
       </ResizablePanel>
     </template>
