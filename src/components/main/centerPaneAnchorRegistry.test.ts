@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createCenterPaneAnchorRegistry } from "./centerPaneAnchorRegistry";
 
 const anchorId = "center-pane:dir-1:session-a";
@@ -11,6 +11,10 @@ function connectedElement(): HTMLDivElement {
 }
 
 describe("CenterPaneAnchorRegistry", () => {
+  afterEach(() => {
+    document.body.replaceChildren();
+  });
+
   it("registers and resolves an anchor target", () => {
     const registry = createCenterPaneAnchorRegistry();
     const element = connectedElement();
@@ -82,5 +86,95 @@ describe("CenterPaneAnchorRegistry", () => {
     expect(registry.revision.value).toBe(revisionAfterClear);
     first.remove();
     second.remove();
+  });
+
+  it("restores captured focus once after a replacement", () => {
+    const registry = createCenterPaneAnchorRegistry();
+    const oldTarget = connectedElement();
+    const newTarget = connectedElement();
+    const input = document.createElement("input");
+    oldTarget.append(input);
+    registry.register(anchorId, oldTarget);
+    input.focus();
+    const focus = vi.spyOn(input, "focus");
+
+    registry.register(anchorId, newTarget);
+    oldTarget.remove();
+    newTarget.append(input);
+
+    expect(document.activeElement).toBe(document.body);
+
+    registry.restoreCapturedFocus(anchorId);
+
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+    expect(document.activeElement).toBe(input);
+
+    input.blur();
+    registry.restoreCapturedFocus(anchorId);
+
+    expect(focus).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips disconnected captured focus", () => {
+    const registry = createCenterPaneAnchorRegistry();
+    const oldTarget = connectedElement();
+    const newTarget = connectedElement();
+    const input = document.createElement("input");
+    oldTarget.append(input);
+    registry.register(anchorId, oldTarget);
+    input.focus();
+    const focus = vi.spyOn(input, "focus");
+
+    registry.register(anchorId, newTarget);
+    oldTarget.remove();
+
+    registry.restoreCapturedFocus(anchorId);
+
+    expect(focus).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it("does not steal focus after a replacement", () => {
+    const registry = createCenterPaneAnchorRegistry();
+    const oldTarget = connectedElement();
+    const newTarget = connectedElement();
+    const input = document.createElement("input");
+    const otherInput = document.createElement("input");
+    oldTarget.append(input);
+    document.body.append(otherInput);
+    registry.register(anchorId, oldTarget);
+    input.focus();
+    const focus = vi.spyOn(input, "focus");
+
+    registry.register(anchorId, newTarget);
+    oldTarget.remove();
+    newTarget.append(input);
+    otherInput.focus();
+
+    registry.restoreCapturedFocus(anchorId);
+
+    expect(focus).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(otherInput);
+  });
+
+  it("discards focus when the current target is not replaced", async () => {
+    const registry = createCenterPaneAnchorRegistry();
+    const oldTarget = connectedElement();
+    const newTarget = connectedElement();
+    const input = document.createElement("input");
+    oldTarget.append(input);
+    registry.register(anchorId, oldTarget);
+    input.focus();
+    const focus = vi.spyOn(input, "focus");
+
+    registry.unregister(anchorId, oldTarget);
+    oldTarget.remove();
+    newTarget.append(input);
+    await Promise.resolve();
+
+    registry.restoreCapturedFocus(anchorId);
+
+    expect(focus).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(document.body);
   });
 });
