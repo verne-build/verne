@@ -42,6 +42,25 @@ describe("CenterPaneAnchorRegistry", () => {
     newElement.remove();
   });
 
+  it("keeps captured replacement focus when the old element unregisters later", () => {
+    const registry = createCenterPaneAnchorRegistry();
+    const oldTarget = connectedElement();
+    const newTarget = connectedElement();
+    const input = document.createElement("input");
+    oldTarget.append(input);
+    registry.register(anchorId, oldTarget);
+    input.focus();
+
+    registry.register(anchorId, newTarget);
+    registry.unregister(anchorId, oldTarget);
+    oldTarget.remove();
+    newTarget.append(input);
+
+    registry.restoreCapturedFocus(anchorId);
+
+    expect(document.activeElement).toBe(input);
+  });
+
   it("removes the current element and advances revision", () => {
     const registry = createCenterPaneAnchorRegistry();
     const element = connectedElement();
@@ -86,6 +105,37 @@ describe("CenterPaneAnchorRegistry", () => {
     expect(registry.revision.value).toBe(revisionAfterClear);
     first.remove();
     second.remove();
+  });
+
+  it("clears captured focus and handoff candidates", () => {
+    const registry = createCenterPaneAnchorRegistry();
+    const capturedOldTarget = connectedElement();
+    const capturedNewTarget = connectedElement();
+    const handoffTarget = connectedElement();
+    const capturedInput = document.createElement("input");
+    const handoffInput = document.createElement("input");
+    capturedOldTarget.append(capturedInput);
+    handoffTarget.append(handoffInput);
+    registry.register(anchorId, capturedOldTarget);
+    capturedInput.focus();
+    registry.register(anchorId, capturedNewTarget);
+    registry.register("center-pane:dir-1:session-b", handoffTarget);
+    handoffInput.focus();
+    registry.unregister("center-pane:dir-1:session-b", handoffTarget);
+    const capturedFocus = vi.spyOn(capturedInput, "focus");
+    const handoffFocus = vi.spyOn(handoffInput, "focus");
+
+    registry.clear();
+    capturedOldTarget.remove();
+    handoffTarget.remove();
+    capturedNewTarget.append(capturedInput);
+    document.body.append(handoffInput);
+
+    registry.restoreCapturedFocus(anchorId);
+    registry.restoreCapturedFocus("center-pane:dir-1:session-b");
+
+    expect(capturedFocus).not.toHaveBeenCalled();
+    expect(handoffFocus).not.toHaveBeenCalled();
   });
 
   it("restores captured focus once after a replacement", () => {
@@ -172,6 +222,26 @@ describe("CenterPaneAnchorRegistry", () => {
     newTarget.append(input);
     await Promise.resolve();
 
+    registry.restoreCapturedFocus(anchorId);
+
+    expect(focus).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it("discards captured replacement focus when the current target unregisters", () => {
+    const registry = createCenterPaneAnchorRegistry();
+    const oldTarget = connectedElement();
+    const newTarget = connectedElement();
+    const input = document.createElement("input");
+    oldTarget.append(input);
+    registry.register(anchorId, oldTarget);
+    input.focus();
+    registry.register(anchorId, newTarget);
+    const focus = vi.spyOn(input, "focus");
+
+    registry.unregister(anchorId, newTarget);
+    oldTarget.remove();
+    newTarget.append(input);
     registry.restoreCapturedFocus(anchorId);
 
     expect(focus).not.toHaveBeenCalled();
