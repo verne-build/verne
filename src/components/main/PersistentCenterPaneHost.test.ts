@@ -9,11 +9,31 @@ import {
   type CenterPaneAnchorRegistry,
 } from "./centerPaneAnchorRegistry";
 
+const nextTickControl = vi.hoisted(() => ({
+  intercept: false,
+  flushVue: null as null | (() => Promise<void>),
+  pending: [] as Array<() => void>,
+}));
+
 const terminalLifecycle = vi.hoisted(() => ({
   mountOrder: [] as string[],
   mounts: new Map<string, number>(),
   unmounts: new Map<string, number>(),
 }));
+
+vi.mock("vue", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("vue")>();
+  nextTickControl.flushVue = () => actual.nextTick();
+  return {
+    ...actual,
+    nextTick: <T>(callback?: () => T) => {
+      if (!nextTickControl.intercept) return actual.nextTick(callback);
+      return new Promise<T | void>((resolve) => {
+        nextTickControl.pending.push(() => resolve(callback?.()));
+      });
+    },
+  };
+});
 
 vi.mock("./TerminalPane.vue", async () => {
   const { defineComponent, h, onMounted, onUnmounted, ref } = await import("vue");
@@ -95,6 +115,8 @@ describe("PersistentCenterPaneHost", () => {
   const harnesses: Harness[] = [];
 
   beforeEach(() => {
+    nextTickControl.intercept = false;
+    nextTickControl.pending.length = 0;
     terminalLifecycle.mountOrder.length = 0;
     terminalLifecycle.mounts.clear();
     terminalLifecycle.unmounts.clear();
@@ -139,6 +161,19 @@ describe("PersistentCenterPaneHost", () => {
     const harness = { app, host, placements, registry };
     harnesses.push(harness);
     return harness;
+  }
+
+  async function flushVue(): Promise<void> {
+    if (!nextTickControl.flushVue) throw new Error("Missing real Vue nextTick");
+    await nextTickControl.flushVue();
+  }
+
+  async function resolveNextHostTick(): Promise<void> {
+    const resolve = nextTickControl.pending.shift();
+    if (!resolve) throw new Error("Missing pending host nextTick");
+    resolve();
+    await Promise.resolve();
+    await Promise.resolve();
   }
 
   it("mounts one terminal per depth-first placement and updates non-identity props in place", async () => {
@@ -248,22 +283,55 @@ describe("PersistentCenterPaneHost", () => {
     expect(terminalLifecycle.mounts.get("session-a")).toBe(1);
   });
 
-  it("cancels stale missing-target and focus work when a placement is replaced", async () => {
+  it("cancels an enqueued focus restore across an A-B-A placement replacement", async () => {
     const registry = createCenterPaneAnchorRegistry();
     const restoreCapturedFocus = vi.spyOn(registry, "restoreCapturedFocus");
-    const targetA = registerTarget(registry, anchorA);
-    const { host, placements } = mount([placement("session-a", anchorA)], registry);
+    registerTarget(registry, anchorA);
+    registerTarget(registry, anchorB);
+    const { placements } = mount([placement("session-a", anchorA)], registry);
     await nextTick();
 
-    registry.unregister(anchorA, targetA);
-    targetA.remove();
+    nextTickControl.intercept = true;
+    replaceTarget(registry, anchorA);
+    await flushVue();
+
+    expect(nextTickControl.pending).toHaveLength(1);
+
     placements.value = [placement("session-b", anchorB)];
+    await flushVue();
+    placements.value = [placement("session-a", anchorA)];
+    await flushVue();
+    await resolveNextHostTick();
+
+    expect(restoreCapturedFocus).not.toHaveBeenCalledWith(anchorA);
+  });
+
+  it("cancels an enqueued missing-target retry across an A-B-A placement replacement", async () => {
+    const registry = createCenterPaneAnchorRegistry();
     registerTarget(registry, anchorB);
-    await nextTick();
-    await nextTick();
+    nextTickControl.intercept = true;
+    const { host, placements } = mount([placement("session-a", anchorA)], registry);
+
+    expect(nextTickControl.pending).toHaveLength(1);
+
+    placements.value = [placement("session-b", anchorB)];
+    await flushVue();
+    placements.value = [placement("session-a", anchorA)];
+    await flushVue();
+
+    expect(nextTickControl.pending).toHaveLength(2);
+
+    await resolveNextHostTick();
+    await flushVue();
 
     expect(host.textContent).not.toContain(anchorA);
-    expect(restoreCapturedFocus).not.toHaveBeenCalledWith(anchorA);
+    expect(host.querySelector("[role='status']")).toBeNull();
+
+    await resolveNextHostTick();
+    await flushVue();
+
+    expect(host.querySelector("[role='status']")?.textContent)
+      .toBe(`Terminal pane unavailable: ${anchorA}`);
   });
 
   it("unmounts a removed session exactly once while retaining its sibling", async () => {
