@@ -14,4 +14,13 @@ export const PANEL_SIZES = {
     max: 600,
     defaults: { explorer: 200, changes: 200, history: 200, notes: 200, search: 200 },
   },
+  /** Narrow right panel: sidebars leave the layout flow and float over content. */
+  overlay: {
+    /** Content floor — a unified diff at ~80 cols, or a usable Monaco. */
+    contentMin: 480,
+    /** Band that must be cleared to re-dock, so dragging the edge can't flicker. */
+    hysteresis: 48,
+    /** Strip of content an overlay never covers. */
+    peek: 48,
+  },
 } as const;
