@@ -9,6 +9,9 @@ import { Button } from "./ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 
 const props = defineProps<{ scopeKey: string; rootDir: string }>();
+// Click is the selection trigger, not the resulting state change — picking the
+// already-selected result produces no watch-visible change, so emit here too.
+const emit = defineEmits<{ "open-result": [] }>();
 
 const scopeKeyRef = toRef(props, "scopeKey");
 const {
@@ -238,7 +241,7 @@ onBeforeUnmount(() => {
                 :class="selected && searchMatchKey(selected) === searchMatchKey(m)
                   ? 'bg-[var(--color-tab-active-bg)] text-[var(--color-foreground)] hover:bg-[var(--color-tab-active-bg)]'
                   : 'hover:bg-[color-mix(in_oklch,var(--color-border)_25%,transparent)]'"
-                @click="selected = m"
+                @click="selected = m; emit('open-result')"
               >
                 <span class="flex min-w-0 max-w-full items-baseline overflow-hidden font-mono">
                   <span class="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-right [direction:rtl]">

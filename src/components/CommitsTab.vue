@@ -98,7 +98,7 @@ onUnmounted(() => {
             :active-rel-path="selection?.relPath ?? null"
             :active-commit-id="selection?.commitId ?? null"
             class="h-full"
-            @open-diff="(f, c, s) => emit('open-diff', f, c, s)"
+            @open-diff="(f, c, s) => { commitsList.dismissOverlay(); emit('open-diff', f, c, s); }"
           />
         </template>
         <template #content>

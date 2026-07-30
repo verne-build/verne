@@ -3,6 +3,7 @@ const KEYS = {
   // v2: schema changed from VS Code theme JSON to VerneTheme shape.
   theme: "verne.theme.active.v2",
   panelLeft: "verne.panel.left",
+  // legacy right-panel percent — kept only so reset purges stale values
   panelRight: "verne.panel.right",
   panelExplorer: "verne.panel.explorer",
   panelScList: "verne.panel.scList",
@@ -105,7 +106,6 @@ export function writeCachedTheme(theme: CachedTheme): void {
 
 export interface CachedPanelState {
   left: number | null;
-  right: number | null;
   explorer: number | null;
   scList: number | null;
   commitsList: number | null;
@@ -132,7 +132,6 @@ function parseFiniteNumber(raw: string | null): number | null {
 export function readCachedPanelState(): CachedPanelState {
   return {
     left: parseFiniteNumber(safeGet(KEYS.panelLeft)),
-    right: parseFiniteNumber(safeGet(KEYS.panelRight)),
     explorer: parseFiniteNumber(safeGet(KEYS.panelExplorer)),
     scList: parseFiniteNumber(safeGet(KEYS.panelScList)),
     commitsList: parseFiniteNumber(safeGet(KEYS.panelCommitsList)),
@@ -150,19 +149,6 @@ export function readCachedPanelState(): CachedPanelState {
     scListVisible: safeGet(KEYS.scListVisible) !== "false",
     commitsListVisible: safeGet(KEYS.commitsListVisible) !== "false",
   };
-}
-
-export function writeCachedPanelSize(
-  which: "left" | "right" | "explorer" | "scList" | "commitsList",
-  value: number,
-): void {
-  const key =
-    which === "left" ? KEYS.panelLeft :
-    which === "right" ? KEYS.panelRight :
-    which === "explorer" ? KEYS.panelExplorer :
-    which === "scList" ? KEYS.panelScList :
-    KEYS.panelCommitsList;
-  safeSet(key, String(value));
 }
 
 export function writeCachedPanelPx(

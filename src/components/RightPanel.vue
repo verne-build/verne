@@ -5,6 +5,7 @@ import { useFilePanelTabs, type ScSelection, type CommitsSelection } from "@/com
 import { useRpc } from "@/composables/useRpc";
 import FileTabBar from "./FileTabBar.vue";
 import SearchPreview from "./SearchPreview.vue";
+import SearchPreviewHeader from "./SearchPreviewHeader.vue";
 // Async so Milkdown/ProseMirror only loads when the notes tab is opened.
 const NotesPanel = defineAsyncComponent(() => import("./NotesPanel.vue"));
 const SearchPanel = defineAsyncComponent(() => import("./SearchPanel.vue"));
@@ -430,6 +431,7 @@ function revertScFile() {
                 :scope-key="scopeKey"
                 :root-dir="rootDir"
                 class="h-full"
+                @open-result="search.dismissOverlay()"
               />
             </template>
             <template #content>
@@ -441,9 +443,8 @@ function revertScFile() {
                 @update:list-visible="search.open.value = $event"
               />
               <div v-else class="flex h-full flex-col bg-sidebar">
-                <SearchPreview
+                <SearchPreviewHeader
                   :match="null"
-                  :root-dir="rootDir"
                   :list-visible="search.open.value"
                   @update:list-visible="search.open.value = $event"
                 />

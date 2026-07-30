@@ -116,7 +116,7 @@ onUnmounted(() => {
             :comment-counts="commentCounts"
             class="h-full"
             @open-file="emit('open-file', $event)"
-            @open-diff="(r, s) => emit('open-diff', r, s)"
+            @open-diff="(r, s) => { scList.dismissOverlay(); emit('open-diff', r, s); }"
             @discard="emit('discard', $event)"
             @status-changed="emit('status-changed', $event)"
           />

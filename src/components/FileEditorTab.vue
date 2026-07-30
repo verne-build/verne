@@ -279,7 +279,7 @@ watch(() => props.activeFilePath, () => props.explorer.dismissOverlay());
             v-if="rootDir"
             :working-dir="rootDir"
             :active-file-path="activeFilePath"
-            @open-file="(p, perm) => emit('open-file', p, !!perm)"
+            @open-file="(p, perm) => { props.explorer.dismissOverlay(); emit('open-file', p, !!perm); }"
             @file-deleted="(path: string) => emit('close-tab', path)"
           />
         </template>

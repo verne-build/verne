@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from "vue";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "./ui/resizable";
 import { PANEL_SIZES } from "@/lib/panelSizes";
 import { overlayWidth } from "@/lib/overlaySidebar";
@@ -31,8 +31,11 @@ const sidebarStyle = computed(() =>
 );
 
 function onKeydown(e: KeyboardEvent) {
+  // No stopPropagation: the scrim already makes the overlay modal within the
+  // panel, and reka's DismissableLayer (command palette, dialogs) listens on
+  // document in the bubble phase — swallowing it here would dismiss a hidden
+  // overlay instead of letting the visible dialog close.
   if (e.key === "Escape" && props.state.overlayMode.value && props.state.overlayOpen.value) {
-    e.stopPropagation();
     props.state.dismissOverlay();
   }
 }
@@ -46,11 +49,31 @@ watch(
     else window.removeEventListener("keydown", onKeydown, true);
   },
 );
-onMounted(() => {
+function addListenerIfOpen() {
   if (props.state.overlayMode.value && props.state.overlayOpen.value)
     window.addEventListener("keydown", onKeydown, true);
-});
+}
+onMounted(addListenerIfOpen);
 onUnmounted(() => window.removeEventListener("keydown", onKeydown, true));
+// This component lives inside a KeepAlive (FileEditorTab): switching tabs
+// deactivates rather than unmounts it, so the listener must follow real
+// activity or it leaks live behind a KeepAlive'd, hidden overlay.
+onDeactivated(() => window.removeEventListener("keydown", onKeydown, true));
+onActivated(addListenerIfOpen);
+
+// Dismiss (Esc/scrim/pick) hides the sidebar via transform+visibility, but
+// leaves focus stranded inside it — move focus out so Tab/arrows don't keep
+// driving the now-invisible tree.
+const sidebarContentEl = ref<HTMLElement | null>(null);
+watch(
+  () => props.state.overlayMode.value && props.state.overlayOpen.value,
+  (open) => {
+    if (open) return;
+    const el = sidebarContentEl.value;
+    const active = document.activeElement;
+    if (el && active instanceof HTMLElement && el.contains(active)) active.blur();
+  },
+);
 </script>
 
 <template>
@@ -74,7 +97,9 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown, true));
         :style="sidebarStyle"
         @collapse="preventDragCollapse"
       >
-        <slot name="sidebar" />
+        <div ref="sidebarContentEl" class="contents">
+          <slot name="sidebar" />
+        </div>
       </ResizablePanel>
       <ResizableHandle class="overlay-handle cursor-ew-resize" @dragging="splitDragging = $event" />
       <ResizablePanel :min-size="20" class="overlay-content">
@@ -112,6 +137,11 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown, true));
 .overlay-mode.overlay-closed :deep(.overlay-sidebar) {
   transform: translateX(-100%);
   pointer-events: none;
+  /* Delay past the slide-out so it still animates, then drop it from the tab
+     order and a11y tree — otherwise focus/arrow keys keep driving the hidden
+     tree and Tab from the header walks into it. */
+  transition: transform 150ms ease, visibility 0s linear 150ms;
+  visibility: hidden;
 }
 
 .overlay-mode :deep(.overlay-content) {
