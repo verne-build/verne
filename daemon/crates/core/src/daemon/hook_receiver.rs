@@ -348,8 +348,19 @@ async fn handle_connection(
         }
     }
 
+    // A subagent of the tab's own agent. Same binary, same tab, same session id
+    // — only the agent path separates them — so `is_nested_agent` (which keys
+    // off agent TYPE) cannot see it. Its lifecycle is not the tab's: a
+    // subagent's permission request must not block the tab and its prompt must
+    // not retitle it. File-ops still apply: the edits are real and land in the
+    // tab's worktree.
+    let subagent = codex_subagent_path(&agent_type, &payload);
+    if let Some(path) = subagent.as_deref() {
+        log::info!("[hook] event={event} agent={agent_type} subagent={path} — state/title skipped");
+    }
+
     // Tab-keyed routing
-    if !event.is_empty() {
+    if !event.is_empty() && subagent.is_none() {
         let session_id = payload
             .get("session_id")
             .and_then(|v| v.as_str())
@@ -398,6 +409,12 @@ async fn handle_connection(
                         if current_block_gen(&tab) != gen {
                             return; // superseded by a newer event
                         }
+                        if screen_contradicts_block(&sessions, &tab, &agent_type) {
+                            log::info!(
+                                "[hook] blocked dropped tab={tab} agent={agent_type} — screen shows the agent still running"
+                            );
+                            return;
+                        }
                         apply_hook_report(
                             &sessions,
                             &event_bus,
@@ -438,7 +455,7 @@ async fn handle_connection(
     // Generated titles: hand the raw prompt to Electron main, which owns the
     // subprocess + the DB. Tab-keyed, so a hook with no X-Verne-Tab-Id is dropped.
     if let Some(tab_id) = tab_id_header.as_deref().filter(|s| !s.is_empty()) {
-        if wants_generated_title(&agent_type, &event) {
+        if subagent.is_none() && wants_generated_title(&agent_type, &event) {
             if let Some(prompt) = hook_prompt_text(&agent_type, &payload) {
                 event_bus.emit(
                     "agent-title-requested",
@@ -499,6 +516,62 @@ fn is_nested_agent(
         .unwrap_or(false)
 }
 
+/// The codex subagent path this hook came from, or None for the tab's own agent.
+///
+/// Codex addresses agents by canonical path — the main agent is `/root`, the
+/// ones it spawns `/root/<task>` (deeper again for their own children) — and
+/// carries it as `agent_id`. It is optional on the tool/permission events
+/// (omitted for the main agent) and required on `Stop`/`Subagent*`, where the
+/// main agent reports `/root`. Everything else is a subagent.
+///
+/// This is the only discriminator available: codex subagents are separate
+/// concurrent threads running the same binary, inheriting `VERNE_TAB_ID` and
+/// reporting the parent's `session_id`.
+///
+/// Codex-only on purpose. `agent_id` is not a shared convention — claude puts
+/// the SESSION id there for its main loop (its own discriminator is
+/// `agent_type: "main" | "subagent"`), so a generic reading would classify
+/// every claude hook as a subagent. Claude also does not want this filter:
+/// its subagents run inside the one session, so a tool of theirs blocking on
+/// permission really does block the tab.
+fn codex_subagent_path(agent_type: &str, payload: &serde_json::Value) -> Option<String> {
+    if agent_type != "codex" {
+        return None;
+    }
+    let raw = payload.get("agent_id")?.as_str()?.trim();
+    let path = raw.trim_end_matches('/');
+    let is_root = path.is_empty() || path == "/root" || path == "root";
+    (!is_root).then(|| path.to_string())
+}
+
+/// The screen contradicts a pending hook Blocked: a live interrupt affordance
+/// (or the auto-review banner) and no rendered prompt. Codex fires
+/// PermissionRequest even when nothing is asked of the user — an automated
+/// reviewer (`approvals_reviewer`) resolves it, and its subagents fire it on
+/// the parent's tab — so the debounce expires and a spurious Blocked (plus its
+/// notification) commits. A genuine block always renders a prompt, and the
+/// screen path in `AgentStatusEngine::observe` commits Blocked on its own if
+/// one appears later, so requiring one here costs nothing.
+fn screen_contradicts_block(
+    sessions: &Arc<Mutex<SessionManager>>,
+    tab_id: &str,
+    agent_type: &str,
+) -> bool {
+    sessions
+        .lock()
+        .ok()
+        .and_then(|manager| {
+            let session = manager.get_session_by_agent(tab_id)?;
+            let screen = session.emulator.lock().ok()?.screen_text();
+            let detection = crate::services::agent_registry::detect(agent_type, &screen);
+            Some(
+                (detection.visible_working || detection.review_in_progress)
+                    && !detection.visible_blocker,
+            )
+        })
+        .unwrap_or(false)
+}
+
 fn apply_hook_report(
     sessions: &Arc<Mutex<SessionManager>>,
     event_bus: &EventBus,
@@ -546,6 +619,50 @@ fn apply_hook_report(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codex_main_agent_payloads_are_not_subagents() {
+        // Tool/permission events omit agent_id for the main agent; Stop and
+        // Subagent* require it and the main agent reports `/root`.
+        for payload in [
+            serde_json::json!({}),
+            serde_json::json!({ "agent_id": "/root" }),
+            serde_json::json!({ "agent_id": "/root/" }),
+            serde_json::json!({ "agent_id": "" }),
+        ] {
+            assert_eq!(codex_subagent_path("codex", &payload), None, "{payload}");
+        }
+    }
+
+    #[test]
+    fn codex_subagent_payloads_report_their_path() {
+        assert_eq!(
+            codex_subagent_path(
+                "codex",
+                &serde_json::json!({ "agent_id": "/root/task3_verification" })
+            )
+            .as_deref(),
+            Some("/root/task3_verification")
+        );
+        // Grandchildren nest deeper.
+        assert_eq!(
+            codex_subagent_path("codex", &serde_json::json!({ "agent_id": "/root/task1/task_3" }))
+                .as_deref(),
+            Some("/root/task1/task_3")
+        );
+    }
+
+    #[test]
+    fn other_agents_are_never_read_as_codex_subagents() {
+        // claude puts the SESSION id in agent_id for its main loop, so reading
+        // the field generically would drop every claude hook.
+        let payload = serde_json::json!({
+            "agent_id": "8f1c0f0e-2f4a-4a1e-9b6e-0f4b2a1d3c5e",
+            "agent_type": "main",
+            "session_id": "8f1c0f0e-2f4a-4a1e-9b6e-0f4b2a1d3c5e",
+        });
+        assert_eq!(codex_subagent_path("claude", &payload), None);
+    }
 
     #[test]
     fn extracts_codex_prompt_title() {

@@ -285,6 +285,43 @@ impl AgentStatusEngine {
             return self.commit(next, observation.observed_at);
         }
 
+        // Stale hook Blocked contradicted by the screen. A permission hook is
+        // not guaranteed a clearing counterpart: codex fires PermissionRequest
+        // for requests an automated reviewer (`approvals_reviewer`) resolves
+        // without ever prompting, and its subagents fire it on the parent tab.
+        // If the screen carries a live interrupt affordance and no prompt, the
+        // agent is running — otherwise the tab sits Blocked until the next
+        // hook, which never comes while the parent waits on subagents.
+        if self.effective.agent_state == AgentState::Blocked
+            && next.visible_working
+            && !next.visible_blocker
+            && !observation.detection.skip_state_update
+            && !codex_work_locked
+        {
+            self.idle_confirmations = 0;
+            next.agent_state = AgentState::Working;
+            next.source = AgentStatusSource::Screen;
+            next.confidence = 85;
+            return self.commit(next, observation.observed_at);
+        }
+
+        // Converse of the release above: a rendered prompt commits Blocked even
+        // under hook authority. Keeps the screen a safety net when the hook
+        // Blocked was suppressed (see `screen_contradicts_block` in the hook
+        // receiver) or lost.
+        if self.effective.agent_state != AgentState::Blocked
+            && next.visible_blocker
+            && !observation.detection.skip_state_update
+            && !output_active
+            && !input_tainted
+        {
+            self.idle_confirmations = 0;
+            next.agent_state = AgentState::Blocked;
+            next.source = AgentStatusSource::Screen;
+            next.confidence = 90;
+            return self.commit(next, observation.observed_at);
+        }
+
         // A complete lifecycle integration remains authoritative until process
         // exit. The only local override is an explicit interrupt followed by a
         // quiet, structurally idle screen (agents do not reliably emit Stop for
@@ -741,6 +778,59 @@ mod tests {
         let out = engine.observe(obs).expect("state should change");
         assert_eq!(out.agent_state, AgentState::Idle);
         assert_eq!(out.source, AgentStatusSource::Screen);
+    }
+
+    #[test]
+    fn visible_working_screen_releases_stale_hook_block() {
+        // codex PermissionRequest → Blocked, resolved by the automated reviewer
+        // (or fired by a subagent) so no clearing hook ever arrives. The screen
+        // still shows "esc to interrupt" — the tab must not sit Blocked.
+        let mut engine = AgentStatusEngine::default();
+        let mut prompt = codex_hook(1, Some(AgentState::Working));
+        prompt.user_prompt_submitted = true;
+        engine.apply_hook(prompt);
+        engine.apply_hook(codex_hook(2, Some(AgentState::Blocked)));
+        assert_eq!(engine.snapshot().agent_state, AgentState::Blocked);
+
+        let mut obs = codex_observation(10_000);
+        obs.detection = AgentDetection::from_state(AgentState::Working);
+        engine.observe(obs);
+        assert_eq!(engine.snapshot().agent_state, AgentState::Working);
+        assert_eq!(engine.snapshot().source, AgentStatusSource::Screen);
+        assert!(!engine.snapshot().visible_blocker);
+    }
+
+    #[test]
+    fn rendered_prompt_still_holds_the_block() {
+        // Same hook Blocked, but the approval prompt IS on screen — the release
+        // must not fire.
+        let mut engine = AgentStatusEngine::default();
+        let mut prompt = codex_hook(1, Some(AgentState::Working));
+        prompt.user_prompt_submitted = true;
+        engine.apply_hook(prompt);
+        engine.apply_hook(codex_hook(2, Some(AgentState::Blocked)));
+
+        let mut obs = codex_observation(10_000);
+        obs.detection = AgentDetection::from_state(AgentState::Blocked);
+        engine.observe(obs);
+        assert_eq!(engine.snapshot().agent_state, AgentState::Blocked);
+    }
+
+    #[test]
+    fn screen_prompt_commits_block_under_hook_authority() {
+        // The hook Blocked was suppressed (screen showed no prompt at debounce
+        // time). When the prompt does render, the screen must still block.
+        let mut engine = AgentStatusEngine::default();
+        let mut prompt = codex_hook(1, Some(AgentState::Working));
+        prompt.user_prompt_submitted = true;
+        engine.apply_hook(prompt);
+        assert_eq!(engine.snapshot().agent_state, AgentState::Working);
+
+        let mut obs = codex_observation(10_000);
+        obs.detection = AgentDetection::from_state(AgentState::Blocked);
+        engine.observe(obs);
+        assert_eq!(engine.snapshot().agent_state, AgentState::Blocked);
+        assert_eq!(engine.snapshot().source, AgentStatusSource::Screen);
     }
 
     #[test]
