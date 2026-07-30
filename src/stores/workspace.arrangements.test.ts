@@ -304,6 +304,7 @@ describe("workspace store arrangement writes (slice 2: arrangements own writes)"
     appState.clear();
     for (const k of Object.keys(tabsListByDir)) delete tabsListByDir[k];
     setFailArrangementGets(0);
+    tabsCreateCalls.length = 0;
   });
 
   it("newSession writes a solo layout for the new tab", async () => {
@@ -406,6 +407,223 @@ describe("workspace store arrangement writes (slice 2: arrangements own writes)"
     const tab = await store.newSession("dir-1");
     expect(store.arrangementFor("dir-1")).toEqual({ version: 1, layout: { pane: tab.id } });
     expect(store.arrangementFor("no-such-dir")).toBeNull();
+  });
+
+  describe("center split picker", () => {
+    beforeEach(() => {
+      const store = useWorkspaceStore();
+      store.directories.push({
+        id: "dir-1",
+        path: "/repo",
+        name: "Repo",
+        createdAt: 0,
+        sortOrder: 0,
+      });
+    });
+
+    it("opens a transient split without creating or persisting a tab", async () => {
+      const store = useWorkspaceStore();
+      const tab1 = await store.newSession("dir-1", { cwd: "/repo" });
+      const createCount = tabsCreateCalls.length;
+      setAppStateCalls.length = 0;
+
+      const pickerId = store.openCenterSplitPicker(tab1.id, "h");
+
+      expect(pickerId).toMatch(/^center-picker:/);
+      expect(tabsCreateCalls).toHaveLength(createCount);
+      expect(store.terminalTabsByDirectory["dir-1"]).toHaveLength(1);
+      expect(collectPaneIds(store.centerDisplayArrangementFor("dir-1")!.layout)).toEqual([
+        tab1.id,
+        pickerId,
+      ]);
+      expect(collectPaneIds(store.arrangementFor("dir-1")!.layout)).toEqual([tab1.id]);
+      expect(lastArrangementWrite()).toBeUndefined();
+      expect(store.centerSplitPickerSource(pickerId!)).toBe(tab1.id);
+    });
+
+    it("cancels the keyed picker and collapses its transient split", async () => {
+      const store = useWorkspaceStore();
+      const tab1 = await store.newSession("dir-1");
+      const pickerId = store.openCenterSplitPicker(tab1.id, "h")!;
+
+      store.cancelCenterSplitPicker("dir-1", pickerId);
+
+      expect(store.centerDisplayArrangementFor("dir-1")).toEqual({
+        version: 1,
+        layout: { pane: tab1.id },
+      });
+      expect(store.centerSplitPickerSource(pickerId)).toBeNull();
+    });
+
+    it("starts a selected agent in the source cwd and replaces the picker", async () => {
+      const store = useWorkspaceStore();
+      const tab1 = await store.newSession("dir-1", { cwd: "/repo/subdir" });
+      const pickerId = store.openCenterSplitPicker(tab1.id, "v", true)!;
+      const agentLaunch = {
+        agentType: "claude" as const,
+        modelId: "opus",
+        effort: "high",
+        fast: true,
+      };
+
+      const tab2 = await store.startCenterSplitPicker({
+        directoryId: "dir-1",
+        pickerId,
+        sourceSessionId: tab1.id,
+        agentLaunch,
+      });
+
+      expect(tabsCreateCalls.at(-1)).toEqual({
+        directoryId: "dir-1",
+        cwd: "/repo/subdir",
+        label: "2",
+        agentLaunch,
+      });
+      expect(collectPaneIds(store.arrangementFor("dir-1")!.layout)).toEqual([tab2.id, tab1.id]);
+      expect(store.centerDisplayArrangementFor("dir-1")).toEqual(store.arrangementFor("dir-1"));
+      expect(store.centerSplitPickerSource(pickerId)).toBeNull();
+    });
+
+    it("leaves the picker and tab list untouched when tab creation fails", async () => {
+      const store = useWorkspaceStore();
+      const tab1 = await store.newSession("dir-1");
+      const pickerId = store.openCenterSplitPicker(tab1.id, "h")!;
+      const before = store.centerDisplayArrangementFor("dir-1");
+      rpc.tabsCreate.mockRejectedValueOnce(new Error("spawn failed"));
+
+      await expect(store.startCenterSplitPicker({
+        directoryId: "dir-1",
+        pickerId,
+        sourceSessionId: tab1.id,
+      })).rejects.toThrow("spawn failed");
+
+      expect(store.terminalTabsByDirectory["dir-1"]).toEqual([tab1]);
+      expect(store.centerDisplayArrangementFor("dir-1")).toEqual(before);
+      expect(store.centerSplitPickerSource(pickerId)).toBe(tab1.id);
+    });
+
+    it("keeps a second picker open after replacing the first", async () => {
+      const store = useWorkspaceStore();
+      const tab1 = await store.newSession("dir-1");
+      const first = store.openCenterSplitPicker(tab1.id, "h")!;
+      const second = store.openCenterSplitPicker(tab1.id, "v")!;
+
+      const tab2 = await store.startCenterSplitPicker({
+        directoryId: "dir-1",
+        pickerId: first,
+        sourceSessionId: tab1.id,
+      });
+
+      expect(collectPaneIds(store.centerDisplayArrangementFor("dir-1")!.layout)).toEqual([
+        tab1.id,
+        second,
+        tab2.id,
+      ]);
+      expect(collectPaneIds(store.arrangementFor("dir-1")!.layout)).toEqual([tab1.id, tab2.id]);
+      expect(store.centerSplitPickerSource(second)).toBe(tab1.id);
+    });
+
+    it("does not overwrite newer layout state when its picker disappears while creating", async () => {
+      const store = useWorkspaceStore();
+      const tab1 = await store.newSession("dir-1");
+      const pickerId = store.openCenterSplitPicker(tab1.id, "h")!;
+      const deferred = queueTabsCreateDeferred();
+
+      const creating = store.startCenterSplitPicker({
+        directoryId: "dir-1",
+        pickerId,
+        sourceSessionId: tab1.id,
+      });
+      store.writeArrangement("dir-1", { version: 1, layout: { pane: tab1.id } });
+      deferred.resolve();
+      const tab2 = await creating;
+
+      expect(store.terminalTabsByDirectory["dir-1"]).toEqual([tab1, tab2]);
+      expect(store.arrangementFor("dir-1")).toEqual({ version: 1, layout: { pane: tab1.id } });
+      expect(store.centerDisplayArrangementFor("dir-1")).toEqual(store.arrangementFor("dir-1"));
+    });
+
+    it("deduplicates launch and ignores cancellation while a picker is starting", async () => {
+      const store = useWorkspaceStore();
+      const tab1 = await store.newSession("dir-1");
+      const pickerId = store.openCenterSplitPicker(tab1.id, "h")!;
+      const deferred = queueTabsCreateDeferred();
+      const callsBefore = tabsCreateCalls.length;
+      const input = {
+        directoryId: "dir-1",
+        pickerId,
+        sourceSessionId: tab1.id,
+      };
+
+      const first = store.startCenterSplitPicker(input);
+      const second = store.startCenterSplitPicker(input);
+      store.cancelCenterSplitPicker("dir-1", pickerId);
+
+      expect(store.isCenterSplitPickerLaunching(pickerId)).toBe(true);
+      expect(tabsCreateCalls).toHaveLength(callsBefore + 1);
+      expect(store.centerSplitPickerSource(pickerId)).toBe(tab1.id);
+      deferred.resolve();
+      const [firstTab, secondTab] = await Promise.all([first, second]);
+
+      expect(secondTab).toBe(firstTab);
+      expect(store.isCenterSplitPickerLaunching(pickerId)).toBe(false);
+      expect(store.terminalTabsByDirectory["dir-1"]).toHaveLength(2);
+    });
+
+    it("does not resurrect a directory removed while tab creation is pending", async () => {
+      const store = useWorkspaceStore();
+      const tab1 = await store.newSession("dir-1");
+      const pickerId = store.openCenterSplitPicker(tab1.id, "h")!;
+      const deferred = queueTabsCreateDeferred();
+      const creating = store.startCenterSplitPicker({
+        directoryId: "dir-1",
+        pickerId,
+        sourceSessionId: tab1.id,
+      });
+
+      await store.deleteDirectory("dir-1");
+      deferred.resolve();
+
+      await expect(creating).rejects.toThrow("Workspace is no longer available");
+      expect(store.terminalTabsByDirectory["dir-1"]).toBeUndefined();
+      expect(tabsClosedIds).toHaveLength(1);
+    });
+
+    it("keeps picker resize state transient and persists it only after replacement", async () => {
+      const store = useWorkspaceStore();
+      const tab1 = await store.newSession("dir-1");
+      const pickerId = store.openCenterSplitPicker(tab1.id, "h")!;
+      const display = store.centerDisplayArrangementFor("dir-1")!;
+      setAppStateCalls.length = 0;
+
+      store.setCenterDisplayArrangementSizes("dir-1", nodeKey(display.layout), [30, 70]);
+
+      expect(lastArrangementWrite()).toBeUndefined();
+      expect((store.centerDisplayArrangementFor("dir-1")!.layout as { sizes: number[] }).sizes)
+        .toEqual([30, 70]);
+
+      await store.startCenterSplitPicker({
+        directoryId: "dir-1",
+        pickerId,
+        sourceSessionId: tab1.id,
+      });
+
+      expect(parsedArrangement("dir-1").layout.sizes).toEqual([30, 70]);
+    });
+
+    it("dismisses stale pickers when a normal center arrangement write wins", async () => {
+      const store = useWorkspaceStore();
+      const tab1 = await store.newSession("dir-1");
+      const pickerId = store.openCenterSplitPicker(tab1.id, "h")!;
+
+      store.writeArrangement("dir-1", { version: 1, layout: { pane: tab1.id } });
+
+      expect(store.centerDisplayArrangementFor("dir-1")).toEqual({
+        version: 1,
+        layout: { pane: tab1.id },
+      });
+      expect(store.centerSplitPickerSource(pickerId)).toBeNull();
+    });
   });
 
   it("concurrent newSession calls in one directory both land (no lost update)", async () => {

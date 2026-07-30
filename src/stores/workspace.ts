@@ -52,6 +52,14 @@ import {
   serializeArrangementMap,
   type Arrangement,
 } from "@/lib/arrangement";
+import {
+  containsCenterSessionPicker,
+  insertCenterSessionPicker,
+  newCenterSessionPickerId,
+  persistedCenterArrangement,
+  removeCenterSessionPicker,
+  replaceCenterSessionPicker,
+} from "@/lib/centerSessionPicker";
 
 const LSP_LANGUAGES = ["typescript"];
 
@@ -237,6 +245,10 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   // write model for "what panes are visible and how" — groups (below) are
   // read-only, kept only for the one-time migration.
   const arrangementByScope = ref<Record<string, Arrangement>>({});
+  const centerDisplayArrangementByDirectory = ref<Record<string, Arrangement>>({});
+  const centerSplitPickerSourceById = new Map<string, string>();
+  const centerSplitPickerLaunchById = ref<Record<string, boolean>>({});
+  const centerSplitPickerLaunchPromiseById = new Map<string, Promise<Tab>>();
   let arrangementsHydrated: Promise<void> | null = null;
   // Until a hydrate has succeeded once, ensureLayoutModel2 must not persist
   // prune/backfill writes — a transient boot failure would otherwise persist a
@@ -261,7 +273,21 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     return arrangementByScope.value[scopeId] ?? null;
   }
 
-  function writeArrangement(scopeId: string, arr: Arrangement | null) {
+  function clearCenterDisplayArrangement(directoryId: string): void {
+    const current = centerDisplayArrangementByDirectory.value[directoryId];
+    if (!current) return;
+    for (const id of collectPaneIds(current.layout)) centerSplitPickerSourceById.delete(id);
+    const next = { ...centerDisplayArrangementByDirectory.value };
+    delete next[directoryId];
+    centerDisplayArrangementByDirectory.value = next;
+  }
+
+  function writeArrangement(
+    scopeId: string,
+    arr: Arrangement | null,
+    { preserveCenterDisplay = false }: { preserveCenterDisplay?: boolean } = {},
+  ) {
+    if (!preserveCenterDisplay) clearCenterDisplayArrangement(scopeId);
     const map = { ...arrangementByScope.value };
     if (arr) map[scopeId] = arr;
     else delete map[scopeId];
@@ -269,6 +295,125 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     useRpc()
       .request.setAppState({ key: "arrangement_by_scope", value: serializeArrangementMap(map) })
       .catch(() => {});
+  }
+
+  function centerDisplayArrangementFor(directoryId: string): Arrangement | null {
+    return centerDisplayArrangementByDirectory.value[directoryId] ?? arrangementFor(directoryId);
+  }
+
+  function centerSplitPickerSource(pickerId: string): string | null {
+    return centerSplitPickerSourceById.get(pickerId) ?? null;
+  }
+
+  function isCenterSplitPickerLaunching(pickerId: string): boolean {
+    return centerSplitPickerLaunchById.value[pickerId] ?? false;
+  }
+
+  function openCenterSplitPicker(
+    sessionId: string,
+    direction: SplitDir,
+    before = false,
+  ): string | null {
+    const directoryId = tabDirId(sessionId);
+    if (!directoryId || surfaceKeyFor(sessionId) !== directoryId) return null;
+    const current = centerDisplayArrangementFor(directoryId);
+    if (!current || !collectPaneIds(current.layout).includes(sessionId)) return null;
+    const pickerId = newCenterSessionPickerId();
+    centerSplitPickerSourceById.set(pickerId, sessionId);
+    centerDisplayArrangementByDirectory.value = {
+      ...centerDisplayArrangementByDirectory.value,
+      [directoryId]: insertCenterSessionPicker(
+        current,
+        sessionId,
+        pickerId,
+        direction,
+        before,
+      ),
+    };
+    return pickerId;
+  }
+
+  function cancelCenterSplitPicker(directoryId: string, pickerId: string): void {
+    if (isCenterSplitPickerLaunching(pickerId)) return;
+    const current = centerDisplayArrangementByDirectory.value[directoryId];
+    if (!current || !containsCenterSessionPicker(current.layout, pickerId)) return;
+    const nextArrangement = removeCenterSessionPicker(current, pickerId);
+    centerSplitPickerSourceById.delete(pickerId);
+    const nextMap = { ...centerDisplayArrangementByDirectory.value };
+    if (nextArrangement && containsCenterSessionPicker(nextArrangement.layout))
+      nextMap[directoryId] = nextArrangement;
+    else delete nextMap[directoryId];
+    centerDisplayArrangementByDirectory.value = nextMap;
+  }
+
+  async function doStartCenterSplitPicker(input: {
+    directoryId: string;
+    pickerId: string;
+    sourceSessionId: string;
+    agentLaunch?: AgentLaunchSelection;
+  }): Promise<Tab> {
+    const recordedSource = centerSplitPickerSourceById.get(input.pickerId);
+    if (recordedSource !== input.sourceSessionId)
+      throw new Error("Center split picker is no longer available");
+    const source = (terminalTabsByDirectory.value[input.directoryId] ?? []).find(
+      (tab) => tab.id === input.sourceSessionId,
+    );
+    if (!source) throw new Error("Source session is no longer available");
+    const existing = terminalTabsByDirectory.value[input.directoryId] ?? [];
+    const tab = await useRpc().request.tabsCreate({
+      directoryId: input.directoryId,
+      cwd: source.cwd ?? undefined,
+      label: String(existing.length + 1),
+      agentLaunch: input.agentLaunch,
+    });
+    if (!directories.value.some((directory) => directory.id === input.directoryId)) {
+      await useRpc().request.tabsClose({ id: tab.id }).catch(() => {});
+      throw new Error("Workspace is no longer available");
+    }
+    const currentTabs = terminalTabsByDirectory.value[input.directoryId] ?? [];
+    terminalTabsByDirectory.value = {
+      ...terminalTabsByDirectory.value,
+      [input.directoryId]: [...currentTabs, tab],
+    };
+    stampActivity(tab.id);
+
+    const latest = centerDisplayArrangementByDirectory.value[input.directoryId];
+    const replaced = latest
+      ? replaceCenterSessionPicker(latest, input.pickerId, tab.id)
+      : null;
+    centerSplitPickerSourceById.delete(input.pickerId);
+    if (!replaced) return tab;
+
+    const persisted = persistedCenterArrangement(replaced);
+    writeArrangement(input.directoryId, persisted, { preserveCenterDisplay: true });
+    const nextMap = { ...centerDisplayArrangementByDirectory.value };
+    if (containsCenterSessionPicker(replaced.layout)) nextMap[input.directoryId] = replaced;
+    else delete nextMap[input.directoryId];
+    centerDisplayArrangementByDirectory.value = nextMap;
+    focusSession(tab.id);
+    return tab;
+  }
+
+  function startCenterSplitPicker(input: {
+    directoryId: string;
+    pickerId: string;
+    sourceSessionId: string;
+    agentLaunch?: AgentLaunchSelection;
+  }): Promise<Tab> {
+    const existing = centerSplitPickerLaunchPromiseById.get(input.pickerId);
+    if (existing) return existing;
+    centerSplitPickerLaunchById.value = {
+      ...centerSplitPickerLaunchById.value,
+      [input.pickerId]: true,
+    };
+    const promise = doStartCenterSplitPicker(input).finally(() => {
+      centerSplitPickerLaunchPromiseById.delete(input.pickerId);
+      const next = { ...centerSplitPickerLaunchById.value };
+      delete next[input.pickerId];
+      centerSplitPickerLaunchById.value = next;
+    });
+    centerSplitPickerLaunchPromiseById.set(input.pickerId, promise);
+    return promise;
   }
 
   // Which surface (center == dirId, or `bottom:<dirId>:<bottomTabId>`) currently
@@ -716,6 +861,20 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   function setArrangementSizes(scopeId: string, key: string, sizes: number[]): void {
     const current = arrangementFor(scopeId);
     if (current) writeArrangement(scopeId, applyArrangementSizes(current, key, sizes));
+  }
+
+  function setCenterDisplayArrangementSizes(
+    directoryId: string,
+    key: string,
+    sizes: number[],
+  ): boolean {
+    const current = centerDisplayArrangementByDirectory.value[directoryId];
+    if (!current) return false;
+    centerDisplayArrangementByDirectory.value = {
+      ...centerDisplayArrangementByDirectory.value,
+      [directoryId]: applyArrangementSizes(current, key, sizes),
+    };
+    return true;
   }
 
   // Title precedence: manual rename → generated title → live daemon display
@@ -1597,6 +1756,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     let lifecycleChanged = false;
     let arrChanged = false;
     for (const sid of scopeIds) {
+      clearCenterDisplayArrangement(sid);
       const bucket = tabsMap[sid];
       if (bucket) {
         for (const t of bucket)
@@ -1733,12 +1893,19 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     createTab,
     newSession,
     splitSessionWithNew,
+    openCenterSplitPicker,
+    cancelCenterSplitPicker,
+    startCenterSplitPicker,
+    centerSplitPickerSource,
+    isCenterSplitPickerLaunching,
+    centerDisplayArrangementFor,
     splitSessionWithExisting,
     removeFromView,
     closeSession,
     focusSession,
     focusedByScope,
     setArrangementSizes,
+    setCenterDisplayArrangementSizes,
     arrangementFor,
     writeArrangement,
     surfaceKeyFor,
