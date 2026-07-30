@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch, onMounted, onUnmounted, nextTick, defineAsyncComponent } from "vue";
+import { computed, ref, watch, onMounted, onUnmounted, nextTick, defineAsyncComponent, provide } from "vue";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useFilePanelTabs, type ScSelection, type CommitsSelection } from "@/composables/useFilePanelTabs";
 import { useRpc } from "@/composables/useRpc";
@@ -167,6 +167,13 @@ async function handleJumpToComment(c: ReviewComment) {
 
 const cached = readCachedPanelState();
 
+// One observer for the whole right panel — every inner sidebar derives its
+// docked/overlay mode from this width, so they must not each measure.
+const panelEl = ref<HTMLElement | null>(null);
+const panelWidth = ref(0);
+let panelObserver: ResizeObserver | null = null;
+provide("rightPanelWidth", panelWidth);
+
 const LIST_PANEL_MIN_PX = PANEL_SIZES.list.min;
 const LIST_PANEL_MAX_PX = PANEL_SIZES.list.max;
 const clampListPanelPx = (value: number) =>
@@ -186,6 +193,7 @@ const explorer = usePanelResizeState({
   visibleStateKey: "file_explorer_visible",
   initialVisible: cached.fileExplorerVisible,
   writeCachedVisible: writeCachedFileExplorerVisible,
+  containerWidth: panelWidth,
 });
 
 
@@ -195,6 +203,7 @@ const search = usePanelResizeState({
   pxStateKey: "search_list_px",
   initialPx: clampListPanelPx(cached.searchPx ?? PANEL_SIZES.list.defaults.search),
   clamp: clampListPanelPx,
+  containerWidth: panelWidth,
 });
 
 // Palette lives in App.vue now (so it works with the right panel collapsed);
@@ -252,6 +261,15 @@ function handleScStatusChanged(s: GitStatus | null) {
 }
 
 onMounted(async () => {
+  if (panelEl.value && typeof ResizeObserver === "function") {
+    panelWidth.value = panelEl.value.clientWidth;
+    panelObserver = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width;
+      if (w) panelWidth.value = w;
+    });
+    panelObserver.observe(panelEl.value);
+  }
+
   window.addEventListener("close-git-diff", handleCloseGitDiff);
   window.addEventListener("close-active-file-tab", handleCloseActiveFileTab);
   window.addEventListener("focus-file-panel", handleFocusFilePanel);
@@ -273,6 +291,8 @@ onUnmounted(() => {
   window.removeEventListener("close-active-file-tab", handleCloseActiveFileTab);
   window.removeEventListener("focus-file-panel", handleFocusFilePanel);
   window.removeEventListener("new-file", handleNewFile);
+  panelObserver?.disconnect();
+  panelObserver = null;
   explorer.dispose();
   search.dispose();
 });
@@ -383,7 +403,7 @@ function revertScFile() {
 </script>
 
 <template>
-  <div data-file-panel class="h-full flex flex-col overflow-hidden bg-sidebar">
+  <div ref="panelEl" data-file-panel class="h-full flex flex-col overflow-hidden bg-sidebar">
     <FileTabBar
       :tabs="allTabs"
       :active-id="activeId"
