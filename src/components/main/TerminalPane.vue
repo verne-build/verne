@@ -390,6 +390,13 @@ onUnmounted(() => {
                 :key="row.tab.id"
                 @select="splitWithExisting(row.tab.id)"
               >
+                <img
+                  v-if="row.agentType"
+                  :src="getAgentIconForSurface(row.agentType, agentIconSurface)"
+                  class="size-3.5 shrink-0"
+                  alt=""
+                />
+                <SquareTerminal v-else class="size-3.5 shrink-0" />
                 {{ store.sessionName(row.tab.id) }}
               </DropdownMenuItem>
             </DropdownMenuSubContent>

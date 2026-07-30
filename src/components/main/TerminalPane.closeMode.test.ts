@@ -13,7 +13,7 @@ const store = {
   sessionLifecycle: new Map<string, string>(),
   focusedByScope: {} as Record<string, string | undefined>,
   splittableSessions: vi.fn(() => [] as unknown[]),
-  sessionName: vi.fn(() => "pane"),
+  sessionName: vi.fn((_id: string) => "pane"),
   focusSession: vi.fn(),
   syncViewportSize: vi.fn(),
   markSessionRunning: vi.fn(),
@@ -26,6 +26,7 @@ const store = {
 
 const ask = vi.fn(async (_title: string, _opts: unknown) => true);
 const tabsHasRunningChild = vi.fn(async (_p: { id: string }) => true);
+const getAgentIconForSurface = vi.fn((agentType: string) => `/${agentType}-light.svg`);
 
 vi.mock("@/stores/workspace", () => ({ useWorkspaceStore: () => store }));
 vi.mock("@/platform", () => ({ ask: (title: string, opts: unknown) => ask(title, opts) }));
@@ -47,7 +48,7 @@ vi.mock("@/composables/useShortcuts", () => ({
 }));
 vi.mock("@/composables/useAgentIcon", () => ({
   agentIconSurfaceForTheme: () => "light",
-  getAgentIconForSurface: () => null,
+  getAgentIconForSurface: (agentType: string) => getAgentIconForSurface(agentType),
 }));
 vi.mock("@/composables/useTheme", () => ({
   useTheme: () => ({ activeThemeName: ref("x"), getActiveThemeSpec: () => ({ type: "dark" }) }),
@@ -84,7 +85,9 @@ describe("TerminalPane end mode", () => {
     store.closeBottomPane.mockClear();
     ask.mockClear();
     tabsHasRunningChild.mockClear();
+    getAgentIconForSurface.mockClear();
     store.tabRuntime.clear();
+    store.splittableSessions.mockReturnValue([]);
   });
   afterEach(() => {
     app?.unmount();
@@ -119,6 +122,33 @@ describe("TerminalPane end mode", () => {
     await flush();
 
     expect(buttonByTitle("Split")?.querySelector(".lucide-ellipsis")).toBeTruthy();
+  });
+
+  it("shows each existing session's own agent icon", async () => {
+    store.splittableSessions.mockReturnValue([
+      {
+        tab: { id: "session-claude", directoryId: "dir-1", label: "2", cwd: null },
+        directory: { id: "dir-1", path: "/repo", name: "Repo", createdAt: 0, sortOrder: 0 },
+        agentType: "claude",
+      },
+      {
+        tab: { id: "session-codex", directoryId: "dir-1", label: "3", cwd: null },
+        directory: { id: "dir-1", path: "/repo", name: "Repo", createdAt: 0, sortOrder: 0 },
+        agentType: "codex",
+      },
+    ]);
+    mount({ paneId: "pane-1", scopeId: "dir-1", multi: true });
+    await flush();
+
+    buttonByTitle("Split")!.click();
+    await flush();
+    const trigger = document.querySelector<HTMLElement>('[data-slot="dropdown-menu-sub-trigger"]');
+    trigger!.focus();
+    trigger!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    await flush();
+
+    expect(document.querySelector('img[src="/claude-light.svg"]')).not.toBeNull();
+    expect(document.querySelector('img[src="/codex-light.svg"]')).not.toBeNull();
   });
 
   it("keeps the active split title muted", async () => {
