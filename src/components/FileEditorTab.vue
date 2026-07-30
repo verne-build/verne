@@ -1,14 +1,14 @@
 <script setup lang="ts">
-import { ref, computed, watch, onActivated, nextTick } from "vue";
+import { ref, computed, watch, onActivated, nextTick, inject, type Ref } from "vue";
 import type { FilePanelTab, FilePanelFileTab } from "@/types";
 import { useSettings } from "@/composables/useSettings";
-import { PANEL_SIZES } from "@/lib/panelSizes";
 import { addToAgent } from "@/composables/useAddToAgent";
 import { convertFileSrc } from "@/platform";
 import { toast } from "vue-sonner";
 import CodeEditor from "./CodeEditor.vue";
 import FilesPanel from "./FilesPanel.vue";
-import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "./ui/resizable";
+import OverlaySidebarGroup from "./OverlaySidebarGroup.vue";
+import type { PanelResizeState } from "@/composables/usePanelResizeState";
 import { Button } from "./ui/button";
 import SegmentedTabs, { type SegmentedOption } from "./SegmentedTabs.vue";
 import {
@@ -45,27 +45,20 @@ import {
 const props = defineProps<{
   activeTab: FilePanelTab | null;
   rootDir: string | undefined;
-  explorerVisible: boolean;
-  explorerSizePx: number;
+  explorer: PanelResizeState;
   activeFilePath: string | null;
 }>();
 
 const emit = defineEmits<{
-  "update:explorerVisible": [v: boolean];
-  "register-panel-ref": [el: any];
-  "explorer-layout": [sizes: number[]];
-  "explorer-collapse": [];
   "open-file": [path: string, permanent: boolean];
   "close-tab": [id: string];
   dirty: [path: string, d: boolean];
   "view-state": [id: string, s: any];
   "open-file-search": [];
   "new-file": [];
-  dragging: [v: boolean];
 }>();
 
-const LIST_PANEL_MIN_PX = PANEL_SIZES.list.min;
-const LIST_PANEL_MAX_PX = PANEL_SIZES.list.max;
+const panelWidth = inject<Ref<number>>("rightPanelWidth", ref(0));
 
 const { settings, update: updateSettings } = useSettings();
 const markdownDefaultView = computed(() => settings.value.markdownDefaultView ?? "preview");
@@ -160,6 +153,10 @@ function activeTabAsFile(): FilePanelFileTab | null {
   const t = props.activeTab;
   return t?.kind === "file" ? t : null;
 }
+
+// Picking a file in the overlaid tree closes it — the point of the peek was
+// to get to this file.
+watch(() => props.activeFilePath, () => props.explorer.dismissOverlay());
 </script>
 
 <template>
@@ -173,9 +170,9 @@ function activeTabAsFile(): FilePanelFileTab | null {
           variant="ghost"
           class="text-muted-foreground shrink-0"
           tabindex="0"
-          @click="emit('update:explorerVisible', !explorerVisible)"
+          @click="props.explorer.open.value = !props.explorer.open.value"
         >
-          <PanelLeft v-if="!explorerVisible" class="size-3.5" />
+          <PanelLeft v-if="!props.explorer.open.value" class="size-3.5" />
           <PanelLeftFilled v-else class="size-3.5" />
         </Button>
         <template v-for="(seg, i) in breadcrumbSegments ?? []" :key="i">
@@ -276,18 +273,8 @@ function activeTabAsFile(): FilePanelFileTab | null {
     </div>
 
     <div class="flex-1 min-h-0">
-      <ResizablePanelGroup direction="horizontal" class="h-full" @layout="(s) => emit('explorer-layout', s)">
-        <ResizablePanel
-          :ref="(el) => emit('register-panel-ref', el)"
-          collapsible
-          :collapsed-size="0"
-          :default-size="explorerSizePx"
-          :min-size="LIST_PANEL_MIN_PX"
-          :max-size="LIST_PANEL_MAX_PX"
-          size-unit="px"
-          class="bg-sidebar"
-          @collapse="emit('explorer-collapse')"
-        >
+      <OverlaySidebarGroup :state="explorer" :container-width="panelWidth">
+        <template #sidebar>
           <FilesPanel
             v-if="rootDir"
             :working-dir="rootDir"
@@ -295,9 +282,8 @@ function activeTabAsFile(): FilePanelFileTab | null {
             @open-file="(p, perm) => emit('open-file', p, !!perm)"
             @file-deleted="(path: string) => emit('close-tab', path)"
           />
-        </ResizablePanel>
-        <ResizableHandle class="cursor-ew-resize" @dragging="(v) => emit('dragging', v)" />
-        <ResizablePanel :min-size="20">
+        </template>
+        <template #content>
           <div
             v-if="activeTab?.kind === 'explorer'"
             class="flex h-full items-center justify-center bg-sidebar"
@@ -343,8 +329,8 @@ function activeTabAsFile(): FilePanelFileTab | null {
             @close="emit('close-tab', activeTab!.id)"
             @view-state="(s) => emit('view-state', activeTab!.id, s)"
           />
-        </ResizablePanel>
-      </ResizablePanelGroup>
+        </template>
+      </OverlaySidebarGroup>
     </div>
   </div>
 </template>

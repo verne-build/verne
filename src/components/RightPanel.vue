@@ -223,7 +223,7 @@ function handleCloseActiveFileTab() {
 // switch to a file tab if one exists, else the explorer placeholder. EXPLORER_TAB
 // is only in allTabs when there are no file tabs, so never force it otherwise.
 function revealExplorer() {
-  explorer.visible.value = true;
+  explorer.open.value = true;
   const t = activeTab.value;
   if (t?.kind === "file" || t?.kind === "explorer") return;
   const lastFile = [...allTabs.value].reverse().find((x) => x.kind === "file");
@@ -298,7 +298,7 @@ onUnmounted(() => {
 });
 
 watch(activeTab, (tab) => {
-  if (tab?.kind === "explorer") explorer.visible.value = true;
+  if (tab?.kind === "explorer") explorer.open.value = true;
 });
 
 async function handleNewFile() {
@@ -544,14 +544,8 @@ function revertScFile() {
         v-if="activeTab?.kind === 'file' || activeTab?.kind === 'explorer'"
         :active-tab="activeTab"
         :root-dir="rootDir"
-        :explorer-visible="explorer.visible.value"
-        :explorer-size-px="explorer.sizePx.value"
+        :explorer="explorer"
         :active-file-path="activeFilePath"
-        @update:explorer-visible="explorer.visible.value = $event"
-        @register-panel-ref="(el) => (explorer.panelRef.value = el)"
-        @explorer-layout="explorer.onLayout"
-        @explorer-collapse="preventDragCollapse(explorer.panelRef.value)"
-        @dragging="splitDragging = $event"
         @open-file="(p, perm) => openFile(p, undefined, perm ? { permanent: true } : undefined)"
         @close-tab="closeFileTab"
         @dirty="(path, d) => setFileDirty(path, d)"
