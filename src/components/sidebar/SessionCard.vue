@@ -2,9 +2,12 @@
 import { computed, inject, nextTick, onBeforeUnmount, ref, type Ref } from "vue";
 import {
   Archive,
+  Check,
   Columns2,
+  Copy,
   Folder,
   GitBranch,
+  Hash,
   Mail,
   Pencil,
   Play,
@@ -98,6 +101,11 @@ const agentLabel = computed(() => {
     ?? titleCase(props.row.agentType);
 });
 const projectIcon = computed(() => projectIcons.value[props.rootDirId] || "");
+// Live runtime first (agent may have started a new session since the row was
+// written), then the latched row value.
+const agentSessionId = computed(
+  () => store.tabRuntime.get(id.value)?.lastAgentSessionId || props.row.tab.lastAgentSessionId || "",
+);
 const lastActivity = computed(() => {
   const lastOutputAt = store.tabRuntime.get(id.value)?.lastOutputAt;
   const at = (lastOutputAt && lastOutputAt > 0 ? lastOutputAt : undefined)
@@ -156,6 +164,20 @@ function focus() {
   store.selectSession(id.value);
 }
 
+// -- copy agent session id from the hover card --
+const copied = ref(false);
+let copiedTimer: ReturnType<typeof setTimeout> | undefined;
+
+function copySessionId() {
+  const value = agentSessionId.value;
+  if (!value) return;
+  void navigator.clipboard.writeText(value).then(() => {
+    copied.value = true;
+    clearTimeout(copiedTimer);
+    copiedTimer = setTimeout(() => (copied.value = false), 1200);
+  }).catch(() => {});
+}
+
 // -- inline rename (same mechanics as worktree rename in SessionsSidebar) --
 const renaming = ref(false);
 const renameInputEl = ref<HTMLInputElement | null>(null);
@@ -210,7 +232,10 @@ function onDocMousedown(e: MouseEvent) {
   finishRename(el.value);
 }
 
-onBeforeUnmount(() => document.removeEventListener("mousedown", onDocMousedown, true));
+onBeforeUnmount(() => {
+  document.removeEventListener("mousedown", onDocMousedown, true);
+  clearTimeout(copiedTimer);
+});
 
 // -- close with confirm (running child processes get killed) --
 function runningProcessLabel(): string {
@@ -478,6 +503,19 @@ async function unarchive(resume: boolean) {
           <SquareTerminal v-else class="size-4 shrink-0" />
           <span>{{ agentLabel }}</span>
         </div>
+        <button
+          v-if="agentSessionId"
+          type="button"
+          class="group/id -mx-1 flex w-[calc(100%+0.5rem)] items-center gap-2 rounded px-1 py-0.5 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          :title="copied ? 'Copied' : `Copy session ID\n${agentSessionId}`"
+          :aria-label="`Copy session ID ${agentSessionId}`"
+          @click.stop="copySessionId()"
+        >
+          <Hash class="size-4 shrink-0" />
+          <span class="min-w-0 flex-1 truncate font-mono">{{ agentSessionId }}</span>
+          <Check v-if="copied" class="size-3.5 shrink-0 text-green-400" />
+          <Copy v-else class="size-3.5 shrink-0 opacity-0 transition-opacity group-hover/id:opacity-100" />
+        </button>
       </HoverCardContent>
     </HoverCard>
   </div>
