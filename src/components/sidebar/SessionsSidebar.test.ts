@@ -113,7 +113,7 @@ describe("SessionsSidebar workspace dropdown", () => {
     expect(store.openAndSelectWorkspace).toHaveBeenCalledTimes(1);
   });
 
-  it("uses the filled disclosure caret for Archived", async () => {
+  it("uses a Lucide chevron and omits the count from Archived", async () => {
     app.unmount();
     store.sessionsList.mockReturnValue([
       {
@@ -129,9 +129,7 @@ describe("SessionsSidebar workspace dropdown", () => {
 
     const trigger = Array.from(host.querySelectorAll("button"))
       .find((button) => button.textContent?.includes("Archived"));
-    const caret = trigger?.firstElementChild;
-
-    expect(caret?.tagName).toBe("SPAN");
-    expect(caret?.classList.contains("border-l-[5px]")).toBe(true);
+    expect(trigger?.querySelector(".lucide-chevron-right")).not.toBeNull();
+    expect(trigger?.textContent?.trim()).toBe("Archived");
   });
 });

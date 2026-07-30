@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from "vue";
-import { Archive, Check, ChevronDown, FolderOpen, FolderPlus, Search } from "@lucide/vue";
+import { useVirtualizer } from "@tanstack/vue-virtual";
+import { Check, ChevronDown, ChevronLeft, FolderOpen, FolderPlus, Search } from "@lucide/vue";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useRpc } from "@/composables/useRpc";
 import { useProjectIcons } from "@/composables/useProjectIcons";
@@ -11,7 +12,7 @@ import SessionCard from "./SessionCard.vue";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
 import { Input } from "@/components/ui/input";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Collapsible, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Empty, EmptyContent, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import {
   DropdownMenu,
@@ -78,13 +79,83 @@ const sortInputs = computed<CardSortInputs>(() => ({
 const liveCards = shallowRef<SessionRowModel[]>([]);
 const archivedCards = shallowRef<SessionRowModel[]>([]);
 const archivedOpen = ref(false);
+const archiveHeightAnimating = ref(false);
+let archiveHeightTimer: ReturnType<typeof setTimeout> | undefined;
+const sessionsScrollRef = ref<HTMLElement | null>(null);
+type SessionListItem =
+  | { kind: "session"; key: string; row: SessionRowModel }
+  | { kind: "archive-header"; key: "archive-header" };
+
+const sessionListItems = computed<SessionListItem[]>(() => {
+  const items: SessionListItem[] = liveCards.value.map((row) => ({
+    kind: "session",
+    key: `session:${row.tab.id}`,
+    row,
+  }));
+  if (!archivedCards.value.length) return items;
+  items.push({ kind: "archive-header", key: "archive-header" });
+  if (archivedOpen.value) {
+    items.push(...archivedCards.value.map((row) => ({
+      kind: "session" as const,
+      key: `session:${row.tab.id}`,
+      row,
+    })));
+  }
+  return items;
+});
+
+const LIVE_ROW_ESTIMATE = 68;
+const ARCHIVED_ROW_ESTIMATE = 34;
+const ARCHIVE_HEADER_ESTIMATE = 32;
+const SESSION_OVERSCAN = 10;
+
+const sessionVirtualizer = useVirtualizer(
+  computed(() => ({
+    count: sessionListItems.value.length,
+    getScrollElement: () => sessionsScrollRef.value,
+    estimateSize: (index: number) => {
+      const item = sessionListItems.value[index];
+      if (!item || item.kind === "archive-header") return ARCHIVE_HEADER_ESTIMATE;
+      return item.row.tab.archivedAt != null ? ARCHIVED_ROW_ESTIMATE : LIVE_ROW_ESTIMATE;
+    },
+    overscan: SESSION_OVERSCAN,
+    getItemKey: (index: number) => sessionListItems.value[index]?.key ?? index,
+  })),
+);
+
+const virtualSessionRows = computed(() =>
+  sessionVirtualizer.value.getVirtualItems().flatMap((virtualRow) => {
+    const item = sessionListItems.value[virtualRow.index];
+    return item ? [{ virtualRow, item }] : [];
+  }),
+);
+
+function measureSessionRow(element: unknown): void {
+  if (element instanceof Element) sessionVirtualizer.value.measureElement(element);
+}
+
+watch(archivedOpen, () => {
+  archiveHeightAnimating.value = true;
+  if (archiveHeightTimer) clearTimeout(archiveHeightTimer);
+  archiveHeightTimer = setTimeout(() => {
+    archiveHeightAnimating.value = false;
+    archiveHeightTimer = undefined;
+  }, 200);
+});
+
 function recomputeCards() {
   let rows = store.sessionsList("all");
   if (activeChip.value !== "all")
     rows = rows.filter((r) => rootOf(r.directory).id === activeChip.value);
   const { live, archived } = partitionSessions(rows);
   liveCards.value = sortSessionCards(live, sortInputs.value);
-  archivedCards.value = sortSessionCards(archived, sortInputs.value);
+  archivedCards.value = archived
+    .map((row, index) => ({ row, index }))
+    .sort((a, b) => {
+      const archivedAtDiff = (b.row.tab.archivedAt ?? 0) - (a.row.tab.archivedAt ?? 0);
+      return archivedAtDiff || a.index - b.index;
+    })
+    .map(({ row }) => row);
 }
 
 watch(
@@ -161,6 +232,7 @@ onMounted(async () => {
   });
 });
 onUnmounted(() => {
+  if (archiveHeightTimer) clearTimeout(archiveHeightTimer);
   stopNowTimer();
   document.removeEventListener("visibilitychange", onVisibility);
   unlistenGit?.();
@@ -231,39 +303,52 @@ watch(() => store.directories.map((d) => d.id).join(","), () => {
       </Button>
     </ButtonGroup>
 
-    <!-- Card list -->
-    <div class="min-h-0 flex-1 overflow-y-auto pb-3 pt-1 [scrollbar-gutter:stable]">
-      <SessionCard v-for="row in liveCards" :key="row.tab.id"
-        :row="row"
-        :branch="branches.get(row.directory.id)"
-        :root-name="rootOf(row.directory).name"
-        :root-dir-id="rootOf(row.directory).id"
-        :is-worktree="!!row.directory.parentDirectoryId"
-        :now="now" />
-      <div v-if="liveCards.length === 0 && archivedCards.length === 0 && rootDirs.length" class="flex h-24 items-center justify-center px-4 text-center text-xs text-muted-foreground">
-        No sessions — press ⌘T
+    <!-- Unified virtual session list -->
+    <Collapsible v-model:open="archivedOpen" class="contents">
+      <div ref="sessionsScrollRef" class="min-h-0 flex-1 overflow-y-auto pb-3 pt-1 [scrollbar-gutter:stable]">
+        <div v-if="sessionListItems.length === 0 && rootDirs.length" class="flex h-24 items-center justify-center px-4 text-center text-xs text-muted-foreground">
+          No sessions — press ⌘T
+        </div>
+        <div
+          v-else
+          class="relative w-full overflow-hidden motion-reduce:transition-none"
+          :class="archiveHeightAnimating
+            ? 'transition-[height] duration-200 ease-[cubic-bezier(0.2,0,0,1)]'
+            : ''"
+          :style="{ height: `${sessionVirtualizer.getTotalSize()}px` }"
+        >
+          <div
+            v-for="entry in virtualSessionRows"
+            :key="entry.item.key"
+            :ref="measureSessionRow"
+            :data-index="entry.virtualRow.index"
+            class="absolute left-0 top-0 flow-root w-full"
+            :style="{ transform: `translateY(${entry.virtualRow.start}px)` }"
+          >
+            <SessionCard
+              v-if="entry.item.kind === 'session'"
+              :row="entry.item.row"
+              :branch="branches.get(entry.item.row.directory.id)"
+              :root-name="rootOf(entry.item.row.directory).name"
+              :root-dir-id="rootOf(entry.item.row.directory).id"
+              :is-worktree="!!entry.item.row.directory.parentDirectoryId"
+              :now="now"
+            />
+            <CollapsibleTrigger
+              v-else
+              class="flex h-8 w-full items-center gap-1 px-3 text-xs font-medium text-muted-foreground/70"
+            >
+              <span>Archived</span>
+              <ChevronLeft
+                :stroke-width="2.5"
+                class="ml-auto size-3 shrink-0 transition-transform"
+                :class="{ '-rotate-90': archivedOpen }"
+              />
+            </CollapsibleTrigger>
+          </div>
+        </div>
       </div>
-      <Collapsible v-if="archivedCards.length" v-model:open="archivedOpen" class="mt-1">
-        <CollapsibleTrigger class="flex w-full items-center gap-1.5 px-3 py-1 text-[10px] uppercase tracking-wide text-muted-foreground/70">
-          <span
-            class="size-0 border-l-[5px] border-l-current border-y-[3.5px] border-y-transparent transition-transform"
-            :class="{ 'rotate-90': archivedOpen }"
-          />
-          <Archive class="size-3 shrink-0" />
-          <span>Archived</span>
-          <span class="tabular-nums">({{ archivedCards.length }})</span>
-        </CollapsibleTrigger>
-        <CollapsibleContent>
-          <SessionCard v-for="row in archivedCards" :key="row.tab.id"
-            :row="row"
-            :branch="branches.get(row.directory.id)"
-            :root-name="rootOf(row.directory).name"
-            :root-dir-id="rootOf(row.directory).id"
-            :is-worktree="!!row.directory.parentDirectoryId"
-            :now="now" />
-        </CollapsibleContent>
-      </Collapsible>
-    </div>
+    </Collapsible>
     </template>
   </div>
 </template>

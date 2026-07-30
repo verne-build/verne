@@ -104,6 +104,10 @@ const lastActivity = computed(() => {
     ?? store.sessionActivityAt.get(id.value);
   return at ? relativeTime(at, props.now) : "";
 });
+const archivedTime = computed(() => {
+  const archivedAt = props.row.tab.archivedAt;
+  return archivedAt == null ? "" : relativeTime(archivedAt, props.now);
+});
 
 // Follow Agent = NOT pinned (auto re-pin follows the agent's cwd around).
 const followingAgent = computed(() => !props.row.tab.scopePinnedByUser);
@@ -313,6 +317,15 @@ async function unarchive(resume: boolean) {
               class="min-w-0 flex-1 truncate text-xs transition-[padding] group-hover/card:pr-20 group-focus-within/card:pr-20"
             >
               {{ title }}
+            </span>
+            <span
+              v-if="archivedTime && !renaming"
+              class="shrink-0 text-[11px] tabular-nums text-muted-foreground transition-opacity"
+              :class="{
+                'group-hover/card:opacity-0 group-focus-within/card:opacity-0': row.tab.resumeAvailable,
+              }"
+            >
+              {{ archivedTime }}
             </span>
             <Button
               v-if="row.tab.resumeAvailable && !renaming"

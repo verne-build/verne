@@ -43,6 +43,7 @@ import {
   GitBranch,
   Minus,
   Check,
+  ChevronRight,
   Loader2,
 } from "@lucide/vue";
 import { toast } from "vue-sonner";
@@ -657,8 +658,9 @@ watch(
             class="group flex items-center gap-1 px-3 py-1.5 text-muted-foreground font-medium"
           >
             <CollapsibleTrigger class="flex items-center gap-1 flex-1">
-              <span
-                class="size-0 border-l-[5px] border-l-current border-y-[3.5px] border-y-transparent transition-transform"
+              <ChevronRight
+                :stroke-width="2.5"
+                class="size-3 shrink-0 transition-transform"
                 :class="{ 'rotate-90': stagedOpen }"
               />
               Staged Changes
@@ -758,8 +760,9 @@ watch(
             class="group flex items-center gap-1 px-3 py-1.5 text-muted-foreground font-medium"
           >
             <CollapsibleTrigger class="flex items-center gap-1 flex-1">
-              <span
-                class="size-0 border-l-[5px] border-l-current border-y-[3.5px] border-y-transparent transition-transform"
+              <ChevronRight
+                :stroke-width="2.5"
+                class="size-3 shrink-0 transition-transform"
                 :class="{ 'rotate-90': changesOpen }"
               />
               Changes
