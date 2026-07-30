@@ -6,9 +6,13 @@ import { useCommands, type Command } from "@/composables/useCommands";
 import FileIcon from "./FileIcon.vue";
 import { agentIconSurfaceForTheme, getAgentIconForSurface } from "@/composables/useAgentIcon";
 import { useTheme } from "@/composables/useTheme";
-import { X } from "@lucide/vue";
 import {
+  COMMAND_PALETTE_FILTERS,
+  commandPaletteShowsActions,
   commandPaletteShowsAgents,
+  commandPaletteShowsFiles,
+  cycleCommandPaletteFilter,
+  isSettingsCommand,
   type CommandPaletteMode,
 } from "@/lib/commandPalette";
 import {
@@ -36,23 +40,21 @@ interface SearchResult {
   recent: boolean;
 }
 
-// `all` is the unified palette (⌘K) — no pill, searches files + actions together.
-// The other modes are scoped and shown as a deletable pill; Backspace at an
-// empty prompt pops any pill back to `all`. `term` is only the filter text.
 const mode = ref<CommandPaletteMode>("search");
 const term = ref("");
 const results = ref<SearchResult[]>([]);
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let searchGeneration = 0;
 
-const filesVisible = computed(() => mode.value === "search" || mode.value === "all");
-const actionsVisible = computed(() => mode.value === "command" || mode.value === "all");
+const filesVisible = computed(() => commandPaletteShowsFiles(mode.value));
+const actionsVisible = computed(() => commandPaletteShowsActions(mode.value));
 const agentsVisible = computed(() => commandPaletteShowsAgents(mode.value));
 
-const MODE_LABELS: Partial<Record<CommandPaletteMode, string>> = { search: "Files", command: "Actions", goto: "Go to Line" };
 const placeholder = computed(() =>
   mode.value === "all" ? "Search files, actions, agents…"
+  : mode.value === "agents" ? "Search agents…"
   : mode.value === "command" ? "Search actions…"
+  : mode.value === "settings" ? "Search settings…"
   : mode.value === "goto" ? "Go to line…"
   : "Search files…",
 );
@@ -77,7 +79,10 @@ const commandGroups = computed<{ category: string; items: Command[] }[]>(() => {
   // empty ⌘K shouldn't be a wall of every command.
   if (mode.value === "all" && !t) return [];
   const groups: { category: string; items: Command[] }[] = [];
-  for (const c of commandList()) {
+  const commands = mode.value === "settings"
+    ? commandList().filter((command) => isSettingsCommand(command.id))
+    : commandList();
+  for (const c of commands) {
     if (c.when && !c.when()) continue;
     if (t && !fuzzy(t, `${c.title} ${c.keywords ?? ""}`)) continue;
     let g = groups.find((x) => x.category === c.category);
@@ -153,11 +158,12 @@ watch(term, (q) => {
 });
 
 // Switch mode, reset the filter text, and refresh the list.
-function setMode(m: CommandPaletteMode) {
-  mode.value = m;
+function setMode(nextMode: CommandPaletteMode) {
+  searchGeneration++;
+  mode.value = nextMode;
   term.value = "";
   results.value = [];
-  if (m === "search" || m === "all") doSearch("");
+  if (commandPaletteShowsFiles(nextMode)) void doSearch("");
   else highlightFirst();
 }
 
@@ -181,16 +187,15 @@ function getListbox() {
 }
 
 function onKeydown(e: KeyboardEvent) {
+  if (e.metaKey && (e.key === "[" || e.key === "]")) {
+    e.preventDefault();
+    setMode(cycleCommandPaletteFilter(mode.value, e.key === "[" ? -1 : 1));
+    return;
+  }
   // `>` / `:` at an empty unscoped prompt switch mode instead of typing the char.
   if (term.value === "" && (mode.value === "all" || mode.value === "search")) {
     if (e.key === ">") { e.preventDefault(); setMode("command"); return; }
     if (e.key === ":") { e.preventDefault(); setMode("goto"); return; }
-  }
-  // Backspace at an empty prompt pops the pill back to the unified palette.
-  if (e.key === "Backspace" && term.value === "" && mode.value !== "all") {
-    e.preventDefault();
-    setMode("all");
-    return;
   }
   // Go-to-line has no list — execute on Enter directly.
   if (mode.value === "goto" && e.key === "Enter") {
@@ -278,86 +283,97 @@ const noResults = computed(() => {
     :show-overlay="true"
   >
     <div ref="rootRef">
-    <div class="flex h-11 items-center gap-2 px-3 border-b">
-      <button
-        v-if="mode !== 'all'"
-        type="button"
-        class="group inline-flex shrink-0 items-center gap-1 rounded-md bg-secondary py-0.5 pl-2 pr-1 text-xs font-medium text-secondary-foreground"
-        tabindex="-1"
-        @click="setMode('all')"
-        @mousedown.prevent
-      >
-        {{ MODE_LABELS[mode] }}
-        <X class="size-3 opacity-50 group-hover:opacity-100" />
-      </button>
-      <input
-        ref="inputRef"
-        v-auto-focus
-        v-model="term"
-        :placeholder="placeholder"
-        autocomplete="off"
-        autocorrect="off"
-        autocapitalize="off"
-        spellcheck="false"
-        class="placeholder:text-muted-foreground flex h-10 w-full rounded-md bg-transparent py-3 text-sm outline-hidden"
-        @keydown="onKeydown"
-      />
-    </div>
-    <CommandList class="h-[300px]">
-      <div v-if="noResults" class="py-6 text-center text-sm text-muted-foreground">No results found.</div>
-
-      <!-- Go to line -->
-      <div v-if="mode === 'goto'" class="px-3 py-6 text-center text-sm text-muted-foreground">
-        <template v-if="gotoLine !== null">Press <kbd class="font-mono">⏎</kbd> to go to line {{ gotoLine }}</template>
-        <template v-else>Type a line number</template>
+      <div class="flex h-14 items-center border-b px-4">
+        <input
+          ref="inputRef"
+          v-auto-focus
+          v-model="term"
+          :placeholder="placeholder"
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="off"
+          spellcheck="false"
+          class="h-10 w-full bg-transparent text-sm outline-hidden placeholder:text-muted-foreground"
+          @keydown="onKeydown"
+        />
       </div>
+      <div class="flex items-center gap-1 px-3 py-1.5" aria-label="Command palette filters">
+        <button
+          v-for="filter in COMMAND_PALETTE_FILTERS"
+          :key="filter.mode"
+          type="button"
+          class="h-10 rounded-full px-3 text-sm font-medium transition-[color,background-color,transform] duration-150 active:scale-[0.96]"
+          :class="mode === filter.mode
+            ? 'bg-secondary text-secondary-foreground'
+            : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'"
+          :aria-pressed="mode === filter.mode"
+          @click="setMode(filter.mode)"
+          @mousedown.prevent
+        >
+          {{ filter.label }}
+        </button>
+      </div>
+      <CommandList class="h-[300px]">
+        <div v-if="noResults" class="py-6 text-center text-sm text-muted-foreground">No results found.</div>
 
-      <!-- Actions (ranked above files in the unified palette) -->
-      <template v-if="actionsVisible">
-        <CommandGroup v-for="g in commandGroups" :key="g.category" :heading="g.category">
-          <CommandItem
-            v-for="c in g.items"
-            :key="c.id"
-            :value="`cmd:${c.id}`"
-            @select="selectCommand(c)"
-          >
-            <component :is="c.icon" class="mr-2 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-            <span class="truncate text-sm">{{ c.title }}</span>
-            <span v-if="c.shortcut" class="ml-auto text-xs tracking-wide text-muted-foreground">{{ c.shortcut }}</span>
-          </CommandItem>
-        </CommandGroup>
-      </template>
+        <!-- Go to line -->
+        <div v-if="mode === 'goto'" class="px-3 py-6 text-center text-sm text-muted-foreground">
+          <template v-if="gotoLine !== null">Press <kbd class="font-mono">⏎</kbd> to go to line {{ gotoLine }}</template>
+          <template v-else>Type a line number</template>
+        </div>
 
-      <!-- Files + agents -->
-      <template v-if="filesVisible">
-        <CommandGroup v-if="matchingAgents.length" heading="Agents">
-          <CommandItem
-            v-for="a in matchingAgents"
-            :key="a.tabId"
-            :value="`agent:${a.title}`"
-            @select="selectAgent(a.tabId)"
-          >
-            <img :src="agentIcon(a.agentType)" class="mr-2 size-4 shrink-0" aria-hidden="true" />
-            <span class="truncate text-sm">{{ a.title }}</span>
-            <span class="text-xs text-muted-foreground">{{ timeAgo(a.updatedAt) }}</span>
-          </CommandItem>
-        </CommandGroup>
-        <CommandGroup v-for="g in fileGroups" :key="g.heading" :heading="g.heading">
-          <CommandItem
-            v-for="r in g.items"
-            :key="r.path"
-            :value="r.relPath"
-            @select="selectFile(r.path)"
-          >
-            <FileIcon :name="r.name" :size="16" class="mr-2" />
-            <div class="flex items-center justify-between gap-2 min-w-0">
-              <span class="truncate text-sm">{{ r.name }}</span>
-              <span class="truncate text-xs text-muted-foreground">{{ r.relPath }}</span>
-            </div>
-          </CommandItem>
-        </CommandGroup>
-      </template>
-    </CommandList>
+        <!-- Actions (ranked above files in the unified palette) -->
+        <template v-if="actionsVisible">
+          <CommandGroup v-for="g in commandGroups" :key="g.category" :heading="g.category">
+            <CommandItem
+              v-for="c in g.items"
+              :key="c.id"
+              :value="`cmd:${c.id}`"
+              @select="selectCommand(c)"
+            >
+              <component :is="c.icon" class="mr-2 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+              <span class="truncate text-sm">{{ c.title }}</span>
+              <span v-if="c.shortcut" class="ml-auto text-xs tracking-wide text-muted-foreground">{{ c.shortcut }}</span>
+            </CommandItem>
+          </CommandGroup>
+        </template>
+
+        <template v-if="agentsVisible">
+          <CommandGroup v-if="matchingAgents.length" heading="Agents">
+            <CommandItem
+              v-for="a in matchingAgents"
+              :key="a.tabId"
+              :value="`agent:${a.title}`"
+              @select="selectAgent(a.tabId)"
+            >
+              <img :src="agentIcon(a.agentType)" class="mr-2 size-4 shrink-0" aria-hidden="true" />
+              <span class="truncate text-sm">{{ a.title }}</span>
+              <span class="text-xs text-muted-foreground">{{ timeAgo(a.updatedAt) }}</span>
+            </CommandItem>
+          </CommandGroup>
+        </template>
+        <template v-if="filesVisible">
+          <CommandGroup v-for="g in fileGroups" :key="g.heading" :heading="g.heading">
+            <CommandItem
+              v-for="r in g.items"
+              :key="r.path"
+              :value="r.relPath"
+              @select="selectFile(r.path)"
+            >
+              <FileIcon :name="r.name" :size="16" class="mr-2" />
+              <div class="flex items-center justify-between gap-2 min-w-0">
+                <span class="truncate text-sm">{{ r.name }}</span>
+                <span class="truncate text-xs text-muted-foreground">{{ r.relPath }}</span>
+              </div>
+            </CommandItem>
+          </CommandGroup>
+        </template>
+      </CommandList>
+      <footer class="flex h-10 items-center gap-4 border-t px-4 text-xs text-muted-foreground">
+        <span><kbd class="font-sans">↑↓</kbd> Select</span>
+        <span><kbd class="font-sans">↵</kbd> Open</span>
+        <span><kbd class="font-sans">⌘[</kbd> / <kbd class="font-sans">⌘]</kbd> Change Filter</span>
+      </footer>
     </div>
   </CommandDialog>
 </template>
