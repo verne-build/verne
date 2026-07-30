@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
+import { ref, computed, watch, onMounted, onUnmounted, inject, type Ref } from "vue";
 import type { ScSelection } from "@/composables/useFilePanelTabs";
 import type { GitStatus } from "@/types";
 import type { ReviewContext } from "@/types/shared";
@@ -12,7 +12,7 @@ import ChangesPanel from "./ChangesPanel.vue";
 import DiffView from "./DiffView.vue";
 import ReviewBar from "./ReviewBar.vue";
 import HeaderBranchPill from "./HeaderBranchPill.vue";
-import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "./ui/resizable";
+import OverlaySidebarGroup from "./OverlaySidebarGroup.vue";
 import { Button } from "./ui/button";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "./ui/empty";
 import { ArrowDown, ArrowUp, UploadCloud, GitCompare } from "@lucide/vue";
@@ -47,12 +47,13 @@ const emit = defineEmits<{
 
 const scLayout = ref<"unified" | "split">("unified");
 const scStats = ref<{ added: number; deleted: number } | null>(null);
-watch(() => props.selection, () => { scStats.value = null; });
 
 const LIST_PANEL_MIN_PX = PANEL_SIZES.list.min;
 const LIST_PANEL_MAX_PX = PANEL_SIZES.list.max;
 const clampListPanelPx = (value: number) =>
   Math.min(LIST_PANEL_MAX_PX, Math.max(LIST_PANEL_MIN_PX, value));
+
+const panelWidth = inject<Ref<number>>("rightPanelWidth", ref(0));
 
 const cached = readCachedPanelState();
 const scList = usePanelResizeState({
@@ -63,13 +64,13 @@ const scList = usePanelResizeState({
   visibleStateKey: "sc_list_visible",
   initialVisible: cached.scListVisible,
   writeCachedVisible: writeCachedScListVisible,
+  containerWidth: panelWidth,
 });
 
-const splitDragging = ref(false);
-function preventDragCollapse(panelRef: { resize?: (size: number) => void } | null) {
-  if (!splitDragging.value) return;
-  nextTick(() => panelRef?.resize?.(LIST_PANEL_MIN_PX));
-}
+watch(() => props.selection, () => {
+  scStats.value = null;
+  scList.dismissOverlay();
+});
 
 const scDiffFilePath = computed(() =>
   props.selection && props.rootDir ? `${props.rootDir}/${props.selection.relPath}` : null,
@@ -94,30 +95,20 @@ onUnmounted(() => {
 <template>
   <div class="h-full flex flex-col overflow-hidden flex-1 min-h-0 @container/sc">
     <DiffPanelHeader
-      :list-visible="scList.visible.value"
+      :list-visible="scList.open.value"
       :rel-path="selection?.relPath ?? null"
       :stats="scStats"
       :layout="scLayout"
       :can-revert="true"
       view="changes"
-      @update:list-visible="scList.visible.value = $event"
+      @update:list-visible="scList.open.value = $event"
       @update:layout="scLayout = $event"
       @revert="emit('revert')"
       @update:view="(v) => emit('switch-view', v)"
     />
     <div class="flex-1 min-h-0">
-      <ResizablePanelGroup direction="horizontal" class="h-full" @layout="scList.onLayout">
-        <ResizablePanel
-          :ref="(el) => (scList.panelRef.value = el)"
-          collapsible
-          :collapsed-size="0"
-          :default-size="scList.sizePx.value"
-          :min-size="LIST_PANEL_MIN_PX"
-          :max-size="LIST_PANEL_MAX_PX"
-          size-unit="px"
-          class="bg-sidebar"
-          @collapse="preventDragCollapse(scList.panelRef.value)"
-        >
+      <OverlaySidebarGroup :state="scList" :container-width="panelWidth">
+        <template #sidebar>
           <ChangesPanel
             :working-dir="rootDir"
             :active-rel-path="selection?.relPath ?? null"
@@ -129,9 +120,8 @@ onUnmounted(() => {
             @discard="emit('discard', $event)"
             @status-changed="emit('status-changed', $event)"
           />
-        </ResizablePanel>
-        <ResizableHandle class="cursor-ew-resize" @dragging="splitDragging = $event" />
-        <ResizablePanel :min-size="20">
+        </template>
+        <template #content>
           <div v-if="selection && scDiffFilePath" class="flex flex-col h-full">
             <ReviewBar
               v-if="scopeKey && reviewTotal > 0"
@@ -161,8 +151,8 @@ onUnmounted(() => {
               </EmptyHeader>
             </Empty>
           </div>
-        </ResizablePanel>
-      </ResizablePanelGroup>
+        </template>
+      </OverlaySidebarGroup>
     </div>
     <!-- <footer
       class="flex h-[33px] shrink-0 items-center justify-between gap-2 border-t border-border bg-sidebar px-2 text-xs text-muted-foreground"
