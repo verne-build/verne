@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
+import { ref, computed, watch, onMounted, onUnmounted, inject, type Ref } from "vue";
 import type { CommitsSelection } from "@/composables/useFilePanelTabs";
 import type { ReviewContext } from "@/types/shared";
 import { usePanelResizeState } from "@/composables/usePanelResizeState";
@@ -10,7 +10,7 @@ import DiffPanelHeader from "./DiffPanelHeader.vue";
 import HistoryPanel from "./HistoryPanel.vue";
 import DiffView from "./DiffView.vue";
 import ReviewBar from "./ReviewBar.vue";
-import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "./ui/resizable";
+import OverlaySidebarGroup from "./OverlaySidebarGroup.vue";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "./ui/empty";
 import { GitCompare } from "@lucide/vue";
 
@@ -32,12 +32,13 @@ const emit = defineEmits<{
 
 const commitsLayout = ref<"unified" | "split">("unified");
 const commitsStats = ref<{ added: number; deleted: number } | null>(null);
-watch(() => props.selection, () => { commitsStats.value = null; });
 
 const LIST_PANEL_MIN_PX = PANEL_SIZES.list.min;
 const LIST_PANEL_MAX_PX = PANEL_SIZES.list.max;
 const clampListPanelPx = (value: number) =>
   Math.min(LIST_PANEL_MAX_PX, Math.max(LIST_PANEL_MIN_PX, value));
+
+const panelWidth = inject<Ref<number>>("rightPanelWidth", ref(0));
 
 const cached = readCachedPanelState();
 const commitsList = usePanelResizeState({
@@ -48,13 +49,13 @@ const commitsList = usePanelResizeState({
   visibleStateKey: "commits_list_visible",
   initialVisible: cached.commitsListVisible,
   writeCachedVisible: writeCachedCommitsListVisible,
+  containerWidth: panelWidth,
 });
 
-const splitDragging = ref(false);
-function preventDragCollapse(panelRef: { resize?: (size: number) => void } | null) {
-  if (!splitDragging.value) return;
-  nextTick(() => panelRef?.resize?.(LIST_PANEL_MIN_PX));
-}
+watch(() => props.selection, () => {
+  commitsStats.value = null;
+  commitsList.dismissOverlay();
+});
 
 const commitsDiffFilePath = computed(() =>
   props.selection && props.rootDir ? `${props.rootDir}/${props.selection.relPath}` : null,
@@ -79,29 +80,19 @@ onUnmounted(() => {
 <template>
   <div class="h-full flex flex-col overflow-hidden flex-1 min-h-0">
     <DiffPanelHeader
-      :list-visible="commitsList.visible.value"
+      :list-visible="commitsList.open.value"
       :rel-path="selection?.relPath ?? null"
       :commit-short-id="selection?.commitShortId ?? null"
       :stats="commitsStats"
       :layout="commitsLayout"
       view="history"
-      @update:list-visible="commitsList.visible.value = $event"
+      @update:list-visible="commitsList.open.value = $event"
       @update:layout="commitsLayout = $event"
       @update:view="(v) => emit('switch-view', v)"
     />
     <div class="flex-1 min-h-0">
-      <ResizablePanelGroup direction="horizontal" class="h-full" @layout="commitsList.onLayout">
-        <ResizablePanel
-          :ref="(el) => (commitsList.panelRef.value = el)"
-          collapsible
-          :collapsed-size="0"
-          :default-size="commitsList.sizePx.value"
-          :min-size="LIST_PANEL_MIN_PX"
-          :max-size="LIST_PANEL_MAX_PX"
-          size-unit="px"
-          class="bg-sidebar"
-          @collapse="preventDragCollapse(commitsList.panelRef.value)"
-        >
+      <OverlaySidebarGroup :state="commitsList" :container-width="panelWidth">
+        <template #sidebar>
           <HistoryPanel
             :working-dir="rootDir"
             :active-rel-path="selection?.relPath ?? null"
@@ -109,9 +100,8 @@ onUnmounted(() => {
             class="h-full"
             @open-diff="(f, c, s) => emit('open-diff', f, c, s)"
           />
-        </ResizablePanel>
-        <ResizableHandle class="cursor-ew-resize" @dragging="splitDragging = $event" />
-        <ResizablePanel :min-size="20">
+        </template>
+        <template #content>
           <div v-if="selection && commitsDiffFilePath" class="flex flex-col h-full">
             <ReviewBar
               v-if="scopeKey && reviewTotal > 0"
@@ -141,8 +131,8 @@ onUnmounted(() => {
               </EmptyHeader>
             </Empty>
           </div>
-        </ResizablePanel>
-      </ResizablePanelGroup>
+        </template>
+      </OverlaySidebarGroup>
     </div>
   </div>
 </template>
