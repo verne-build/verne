@@ -7,6 +7,10 @@ pub const POST_INPUT_WORKING_MS: i64 = 3_000;
 pub const INTERRUPT_RECENT_MS: i64 = 30_000;
 pub const IDLE_CONFIRMATIONS: u8 = 3;
 pub const IDENTITY_CONFIRMATIONS: u8 = 2;
+/// How long a process-derived identity stays authoritative for rejecting hooks
+/// from a different agent. The observation loop refreshes it every second; past
+/// this window we fail open rather than drop a real agent's hooks.
+pub const PROCESS_IDENTITY_FRESH_MS: i64 = 3_000;
 
 /// Hook authority is derived from the registry's `HookIntegration` so it cannot
 /// drift from the install set. FullLifecycle integrations own state; Identity

@@ -44,6 +44,10 @@ pub struct AgentStatusEngine {
     latest_hook_sequence: HashMap<String, u64>,
     hook_identity: Option<String>,
     hook_authority: HookAuthority,
+    /// Last agent observed occupying the tab's foreground, with its timestamp.
+    /// Gates hooks from nested agents (see `hook_is_nested`).
+    process_identity: Option<String>,
+    process_identity_at: i64,
     candidate_identity: Option<String>,
     identity_confirmations: u8,
     idle_confirmations: u8,
@@ -61,6 +65,8 @@ impl Default for AgentStatusEngine {
             latest_hook_sequence: HashMap::new(),
             hook_identity: None,
             hook_authority: HookAuthority::IdentityOnly,
+            process_identity: None,
+            process_identity_at: 0,
             candidate_identity: None,
             identity_confirmations: 0,
             idle_confirmations: 0,
@@ -78,7 +84,21 @@ impl AgentStatusEngine {
         self.effective.clone()
     }
 
+    /// A hook from an agent that is NOT the one holding the tab's foreground:
+    /// `VERNE_TAB_ID` is inherited by every descendant, so an agent the owner
+    /// shells out to (`claude` running `codex exec`) posts hooks tagged with
+    /// this tab. Its lifecycle must not drive the tab's identity, state,
+    /// title, or notifications.
+    pub fn hook_is_nested(&self, agent_type: &str, now: i64) -> bool {
+        self.process_identity.as_deref().is_some_and(|current| {
+            current != agent_type && now - self.process_identity_at <= policy::PROCESS_IDENTITY_FRESH_MS
+        })
+    }
+
     pub fn apply_hook(&mut self, report: HookReport) -> Option<EffectiveAgentStatus> {
+        if self.hook_is_nested(&report.agent_type, report.observed_at) {
+            return None;
+        }
         let sequence_key = report
             .session_id
             .as_deref()
@@ -154,6 +174,12 @@ impl AgentStatusEngine {
 
     pub fn observe(&mut self, observation: AgentObservation) -> Option<EffectiveAgentStatus> {
         self.effective.last_output_at = observation.last_output_at;
+        if let Some(process_type) = observation.process_agent_type.as_deref() {
+            self.process_identity = Some(process_type.to_string());
+            self.process_identity_at = observation.observed_at;
+        } else if observation.foreign_in_foreground {
+            self.process_identity = None;
+        }
         if observation.foreign_in_foreground {
             self.hook_identity = None;
             self.hook_authority = HookAuthority::IdentityOnly;
@@ -449,6 +475,32 @@ mod tests {
         assert_eq!(engine.snapshot().agent_type.as_deref(), Some("codex"));
         assert_eq!(engine.snapshot().agent_state, AgentState::Idle);
         assert_eq!(engine.snapshot().source, AgentStatusSource::Process);
+    }
+
+    #[test]
+    fn nested_agent_hooks_do_not_hijack_the_tab() {
+        // claude owns the foreground; it shells out to `codex exec`, whose hooks
+        // inherit VERNE_TAB_ID and post as this tab.
+        let mut engine = AgentStatusEngine::default();
+        engine.apply_hook(hook(1, Some(AgentState::Working)));
+        engine.observe(observation(10_000));
+        let mut nested = codex_hook(2, Some(AgentState::Idle));
+        nested.observed_at = 10_500;
+        assert!(engine.apply_hook(nested).is_none());
+        assert_eq!(engine.snapshot().agent_type.as_deref(), Some("claude"));
+        assert_eq!(engine.snapshot().agent_state, AgentState::Working);
+    }
+
+    #[test]
+    fn hooks_resume_after_process_identity_goes_stale() {
+        // Agent swapped in the same tab: once the old process identity ages out
+        // (or a foreign command clears it) the new agent's hooks are accepted.
+        let mut engine = AgentStatusEngine::default();
+        engine.observe(observation(10_000));
+        let mut later = codex_hook(2, Some(AgentState::Working));
+        later.observed_at = 10_000 + policy::PROCESS_IDENTITY_FRESH_MS + 1;
+        assert!(engine.apply_hook(later).is_some());
+        assert_eq!(engine.snapshot().agent_type.as_deref(), Some("codex"));
     }
 
     #[test]

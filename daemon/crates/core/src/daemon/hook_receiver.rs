@@ -337,6 +337,17 @@ async fn handle_connection(
     let payload: serde_json::Value =
         serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
 
+    // A nested agent (`claude` shelling out to `codex exec`) inherits
+    // VERNE_TAB_ID and posts hooks tagged with the owner's tab. Drop the whole
+    // request — state, title and file-ops all belong to the owner.
+    if let Some(tab_id) = tab_id_header.as_deref() {
+        if is_nested_agent(&sessions, tab_id, &agent_type) {
+            log::info!("[hook] event={event} tab={tab_id} agent={agent_type} — nested agent, dropping");
+            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n").await;
+            return;
+        }
+    }
+
     // Tab-keyed routing
     if !event.is_empty() {
         let session_id = payload
@@ -469,6 +480,23 @@ async fn handle_connection(
     }
 
     let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n").await;
+}
+
+fn is_nested_agent(
+    sessions: &Arc<Mutex<SessionManager>>,
+    tab_id: &str,
+    agent_type: &str,
+) -> bool {
+    let now = chrono::Utc::now().timestamp_millis();
+    sessions
+        .lock()
+        .ok()
+        .and_then(|manager| {
+            let session = manager.get_session_by_agent(tab_id)?;
+            let engine = session.agent_status.lock().ok()?;
+            Some(engine.hook_is_nested(agent_type, now))
+        })
+        .unwrap_or(false)
 }
 
 fn apply_hook_report(

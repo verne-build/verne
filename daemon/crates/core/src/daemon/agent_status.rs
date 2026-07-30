@@ -71,13 +71,7 @@ fn observe_all(
             .first()
             .and_then(|p| crate::services::pgrp::process_cwd(p.pid))
             .map(|p| p.to_string_lossy().into_owned());
-        let process_agent_type = processes.iter().find_map(|p| {
-            identify_process(
-                &p.name,
-                p.argv0.as_deref(),
-                p.argv.as_deref().unwrap_or_default(),
-            )
-        });
+        let process_agent_type = identify_foreground(fg_pgrp, &processes);
         // The foreground pgrp resolved to real process(es) and none is an agent
         // — the login shell, or whatever the user ran after quitting the agent.
         // (Empty processes = pgrp couldn't be resolved this tick; stay sticky
@@ -157,6 +151,33 @@ pub fn publish(
     );
 }
 
+/// Identity of the agent that OWNS the tab. The foreground pgrp holds the
+/// leader AND every process it spawned, so an agent that shells out to another
+/// agent (`claude` running `codex exec`) must not be re-identified as its own
+/// subprocess. Leader first; otherwise the lowest-pid agent member (an ancestor
+/// always starts before the children it spawns), which keeps wrapper launches
+/// (`npx claude`) working without letting a nested agent win.
+fn identify_foreground(
+    pgrp: Option<i32>,
+    processes: &[crate::services::pgrp::ForegroundProcess],
+) -> Option<String> {
+    let identify = |p: &crate::services::pgrp::ForegroundProcess| {
+        identify_process(
+            &p.name,
+            p.argv0.as_deref(),
+            p.argv.as_deref().unwrap_or_default(),
+        )
+    };
+    if let Some(leader) = pgrp.and_then(|pid| processes.iter().find(|p| p.pid == pid as u32)) {
+        if let Some(agent) = identify(leader) {
+            return Some(agent);
+        }
+    }
+    let mut rest: Vec<_> = processes.iter().collect();
+    rest.sort_by_key(|p| p.pid);
+    rest.into_iter().find_map(|p| identify(p))
+}
+
 fn identify_process(name: &str, argv0: Option<&str>, argv: &[String]) -> Option<String> {
     identify_token(name)
         .or_else(|| argv0.and_then(identify_token))
@@ -199,6 +220,40 @@ fn foreground_command(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn proc(pid: u32, name: &str) -> crate::services::pgrp::ForegroundProcess {
+        crate::services::pgrp::ForegroundProcess {
+            pid,
+            name: name.into(),
+            argv0: Some(name.into()),
+            argv: Some(vec![name.into()]),
+        }
+    }
+
+    #[test]
+    fn nested_agent_subprocess_does_not_steal_identity() {
+        // claude (pgrp leader) shelling out to `codex exec` stays claude.
+        let processes = vec![proc(400, "codex"), proc(100, "claude"), proc(300, "bash")];
+        assert_eq!(
+            identify_foreground(Some(100), &processes),
+            Some("claude".into())
+        );
+    }
+
+    #[test]
+    fn falls_back_to_oldest_agent_when_leader_is_a_wrapper() {
+        // `npx claude` → leader is the wrapper; nested codex must not win.
+        let processes = vec![proc(400, "codex"), proc(120, "claude"), proc(100, "npx")];
+        assert_eq!(
+            identify_foreground(Some(100), &processes),
+            Some("claude".into())
+        );
+    }
+
+    #[test]
+    fn no_agent_in_foreground_is_none() {
+        assert_eq!(identify_foreground(Some(100), &[proc(100, "zsh")]), None);
+    }
 
     #[test]
     fn identifies_extended_provider_registry() {
