@@ -349,12 +349,13 @@ async fn handle_connection(
     }
 
     // A subagent of the tab's own agent. Same binary, same tab, same session id
-    // — only the agent path separates them — so `is_nested_agent` (which keys
-    // off agent TYPE) cannot see it. Its lifecycle is not the tab's: a
-    // subagent's permission request must not block the tab and its prompt must
-    // not retitle it. File-ops still apply: the edits are real and land in the
-    // tab's worktree.
-    let subagent = codex_subagent_path(&agent_type, &payload);
+    // — only `agent_id` separates them — so `is_nested_agent` (which keys off
+    // agent TYPE) cannot see it. Its lifecycle is not the tab's: a codex
+    // subagent's permission request must not block the tab, a claude
+    // background agent's tool calls must not drag it back to working after the
+    // turn ended, and neither one's prompt may retitle it. File-ops still
+    // apply: the edits are real and land in the tab's worktree.
+    let subagent = hook_subagent_id(&agent_type, &payload);
     if let Some(path) = subagent.as_deref() {
         log::info!("[hook] event={event} agent={agent_type} subagent={path} — state/title skipped");
     }
@@ -516,32 +517,38 @@ fn is_nested_agent(
         .unwrap_or(false)
 }
 
-/// The codex subagent path this hook came from, or None for the tab's own agent.
+/// The subagent this hook came from, or None for the tab's own agent.
 ///
-/// Codex addresses agents by canonical path — the main agent is `/root`, the
-/// ones it spawns `/root/<task>` (deeper again for their own children) — and
-/// carries it as `agent_id`. It is optional on the tool/permission events
-/// (omitted for the main agent) and required on `Stop`/`Subagent*`, where the
-/// main agent reports `/root`. Everything else is a subagent.
+/// Both agents that spawn subagents carry `agent_id`, but with different
+/// conventions, so the reading is per-agent — a generic one would misfire:
 ///
-/// This is the only discriminator available: codex subagents are separate
-/// concurrent threads running the same binary, inheriting `VERNE_TAB_ID` and
-/// reporting the parent's `session_id`.
+/// - **codex** addresses agents by canonical path: the main agent is `/root`,
+///   the ones it spawns `/root/<task>` (deeper again for their own children).
+///   The field is optional on the tool/permission events (omitted for the main
+///   agent) but REQUIRED on `Stop`/`Subagent*`, where the main agent reports
+///   `/root` — so presence alone would misread every main-agent `Stop`.
+/// - **claude** omits the field entirely for its main loop, on every event
+///   including `Stop`, and sets it (plus `agent_type`) only on events sourced
+///   from a subagent. Presence is the whole signal.
 ///
-/// Codex-only on purpose. `agent_id` is not a shared convention — claude puts
-/// the SESSION id there for its main loop (its own discriminator is
-/// `agent_type: "main" | "subagent"`), so a generic reading would classify
-/// every claude hook as a subagent. Claude also does not want this filter:
-/// its subagents run inside the one session, so a tool of theirs blocking on
-/// permission really does block the tab.
-fn codex_subagent_path(agent_type: &str, payload: &serde_json::Value) -> Option<String> {
-    if agent_type != "codex" {
+/// It is the only discriminator either one gives us: subagents run the same
+/// binary, inherit `VERNE_TAB_ID`, and report the parent's `session_id`.
+///
+/// Dropping their state is safe in both. No subagent-sourced event maps to
+/// `blocked` for claude, so no real block can be hidden; and for a foreground
+/// subagent the main agent's own `PreToolUse`/`PostToolUse` on the spawning
+/// tool already latch the tab working until its `Stop`.
+fn hook_subagent_id(agent_type: &str, payload: &serde_json::Value) -> Option<String> {
+    let raw = payload.get("agent_id")?.as_str()?.trim();
+    let id = raw.trim_end_matches('/');
+    if id.is_empty() {
         return None;
     }
-    let raw = payload.get("agent_id")?.as_str()?.trim();
-    let path = raw.trim_end_matches('/');
-    let is_root = path.is_empty() || path == "/root" || path == "root";
-    (!is_root).then(|| path.to_string())
+    match agent_type {
+        "codex" => (id != "/root" && id != "root").then(|| id.to_string()),
+        "claude" => Some(id.to_string()),
+        _ => None,
+    }
 }
 
 /// The screen contradicts a pending hook Blocked: a live interrupt affordance
@@ -630,14 +637,14 @@ mod tests {
             serde_json::json!({ "agent_id": "/root/" }),
             serde_json::json!({ "agent_id": "" }),
         ] {
-            assert_eq!(codex_subagent_path("codex", &payload), None, "{payload}");
+            assert_eq!(hook_subagent_id("codex", &payload), None, "{payload}");
         }
     }
 
     #[test]
     fn codex_subagent_payloads_report_their_path() {
         assert_eq!(
-            codex_subagent_path(
+            hook_subagent_id(
                 "codex",
                 &serde_json::json!({ "agent_id": "/root/task3_verification" })
             )
@@ -646,22 +653,46 @@ mod tests {
         );
         // Grandchildren nest deeper.
         assert_eq!(
-            codex_subagent_path("codex", &serde_json::json!({ "agent_id": "/root/task1/task_3" }))
+            hook_subagent_id("codex", &serde_json::json!({ "agent_id": "/root/task1/task_3" }))
                 .as_deref(),
             Some("/root/task1/task_3")
         );
     }
 
     #[test]
-    fn other_agents_are_never_read_as_codex_subagents() {
-        // claude puts the SESSION id in agent_id for its main loop, so reading
-        // the field generically would drop every claude hook.
-        let payload = serde_json::json!({
-            "agent_id": "8f1c0f0e-2f4a-4a1e-9b6e-0f4b2a1d3c5e",
-            "agent_type": "main",
-            "session_id": "8f1c0f0e-2f4a-4a1e-9b6e-0f4b2a1d3c5e",
+    fn claude_main_agent_payloads_omit_agent_id() {
+        // Captured from a live session: every main-loop event, Stop included,
+        // arrives without agent_id.
+        let stop = serde_json::json!({
+            "session_id": "a4951a38-0000-4000-8000-000000000000",
+            "hook_event_name": "Stop",
+            "stop_hook_active": false,
+            "background_tasks": [{ "id": "aae9889c073c1ec70", "type": "subagent" }],
         });
-        assert_eq!(codex_subagent_path("claude", &payload), None);
+        assert_eq!(hook_subagent_id("claude", &stop), None);
+    }
+
+    #[test]
+    fn claude_background_agent_hooks_are_subagents() {
+        // The tool calls a background agent keeps making after the main turn's
+        // Stop — these would otherwise drag the tab back to working.
+        let payload = serde_json::json!({
+            "session_id": "a4951a38-0000-4000-8000-000000000000",
+            "hook_event_name": "PreToolUse",
+            "agent_id": "aae9889c073c1ec70",
+            "agent_type": "general-purpose",
+            "tool_name": "Bash",
+        });
+        assert_eq!(
+            hook_subagent_id("claude", &payload).as_deref(),
+            Some("aae9889c073c1ec70")
+        );
+    }
+
+    #[test]
+    fn agents_without_a_subagent_convention_are_never_filtered() {
+        let payload = serde_json::json!({ "agent_id": "whatever" });
+        assert_eq!(hook_subagent_id("copilot", &payload), None);
     }
 
     #[test]
