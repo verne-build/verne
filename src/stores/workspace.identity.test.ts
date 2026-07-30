@@ -131,8 +131,21 @@ describe("latched identity in the renderer", () => {
     tabsListResult = [
       mkTab({ id: "exited", lastAgentType: "claude" }),
       mkTab({ id: "live", lastAgentType: "claude", lastAgentState: "working" }),
+      mkTab({ id: "archived", lastAgentType: "claude", lastAgentState: "working", archivedAt: 123 }),
     ];
     await store.loadTabsForDirectory("dir-1");
     expect(store.agentsList("all").map((a) => a.tab.id)).toEqual(["live"]);
+  });
+
+  it("sessionName uses the persisted agent title when no runtime exists", async () => {
+    const store = useWorkspaceStore();
+    store.directories.push(dir("dir-1"));
+    tabsListResult = [mkTab({
+      id: "agent",
+      lastAgentType: "claude",
+      generatedTitle: "Review auth flow",
+    })];
+    await store.loadTabsForDirectory("dir-1");
+    expect(store.sessionName("agent")).toBe("Review auth flow");
   });
 });

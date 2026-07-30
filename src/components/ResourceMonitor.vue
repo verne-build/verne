@@ -66,7 +66,7 @@ const tabProcessGroups = computed<TabProcGroup[]>(() => {
     const key = p.tabId!;
     let entry = map.get(key);
     if (!entry) {
-      entry = { key, name: store.tabGroupName(key), ram: 0, cpu: 0, panes: [] };
+      entry = { key, name: store.sessionName(key), ram: 0, cpu: 0, panes: [] };
       map.set(key, entry);
       order.push(key);
     }
@@ -82,7 +82,7 @@ const tabProcessGroups = computed<TabProcGroup[]>(() => {
 const CORE_PROCESS_PLACEHOLDERS = 3; // App, Daemon, Sidecar
 const expectedTabGroups = computed(() =>
   Object.values(store.terminalTabsByDirectory).flatMap((tabs) =>
-    tabs.map((t) => ({ key: t.id, name: t.label, paneCount: 1 })),
+    tabs.map((t) => ({ key: t.id, name: store.sessionName(t.id), paneCount: 1 })),
   ),
 );
 

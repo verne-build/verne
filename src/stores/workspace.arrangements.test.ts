@@ -26,7 +26,7 @@ const setAppStateCalls: Array<{ key: string; value: string | null }> = [];
 const tabsClosedIds: string[] = [];
 const scopePinnedCalls: Array<{ id: string; pinned: boolean }> = [];
 const tabsSessionIdCalls: string[] = [];
-const tabsArchiveCalls: string[] = [];
+const tabsArchiveCalls: Array<{ id: string; title: string }> = [];
 let tabsArchiveNext: unknown = null;
 function setTabsArchiveResult(tab: unknown) {
   tabsArchiveNext = tab;
@@ -255,8 +255,8 @@ vi.mock("@/composables/useRpc", () => ({
         tabsSessionIdCalls.push(p.id);
         return null;
       }),
-      tabsArchive: vi.fn(async (p: { id: string }) => {
-        tabsArchiveCalls.push(p.id);
+      tabsArchive: vi.fn(async (p: { id: string; title: string }) => {
+        tabsArchiveCalls.push(p);
         return tabsArchiveNext;
       }),
       tabsUnarchive: vi.fn(async (p: { id: string; resume: boolean }) => {
@@ -1453,7 +1453,7 @@ describe("archive session lifecycle", () => {
     setFailArrangementGets(0);
   });
 
-  it("archiveSession calls tabsArchive once and replaces the tab without disturbing its arrangement leaf", async () => {
+  it("archiveSession persists its visible title and replaces the tab without disturbing its arrangement leaf", async () => {
     const store = useWorkspaceStore();
     const tab = await store.newSession("dir-1");
     const arrBefore = store.arrangementByScope["dir-1"];
@@ -1462,7 +1462,7 @@ describe("archive session lifecycle", () => {
 
     await store.archiveSession(tab.id);
 
-    expect(tabsArchiveCalls).toEqual([tab.id]);
+    expect(tabsArchiveCalls).toEqual([{ id: tab.id, title: "zsh" }]);
     expect(store.terminalTabsByDirectory["dir-1"]?.find((t) => t.id === tab.id)?.archivedAt).toBe(111);
     expect(store.arrangementByScope["dir-1"]).toEqual(arrBefore);
     expect(lastArrangementWrite()).toBeUndefined();

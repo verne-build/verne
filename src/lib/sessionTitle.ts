@@ -14,6 +14,7 @@
 //   8. numbered label
 
 export interface SessionTitleInputs {
+  archived?: boolean;
   userRenamed?: boolean;
   label?: string;
   generatedTitle?: string;
@@ -56,3 +57,15 @@ export function terminalTitleFrom(inputs: TerminalTitleInputs): string {
   const cmd = inputs.foregroundCommand?.replace(/^-/, "");
   return cmd || "zsh";
 }
+
+/** Visible name for any session: agent-owned sessions use their agent title;
+ * ordinary terminals use the process they are running. */
+export function sessionDisplayNameFrom(inputs: SessionTitleInputs): string {
+  const normalized = inputs.oscTitle
+    ? { ...inputs, oscTitle: stripSpinner(inputs.oscTitle) }
+    : inputs;
+  if (normalized.archived && normalized.storedDisplayTitle)
+    return sessionTitleFrom(normalized);
+  return normalized.agentType ? sessionTitleFrom(normalized) : terminalTitleFrom(normalized);
+}
+import { stripSpinner } from "./agentStatus";

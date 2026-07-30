@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { createArchiveSessionOperations, assertRespawnable, type ArchiveSessionDeps } from "./archive-session";
+import {
+  archiveDisplayTitle,
+  createArchiveSessionOperations,
+  assertRespawnable,
+  type ArchiveSessionDeps,
+} from "./archive-session";
 import type { ArchivedSnapshotBlob, GridSnapshotDump, Tab } from "../../src/types/shared";
 
 const DUMP: GridSnapshotDump = {
@@ -128,6 +133,26 @@ function makeHarness(opts: {
 
   return { ops: createArchiveSessionOperations(deps), calls, tabs, blobs, plans };
 }
+
+describe("archiveDisplayTitle", () => {
+  it("prefers the daemon OSC title over a generic renderer fallback", () => {
+    expect(archiveDisplayTitle(baseTab(), { title: "Fix archived titles" }, "Claude"))
+      .toBe("Fix archived titles");
+  });
+
+  it("keeps explicit and generated titles ahead of transient daemon state", () => {
+    expect(archiveDisplayTitle(
+      baseTab({ userRenamed: true, label: "My Session" }),
+      { displayTitle: "Daemon title" },
+      "Renderer title",
+    )).toBe("My Session");
+    expect(archiveDisplayTitle(
+      baseTab({ generatedTitle: "Generated title" }),
+      { displayTitle: "Daemon title" },
+      "Renderer title",
+    )).toBe("Generated title");
+  });
+});
 
 describe("createArchiveSessionOperations", () => {
   it("archives in strict order: snapshot -> write -> kill -> set_archived_at", async () => {

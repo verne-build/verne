@@ -1,5 +1,51 @@
 import { describe, it, expect } from "vitest";
-import { sessionTitleFrom, terminalTitleFrom } from "./sessionTitle";
+import { sessionDisplayNameFrom, sessionTitleFrom, terminalTitleFrom } from "./sessionTitle";
+
+describe("sessionDisplayNameFrom", () => {
+  it("uses the agent title for an agent session", () => {
+    expect(sessionDisplayNameFrom({
+      agentType: "codex",
+      generatedTitle: "Fix upload retries",
+      foregroundCommand: "node",
+      label: "4",
+    })).toBe("Fix upload retries");
+  });
+
+  it("uses the foreground process for an ordinary terminal", () => {
+    expect(sessionDisplayNameFrom({ foregroundCommand: "pnpm", label: "4" })).toBe("pnpm");
+  });
+
+  it("uses the persisted visible title for an archived terminal", () => {
+    expect(sessionDisplayNameFrom({
+      archived: true,
+      storedDisplayTitle: "pnpm dev",
+      label: "4",
+    })).toBe("pnpm dev");
+  });
+
+  it("preserves an explicit rename", () => {
+    expect(sessionDisplayNameFrom({
+      userRenamed: true,
+      label: "Logs",
+      agentType: "codex",
+      generatedTitle: "Fix upload retries",
+    })).toBe("Logs");
+  });
+
+  it("removes an animated spinner from a pending agent title", () => {
+    expect(sessionDisplayNameFrom({ agentType: "claude", oscTitle: "✳ Review auth flow" }))
+      .toBe("Review auth flow");
+  });
+
+  it("preserves spinner-like glyphs in an explicit rename", () => {
+    expect(sessionDisplayNameFrom({
+      userRenamed: true,
+      label: "★ Production",
+      agentType: "claude",
+      oscTitle: "✳ Pending",
+    })).toBe("★ Production");
+  });
+});
 
 describe("sessionTitleFrom", () => {
   it("a manual rename beats everything", () => {

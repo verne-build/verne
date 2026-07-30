@@ -8,8 +8,7 @@ import { useWorkspaceStore } from "@/stores/workspace";
 import { bottomListRows, type BottomListRow } from "@/lib/bottomList";
 import { bottomSurfaceKey, groupName, groupNumber } from "@/lib/bottomPanel";
 import { collectPaneIds } from "@/lib/paneLayout";
-import { terminalTitleFrom } from "@/lib/sessionTitle";
-import { resolveDisplayState, aggregateGroupState, stripSpinner } from "@/lib/agentStatus";
+import { resolveDisplayState, aggregateGroupState } from "@/lib/agentStatus";
 import type { DisplayState } from "@/lib/agentStatus";
 import { confirmCloseTerminals } from "@/composables/useConfirmClose";
 import StatusIndicator from "@/components/StatusIndicator.vue";
@@ -42,16 +41,7 @@ function paneTab(paneId: string) {
   return (store.terminalTabsByDirectory[props.dirId] ?? []).find((t) => t.id === paneId);
 }
 function paneName(paneId: string): string {
-  const rt = store.tabRuntime.get(paneId);
-  const tab = paneTab(paneId);
-  return stripSpinner(
-    terminalTitleFrom({
-      userRenamed: tab?.userRenamed,
-      label: tab?.label,
-      agentType: rt?.agentType ?? tab?.lastAgentType ?? undefined,
-      foregroundCommand: rt?.foregroundCommand,
-    }),
-  );
+  return store.sessionName(paneId);
 }
 function panesOf(groupId: string): string[] {
   const arr = store.arrangementFor(bottomSurfaceKey(props.dirId, groupId));

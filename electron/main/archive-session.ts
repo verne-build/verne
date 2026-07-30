@@ -1,6 +1,32 @@
 import type { ArchivedSnapshotBlob, GridSnapshotDump, Tab } from "../../src/types/shared";
 import { resumeCommand } from "./resume-registry";
 
+export interface ArchiveTitleState {
+  displayTitle?: string | null;
+  title?: string | null;
+}
+
+function nonEmpty(value: string | null | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed || undefined;
+}
+
+/** Resolve the title to freeze before the daemon session is killed. Renderer
+ *  state is only a hint: main also reads the daemon so a stale/HMR renderer
+ *  cannot archive a row with no persisted title. */
+export function archiveDisplayTitle(
+  tab: Tab,
+  state: ArchiveTitleState | undefined,
+  rendererTitle: string | undefined,
+): string | undefined {
+  if (tab.userRenamed) return nonEmpty(tab.label);
+  return nonEmpty(tab.generatedTitle)
+    ?? nonEmpty(state?.displayTitle)
+    ?? nonEmpty(state?.title)
+    ?? nonEmpty(rendererTitle)
+    ?? nonEmpty(tab.displayTitle);
+}
+
 // Dependency-injected so the ordering/failure semantics below are testable
 // without a real daemon socket or SQLite file (see archive-session.test.ts).
 export interface ArchiveSessionDeps {

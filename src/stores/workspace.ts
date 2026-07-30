@@ -40,7 +40,7 @@ import {
   type BottomPanelState,
 } from "@/lib/bottomPanel";
 import { shouldApplyAgentRevision } from "@/lib/agentStatus";
-import { sessionTitleFrom } from "@/lib/sessionTitle";
+import { sessionDisplayNameFrom } from "@/lib/sessionTitle";
 import { buildSessionsList, type SessionRow } from "@/lib/sessionsView";
 import {
   applyArrangementSizes,
@@ -892,7 +892,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   // title → persisted display title → live OSC title → foreground/agent
   // process → numbered fallback.
   // Computed live so renames (and generated titles) propagate to rows.
-  // Precedence itself lives in sessionTitleFrom (testable without Pinia).
+  // Agent-vs-terminal routing and precedence live in sessionDisplayNameFrom
+  // (testable without Pinia).
   // Named `sessionName` post slice-2 (one session == one pane, no more group
   // indirection); `tabGroupName` alias kept for one slice to limit consumer
   // churn.
@@ -900,14 +901,15 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     const dirId = tabDirId(sessionId) ?? selectedDirectoryId.value ?? "";
     const tab = (terminalTabsByDirectory.value[dirId] ?? []).find((t) => t.id === sessionId);
     const rt = tabRuntime.value.get(sessionId);
-    return sessionTitleFrom({
+    return sessionDisplayNameFrom({
       userRenamed: tab?.userRenamed,
       label: tab?.label,
       generatedTitle: tab?.generatedTitle,
       displayTitle: rt?.displayTitle ?? undefined,
       storedDisplayTitle: tab?.displayTitle,
+      archived: tab?.archivedAt != null,
       oscTitle: oscTitleByTab.value.get(sessionId),
-      agentType: rt?.agentType ?? undefined,
+      agentType: rt?.agentType ?? tab?.lastAgentType ?? undefined,
       foregroundCommand: rt?.foregroundCommand,
     });
   }
@@ -1395,7 +1397,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
    *  the resulting (now-archived) tab locally. Never call tabsSessionId/
    *  tabsClose here — that's the daemon's job inside tabs_archive. */
   async function archiveSession(id: string): Promise<void> {
-    const tab = await useRpc().request.tabsArchive({ id });
+    const tab = await useRpc().request.tabsArchive({ id, title: sessionName(id) });
     applyArchivedTab(tab);
   }
 
@@ -1635,7 +1637,11 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     // agentCount in db/tabs.ts) — otherwise every session that ever ran an agent
     // shows up in the palette.
     return sessionsList(scope)
-      .filter((r) => r.agentType && tabRuntime.value.get(r.tab.id)?.agentState != null)
+      .filter((r) =>
+        r.tab.archivedAt == null
+        && r.agentType
+        && tabRuntime.value.get(r.tab.id)?.agentState != null
+      )
       .map(({ tab, directory }) => ({ tab, directory }));
   }
 

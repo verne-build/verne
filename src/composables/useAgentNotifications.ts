@@ -2,7 +2,6 @@ import { toast } from "vue-sonner";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useSettings } from "@/composables/useSettings";
 import { useSettingsScreen } from "@/composables/useSettingsScreen";
-import { stripSpinner } from "@/lib/agentStatus";
 import { agentLabel, notifyKind, notifyMessage, type AgentNotifyKind, type AgentNotifyState } from "@/lib/agentNotifications";
 import type { TabUpdatedEvent } from "@/types";
 
@@ -18,7 +17,7 @@ function focusTab(tabId: string): void {
 
 function showToast(kind: AgentNotifyKind, payload: TabUpdatedEvent): void {
   const store = useWorkspaceStore();
-  const tabTitle = stripSpinner(store.tabGroupName(payload.tabId));
+  const tabTitle = store.sessionName(payload.tabId);
   const title = tabTitle || agentLabel(payload.agentType!);
   const description = notifyMessage(kind, payload.agentType!);
 

@@ -164,8 +164,8 @@ const request = {
     invoke("tabs_rename", { id: p.id, label: p.label }),
   tabsClose: (p: { id: string }): Promise<boolean> =>
     invoke("tabs_close", { id: p.id }),
-  tabsArchive: (p: { id: string }): Promise<Tab> =>
-    invoke("tabs_archive", { id: p.id }),
+  tabsArchive: (p: { id: string; title: string }): Promise<Tab> =>
+    invoke("tabs_archive", { id: p.id, title: p.title }),
   tabsUnarchive: (p: { id: string; resume: boolean }): Promise<Tab> =>
     invoke("tabs_unarchive", { id: p.id, resume: p.resume }),
   tabsResume: (p: { id: string }): Promise<string> =>

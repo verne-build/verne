@@ -39,12 +39,18 @@ import {
   defaultLabel,
   setTabArchivedAt,
   setTabGeneratedTitle,
+  updateTabPresentationSnapshot,
 } from "./db/tabs";
 import { createSessionTitleGeneration } from "./session-title";
 import { titleGeneratorFor } from "./title-generator-registry";
 import { runTitleGenerator } from "./run-title-generator";
 import { writeTabSnapshot, readTabSnapshotBlob, deleteTabSnapshot } from "./db/tabSnapshots";
-import { createArchiveSessionOperations, assertRespawnable } from "./archive-session";
+import {
+  archiveDisplayTitle,
+  createArchiveSessionOperations,
+  assertRespawnable,
+  type ArchiveTitleState,
+} from "./archive-session";
 import { createResumeSessionOperations } from "./resume-session";
 import { canResumeAgent } from "./resume-registry";
 import type { DatabaseSync } from "node:sqlite";
@@ -291,7 +297,24 @@ function registerTabOrchestration(d: DaemonClient, s: DaemonClient): void {
   });
 
   // archive: durable snapshot -> daemon kill -> flip archived_at (see archive-session.ts).
-  registerNative("tabs_archive", async ({ id }: { id: string }) => {
+  registerNative("tabs_archive", async ({ id, title }: { id: string; title?: string }) => {
+    const stored = getTab(getDb(), id);
+    const states = await d.request<Array<ArchiveTitleState & { tabId: string }>>(
+      "get_agent_states",
+      null,
+    ).catch(() => []);
+    const displayTitle = stored
+      ? archiveDisplayTitle(stored, states.find((state) => state.tabId === id), title)
+      : undefined;
+    if (stored && displayTitle) {
+      updateTabPresentationSnapshot(getDb(), {
+        tabId: id,
+        agentType: stored.lastAgentType ?? null,
+        agentState: stored.lastAgentState ?? null,
+        sessionId: stored.lastAgentSessionId ?? null,
+        displayTitle,
+      });
+    }
     const tab = decorateTab(await archiveOps.archive(id));
     emit("tab-archived", { tab });
     return tab;
