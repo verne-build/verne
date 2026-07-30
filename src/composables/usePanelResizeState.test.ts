@@ -111,3 +111,59 @@ describe("usePanelResizeState overlay mode", () => {
     expect(writeCachedPanelPx).not.toHaveBeenCalled();
   });
 });
+
+describe("usePanelResizeState without a visibleStateKey (e.g. search)", () => {
+  const makeNoPersist = (width = 900) => {
+    const containerWidth = ref(width);
+    const state = usePanelResizeState({
+      cacheKey: "search",
+      pxStateKey: "search_list_px",
+      initialPx: 220,
+      clamp: (px: number) => px,
+      containerWidth,
+    });
+    return { containerWidth, state };
+  };
+
+  it("still drives panelRef.expand()/collapse() while docked", async () => {
+    const { state } = makeNoPersist(900);
+    await nextTick();
+    const expand = vi.fn();
+    const collapse = vi.fn();
+    state.panelRef.value = { expand, collapse };
+
+    state.open.value = false;
+    await nextTick();
+    expect(collapse).toHaveBeenCalled();
+
+    state.open.value = true;
+    await nextTick();
+    expect(expand).toHaveBeenCalled();
+  });
+
+  it("never calls setAppState for visibility (no persistence without visibleStateKey)", async () => {
+    const { state } = makeNoPersist(900);
+    await nextTick();
+    state.panelRef.value = { expand: vi.fn(), collapse: vi.fn() };
+
+    state.open.value = false;
+    await nextTick();
+    state.open.value = true;
+    await nextTick();
+
+    expect(setAppState).not.toHaveBeenCalled();
+  });
+
+  it("still auto-collapses a late-arriving panelRef when closed and docked", async () => {
+    const { state } = makeNoPersist(900);
+    await nextTick();
+    state.open.value = false;
+    await nextTick();
+
+    const collapse = vi.fn();
+    state.panelRef.value = { expand: vi.fn(), collapse };
+    await nextTick();
+    await nextTick();
+    expect(collapse).toHaveBeenCalled();
+  });
+});

@@ -41,19 +41,21 @@ export function usePanelResizeState(opts: Options) {
     }
   }
 
-  if (opts.visibleStateKey) {
-    watch(visible, (v) => {
+  // Always wire expand/collapse — only the persistence side (cache write,
+  // setAppState debounce) is gated on a caller opting into a visibleStateKey.
+  watch(visible, (v) => {
+    if (!overlayMode.value) v ? panelRef.value?.expand() : panelRef.value?.collapse();
+    if (opts.visibleStateKey) {
       opts.writeCachedVisible?.(v);
-      if (!overlayMode.value) v ? panelRef.value?.expand() : panelRef.value?.collapse();
       if (visTimer) clearTimeout(visTimer);
       visTimer = setTimeout(() => {
         useRpc().request.setAppState({ key: opts.visibleStateKey!, value: v ? "true" : "false" });
       }, 300);
-    });
-    watch(panelRef, (r) => {
-      if (r && !visible.value && !overlayMode.value) nextTick(() => r.collapse());
-    });
-  }
+    }
+  });
+  watch(panelRef, (r) => {
+    if (r && !visible.value && !overlayMode.value) nextTick(() => r.collapse());
+  });
 
   if (opts.containerWidth) {
     const width = opts.containerWidth;
