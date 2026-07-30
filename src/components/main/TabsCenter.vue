@@ -28,9 +28,6 @@ const shortcuts = useShortcuts();
 const centerPaneAnchorRegistry = createCenterPaneAnchorRegistry();
 provide(centerPaneAnchorRegistryKey, centerPaneAnchorRegistry);
 
-const persistentCenterPanesEnabled = import.meta.env.DEV
-  && window.localStorage.getItem("verne:persistent-center-panes") === "1";
-
 const rightCollapsed = inject<Ref<boolean>>("rightCollapsed");
 const leftCollapsed = inject<Ref<boolean>>("leftCollapsed");
 function expandRight() {
@@ -43,7 +40,7 @@ const arrangement = computed(() =>
   dirId.value ? store.centerDisplayArrangementFor(dirId.value) : null,
 );
 const centerPanePlacements = computed(() => {
-  if (!persistentCenterPanesEnabled || !dirId.value || !arrangement.value || store.pendingPicker)
+  if (!dirId.value || !arrangement.value || store.pendingPicker)
     return [];
   return deriveCenterPanePlacements(arrangement.value.layout, {
     scopeId: dirId.value,
@@ -214,27 +211,12 @@ onUnmounted(() => {
           class="flex-1 min-h-0"
         />
       </div>
-      <template v-else-if="arrangement">
-        <div
-          v-if="persistentCenterPanesEnabled"
-          :key="dirId"
-          class="flex-1 min-h-0"
-        >
-          <SplitLayout
-            :node="arrangement.layout"
-            :scope-id="dirId"
-            :focused-session-id="store.focusedSessionId"
-            :multi="paneCount(arrangement.layout) > 1"
-            :reserve-right-overlay="showRightOverlay"
-            :reserve-left-overlay="!!leftCollapsed"
-            center-display
-            persistent-center-panes
-          />
-          <PersistentCenterPaneHost :placements="centerPanePlacements" />
-        </div>
+      <div
+        v-else-if="arrangement"
+        :key="dirId"
+        class="flex-1 min-h-0"
+      >
         <SplitLayout
-          v-else
-          :key="dirId"
           :node="arrangement.layout"
           :scope-id="dirId"
           :focused-session-id="store.focusedSessionId"
@@ -243,7 +225,8 @@ onUnmounted(() => {
           :reserve-left-overlay="!!leftCollapsed"
           center-display
         />
-      </template>
+        <PersistentCenterPaneHost :placements="centerPanePlacements" />
+      </div>
       <!-- A selected scope without an arrangement intentionally reaches the
            picker branch above; keep this fallback for incomplete hydration. -->
       <div v-else class="flex-1 min-h-0 bg-[var(--editor-bg)]" />

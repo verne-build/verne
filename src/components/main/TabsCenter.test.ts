@@ -242,12 +242,9 @@ async function flush(): Promise<void> {
   }
 }
 
-async function mountTabs(options: { persistent?: boolean; realTerminal?: boolean } = {}) {
+async function mountTabs(options: { realTerminal?: boolean } = {}) {
   vi.resetModules();
-  if (options.persistent === false)
-    localStorage.removeItem("verne:persistent-center-panes");
-  else
-    localStorage.setItem("verne:persistent-center-panes", "1");
+  localStorage.removeItem("verne:persistent-center-panes");
 
   if (options.realTerminal) {
     vi.doUnmock("./TerminalPane.vue");
@@ -306,17 +303,18 @@ afterEach(() => {
 
 describe("TabsCenter layout controls", () => {
   it("keeps layout controls unbordered", async () => {
-    await mountTabs({ persistent: false });
+    await mountTabs();
 
     expect(host.querySelector("[data-layout-controls-divider]")).toBeNull();
   });
 
-  it("keeps the embedded terminal path when the rollout key is absent", async () => {
-    await mountTabs({ persistent: false });
+  it("uses the persistent host and center anchor without a rollout key", async () => {
+    await mountTabs();
 
     expect(pane("session-a")).not.toBeNull();
-    expect(host.querySelector("[data-persistent-center-pane-host]")).toBeNull();
-    expect(host.querySelector("[data-center-pane-anchor]")).toBeNull();
+    expect(localStorage.getItem("verne:persistent-center-panes")).toBeNull();
+    expect(host.querySelector("[data-persistent-center-pane-host]")).not.toBeNull();
+    expect(host.querySelector("[data-center-pane-anchor]")).not.toBeNull();
   });
 });
 

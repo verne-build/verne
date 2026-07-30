@@ -150,13 +150,12 @@ describe("SplitLayout center pane anchors", () => {
     host.remove();
   });
 
-  it("anchors an opted-in real center session leaf", async () => {
+  it("anchors a real center session leaf by default", async () => {
     mount({
       node: { pane: "session-a" },
       scopeId: "dir-1",
       multi: false,
       centerDisplay: true,
-      persistentCenterPanes: true,
     });
     await nextTick();
 
@@ -170,25 +169,10 @@ describe("SplitLayout center pane anchors", () => {
       scopeId: "dir-1",
       multi: false,
       centerDisplay: true,
-      persistentCenterPanes: true,
     });
     await nextTick();
 
     expect(host.querySelector('[data-center-picker="center-picker:test"]')).not.toBeNull();
-    expect(host.querySelector("[data-center-pane-anchor]")).toBeNull();
-  });
-
-  it("keeps the embedded center terminal while the rollout is disabled", async () => {
-    mount({
-      node: { pane: "session-a" },
-      scopeId: "dir-1",
-      multi: false,
-      centerDisplay: true,
-      persistentCenterPanes: false,
-    });
-    await nextTick();
-
-    expect(host.querySelector('[data-terminal-pane="session-a"]')).not.toBeNull();
     expect(host.querySelector("[data-center-pane-anchor]")).toBeNull();
   });
 
@@ -198,7 +182,6 @@ describe("SplitLayout center pane anchors", () => {
       scopeId: "bottom:dir-1:bt-1",
       multi: false,
       centerDisplay: false,
-      persistentCenterPanes: true,
       endMode: "close",
       compact: true,
       horizontalOnly: true,
@@ -214,7 +197,7 @@ describe("SplitLayout center pane anchors", () => {
     expect(host.querySelector("[data-center-pane-anchor]")).toBeNull();
   });
 
-  it("forwards the opted-in anchor branch through nested horizontal and vertical splits", async () => {
+  it("forwards the anchor branch through nested horizontal and vertical splits", async () => {
     mount({
       node: {
         direction: "h",
@@ -231,7 +214,6 @@ describe("SplitLayout center pane anchors", () => {
       scopeId: "dir-1",
       multi: true,
       centerDisplay: true,
-      persistentCenterPanes: true,
     });
     await nextTick();
 

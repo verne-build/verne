@@ -33,8 +33,6 @@ const props = defineProps<{
   horizontalOnly?: boolean;
   /** Resize a renderer-only center arrangement without persisting picker leaves. */
   centerDisplay?: boolean;
-  /** Temporarily render center session leaves as persistent-pane anchors. */
-  persistentCenterPanes?: boolean;
 }>();
 
 const store = useWorkspaceStore();
@@ -65,7 +63,7 @@ onBeforeUnmount(() => {
     :reserve-left-overlay="reserveLeftOverlay"
   />
   <CenterPaneAnchor
-    v-else-if="isLeaf(node) && centerDisplay && persistentCenterPanes"
+    v-else-if="isLeaf(node) && centerDisplay"
     :anchor-id="centerPaneAnchorId(scopeId, node.pane)"
   />
   <TerminalPane
@@ -109,7 +107,6 @@ onBeforeUnmount(() => {
           :compact="compact"
           :horizontal-only="horizontalOnly"
           :center-display="centerDisplay"
-          :persistent-center-panes="persistentCenterPanes"
         />
       </ResizablePanel>
     </template>
