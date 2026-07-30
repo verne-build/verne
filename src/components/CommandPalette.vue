@@ -297,12 +297,12 @@ const noResults = computed(() => {
           @keydown="onKeydown"
         />
       </div>
-      <div class="flex items-center gap-1 px-3 py-1.5" aria-label="Command palette filters">
+      <div class="flex items-center gap-1 px-3 py-1.5" role="group" aria-label="Command palette filters">
         <button
           v-for="filter in COMMAND_PALETTE_FILTERS"
           :key="filter.mode"
           type="button"
-          class="h-10 rounded-full px-3 text-sm font-medium transition-[color,background-color,transform] duration-150 active:scale-[0.96]"
+          class="h-10 rounded-full px-3 text-sm font-medium transition-[color,background-color,scale] duration-150 active:scale-[0.96]"
           :class="mode === filter.mode
             ? 'bg-secondary text-secondary-foreground'
             : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'"
