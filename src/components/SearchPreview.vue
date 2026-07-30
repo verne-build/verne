@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref, shallowRef, watch, onBeforeUnmount, nextTick } from "vue";
 import * as monaco from "monaco-editor";
-import { SquareArrowOutUpRight } from "@lucide/vue";
+import { SquareArrowOutUpRight, PanelLeft } from "@lucide/vue";
+import PanelLeftFilled from "./icons/PanelLeftFilled.vue";
 import { useRpc, type ContentSearchMatch } from "@/composables/useRpc";
 import { useSettings } from "@/composables/useSettings";
 import { useTheme } from "@/composables/useTheme";
@@ -13,7 +14,10 @@ import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "./ui/t
 const props = defineProps<{
   match: ContentSearchMatch | null;
   rootDir?: string;
+  listVisible: boolean;
 }>();
+
+const emit = defineEmits<{ "update:listVisible": [v: boolean] }>();
 
 const { settings } = useSettings();
 const { activeThemeName, getActiveThemeSpec } = useTheme();
@@ -124,10 +128,20 @@ onBeforeUnmount(() => {
 <template>
   <div class="flex h-full min-h-0 flex-col">
     <div
-      v-if="match"
       class="flex h-8 shrink-0 items-center justify-between gap-1 overflow-hidden border-b border-border bg-sidebar px-2 text-xs text-muted-foreground"
     >
+      <Button
+        size="icon-xs"
+        variant="ghost"
+        class="text-muted-foreground shrink-0"
+        tabindex="0"
+        @click="emit('update:listVisible', !listVisible)"
+      >
+        <PanelLeft v-if="!listVisible" class="size-3.5" />
+        <PanelLeftFilled v-else class="size-3.5" />
+      </Button>
       <span
+        v-if="match"
         :title="match.relPath"
         class="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap [direction:rtl]"
       >
@@ -136,7 +150,7 @@ onBeforeUnmount(() => {
           <span class="text-foreground">{{ pathParts(match.relPath).filename }}</span>
         </span>
       </span>
-      <TooltipProvider :delay-duration="400">
+      <TooltipProvider v-if="match" :delay-duration="400">
         <Tooltip>
           <TooltipTrigger as-child>
             <Button size="icon-xs" variant="ghost" class="shrink-0" @click="openInEditor">

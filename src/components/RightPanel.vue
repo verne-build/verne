@@ -10,7 +10,7 @@ const NotesPanel = defineAsyncComponent(() => import("./NotesPanel.vue"));
 const SearchPanel = defineAsyncComponent(() => import("./SearchPanel.vue"));
 // Async so WKWebView plumbing only loads when a browser tab is opened.
 const BrowserView = defineAsyncComponent(() => import("@/components/browser/BrowserView.vue"));
-import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "./ui/resizable";
+import OverlaySidebarGroup from "./OverlaySidebarGroup.vue";
 import { ask } from "@/platform";
 import { Files } from "@lucide/vue";
 import { EXPLORER_TAB_ID, SC_TAB_ID, COMMITS_TAB_ID, NOTES_TAB_ID, NEW_TAB_ID, type FilePanelBrowserTab } from "@/types";
@@ -174,16 +174,8 @@ const panelWidth = ref(0);
 let panelObserver: ResizeObserver | null = null;
 provide("rightPanelWidth", panelWidth);
 
-const LIST_PANEL_MIN_PX = PANEL_SIZES.list.min;
-const LIST_PANEL_MAX_PX = PANEL_SIZES.list.max;
 const clampListPanelPx = (value: number) =>
-  Math.min(LIST_PANEL_MAX_PX, Math.max(LIST_PANEL_MIN_PX, value));
-
-const splitDragging = ref(false);
-function preventDragCollapse(panelRef: { resize?: (size: number) => void } | null) {
-  if (!splitDragging.value) return;
-  nextTick(() => panelRef?.resize?.(LIST_PANEL_MIN_PX));
-}
+  Math.min(PANEL_SIZES.list.max, Math.max(PANEL_SIZES.list.min, value));
 
 const explorer = usePanelResizeState({
   cacheKey: "explorer",
@@ -205,6 +197,8 @@ const search = usePanelResizeState({
   clamp: clampListPanelPx,
   containerWidth: panelWidth,
 });
+
+watch(searchSelected, () => search.dismissOverlay());
 
 // Palette lives in App.vue now (so it works with the right panel collapsed);
 // open it via the same window event the global shortcuts use.
@@ -430,39 +424,42 @@ function revertScFile() {
     <template v-else-if="activeTab?.kind === 'search' && rootDir && scopeKey">
       <div class="h-full flex flex-col overflow-hidden flex-1 min-h-0">
         <div class="flex-1 min-h-0">
-          <ResizablePanelGroup direction="horizontal" class="h-full" @layout="search.onLayout">
-            <ResizablePanel
-              :ref="(el) => (search.panelRef.value = el)"
-              collapsible
-              :collapsed-size="0"
-              :default-size="search.sizePx.value"
-              :min-size="LIST_PANEL_MIN_PX"
-              :max-size="LIST_PANEL_MAX_PX"
-              size-unit="px"
-              class="bg-sidebar"
-              @collapse="preventDragCollapse(search.panelRef.value)"
-            >
+          <OverlaySidebarGroup :state="search" :container-width="panelWidth">
+            <template #sidebar>
               <SearchPanel
                 :scope-key="scopeKey"
                 :root-dir="rootDir"
                 class="h-full"
               />
-            </ResizablePanel>
-            <ResizableHandle class="cursor-ew-resize" @dragging="splitDragging = $event" />
-            <ResizablePanel :min-size="20">
-              <SearchPreview v-if="searchSelected" :match="searchSelected" :root-dir="rootDir" />
-              <div v-else class="flex h-full items-center justify-center bg-sidebar">
-                <Empty>
-                  <EmptyHeader>
-                    <EmptyMedia variant="icon"><Files /></EmptyMedia>
-                    <EmptyTitle>No Preview</EmptyTitle>
-                    <EmptyDescription>Select a result to preview the file.</EmptyDescription>
-                  </EmptyHeader>
-                  <EmptyContent />
-                </Empty>
+            </template>
+            <template #content>
+              <SearchPreview
+                v-if="searchSelected"
+                :match="searchSelected"
+                :root-dir="rootDir"
+                :list-visible="search.open.value"
+                @update:list-visible="search.open.value = $event"
+              />
+              <div v-else class="flex h-full flex-col bg-sidebar">
+                <SearchPreview
+                  :match="null"
+                  :root-dir="rootDir"
+                  :list-visible="search.open.value"
+                  @update:list-visible="search.open.value = $event"
+                />
+                <div class="flex flex-1 items-center justify-center">
+                  <Empty>
+                    <EmptyHeader>
+                      <EmptyMedia variant="icon"><Files /></EmptyMedia>
+                      <EmptyTitle>No Preview</EmptyTitle>
+                      <EmptyDescription>Select a result to preview the file.</EmptyDescription>
+                    </EmptyHeader>
+                    <EmptyContent />
+                  </Empty>
+                </div>
               </div>
-            </ResizablePanel>
-          </ResizablePanelGroup>
+            </template>
+          </OverlaySidebarGroup>
         </div>
       </div>
     </template>
