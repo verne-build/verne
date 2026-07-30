@@ -815,6 +815,17 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     focusSession(tab.id);
   }
 
+  /** Surface-aware split entry point for global shortcuts and menu commands. */
+  async function splitActivePane(direction: SplitDir): Promise<void> {
+    const sessionId = focusedSessionIdForActiveSurface.value;
+    if (!sessionId) return;
+    if (activeSurface.value === "bottom") {
+      await splitSessionWithNew(sessionId, "h");
+      return;
+    }
+    openCenterSplitPicker(sessionId, direction);
+  }
+
   // Same-scope only — cross-scope moves are forbidden by spec (a session never
   // leaves the directory that owns its PTY). Cross-SURFACE within a scope is
   // allowed: the source surface is detached first.
@@ -1893,6 +1904,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     createTab,
     newSession,
     splitSessionWithNew,
+    splitActivePane,
     openCenterSplitPicker,
     cancelCenterSplitPicker,
     startCenterSplitPicker,

@@ -413,9 +413,7 @@ function focusSession() {
 // Split the focused terminal pane. 'h' = side-by-side, 'v' = stacked. The bottom
 // panel is side-by-side only, so its pane headers stay one continuous bar.
 function splitActivePane(direction: "h" | "v") {
-  const id = store.focusedSessionIdForActiveSurface;
-  if (!id) return;
-  void store.splitSessionWithNew(id, store.activeSurface === "bottom" ? "h" : direction);
+  void store.splitActivePane(direction);
 }
 
 function handleMenuAction(e: Event) {

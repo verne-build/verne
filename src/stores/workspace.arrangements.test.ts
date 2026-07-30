@@ -1690,6 +1690,34 @@ describe("bottom terminal panel", () => {
     return store;
   }
 
+  it("routes the center split shortcut to a picker without creating a PTY", async () => {
+    const store = await withDir();
+    const tab = await store.newSession("dir-1");
+    const createCount = tabsCreateCalls.length;
+
+    await store.splitActivePane("v");
+
+    expect(tabsCreateCalls).toHaveLength(createCount);
+    const panes = collectPaneIds(store.centerDisplayArrangementFor("dir-1")!.layout);
+    expect(panes[0]).toBe(tab.id);
+    expect(panes[1]).toMatch(/^center-picker:/);
+    expect(store.arrangementFor("dir-1")).toEqual({ version: 1, layout: { pane: tab.id } });
+  });
+
+  it("keeps the bottom split shortcut eager and horizontal", async () => {
+    const store = await withDir();
+    const tab = await store.createBottomTerminal("dir-1");
+    const state = store.bottomPanelFor("dir-1")!;
+    const key = bottomSurfaceKey("dir-1", state.activeTabId!);
+
+    await store.splitActivePane("v");
+
+    const arrangement = store.arrangementFor(key)!;
+    expect(collectPaneIds(arrangement.layout)).toContain(tab!.id);
+    expect(collectPaneIds(arrangement.layout)).toHaveLength(2);
+    expect(arrangement.layout).toMatchObject({ direction: "h" });
+  });
+
   it("createBottomTerminal spawns in the scope cwd and opens a bottom surface", async () => {
     const store = await withDir();
     const tab = await store.createBottomTerminal("dir-1");
