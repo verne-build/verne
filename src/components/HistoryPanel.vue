@@ -319,7 +319,7 @@ watch(() => props.workingDir, () => {
     <div
       v-else
       ref="scrollContainer"
-      class="app-scrollbar flex-1 overflow-y-auto min-h-0"
+      class="flex-1 overflow-y-auto min-h-0"
       @scroll="onScroll"
     >
       <div :style="{ height: totalHeight + 'px', position: 'relative' }">

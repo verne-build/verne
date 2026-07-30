@@ -79,7 +79,7 @@ defineExpose({
 <template>
   <div
     ref="scrollEl"
-    class="app-scrollbar h-full overflow-auto focus:outline-none"
+    class="h-full overflow-auto focus:outline-none"
     tabindex="0"
     @scroll="onScroll"
     @keydown="(e) => emit('keydown', e)"
