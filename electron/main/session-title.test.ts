@@ -11,6 +11,7 @@ import type { Tab } from "../../src/types/shared";
 const GEN: TitleGenerator = {
   binaryName: "codex",
   timeoutMs: 1000,
+  attempts: 1,
   args: () => ["exec"],
   instruction: (p) => p,
 };
@@ -55,9 +56,9 @@ describe("createSessionTitleGeneration", () => {
   it("writes the normalized generated title and broadcasts it", async () => {
     const h = harness();
     await h.ops.handle(req());
-    expect(h.written).toEqual([{ id: "t1", title: "Retry The Uploader" }]);
+    expect(h.written).toEqual([{ id: "t1", title: "Retry the uploader" }]);
     expect(h.emitted).toEqual([
-      { name: "tab-title-generated", payload: { tabId: "t1", title: "Retry The Uploader" } },
+      { name: "tab-title-generated", payload: { tabId: "t1", title: "Retry the uploader" } },
     ]);
   });
 
@@ -148,7 +149,22 @@ describe("normalizeGeneratedTitle", () => {
   });
 
   it("truncates to the max length", () => {
-    expect(normalizeGeneratedTitle("abcdefghij", 4)).toBe("abcd");
+    expect(normalizeGeneratedTitle("abcdefghij", 4)).toBe("Abcd");
+  });
+
+  it("downcases Title Case output", () => {
+    expect(normalizeGeneratedTitle("Retry The Failed Uploader")).toBe("Retry the failed uploader");
+  });
+
+  it("capitalizes the first word", () => {
+    expect(normalizeGeneratedTitle("retry the uploader")).toBe("Retry the uploader");
+  });
+
+  it("keeps acronyms, identifiers and known proper nouns", () => {
+    expect(normalizeGeneratedTitle("Fix API Timeout In SessionsSidebar.vue")).toBe(
+      "Fix API timeout in SessionsSidebar.vue",
+    );
+    expect(normalizeGeneratedTitle("Add Vue Router Guard")).toBe("Add Vue router guard");
   });
 
   it("returns null for empty or whitespace-only output", () => {

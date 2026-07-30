@@ -65,6 +65,21 @@ export async function runTitleGenerator(input: {
   });
   if (!bin) return null;
 
+  for (let attempt = 0; attempt < Math.max(1, generator.attempts); attempt++) {
+    const out = await runOnce({ generator, bin, cwd, prompt, attempt });
+    if (out != null) return out;
+  }
+  return null;
+}
+
+async function runOnce(input: {
+  generator: TitleGenerator;
+  bin: string;
+  cwd: string;
+  prompt: string;
+  attempt: number;
+}): Promise<string | null> {
+  const { generator, bin, cwd, prompt, attempt } = input;
   const dir = mkdtempSync(join(tmpdir(), "verne-title-"));
   const outFile = join(dir, "title.txt");
   try {
@@ -82,7 +97,7 @@ export async function runTitleGenerator(input: {
       delete env.VERNE_TAB_ID;
       delete env.VERNE_AGENT_ID;
       delete env.VERNE_AGENT_TYPE;
-      const child = spawn(bin, generator.args({ cwd, outFile }), {
+      const child = spawn(bin, generator.args({ cwd, outFile, attempt }), {
         cwd,
         env,
         stdio: ["pipe", "ignore", "pipe"],
@@ -98,7 +113,7 @@ export async function runTitleGenerator(input: {
       const timer = setTimeout(() => {
         child.kill("SIGKILL");
         console.warn(
-          `[title-generator] timed out after ${generator.timeoutMs}ms; stderr: ${stderr.slice(-500)}`,
+          `[title-generator] attempt ${attempt} timed out after ${generator.timeoutMs}ms; stderr: ${stderr.slice(-500)}`,
         );
         resolve(null);
       }, generator.timeoutMs);
@@ -107,12 +122,15 @@ export async function runTitleGenerator(input: {
         clearTimeout(timer);
         if (code !== 0) {
           console.warn(
-            `[title-generator] exited ${code}; stderr: ${stderr.slice(-500)}`,
+            `[title-generator] attempt ${attempt} exited ${code}; stderr: ${stderr.slice(-500)}`,
           );
           return resolve(null);
         }
         try {
-          resolve(readFileSync(outFile, "utf8"));
+          // Blank counts as failure, not success — otherwise a retry-worthy
+          // run (child wrote nothing) would be accepted as an empty title.
+          const text = readFileSync(outFile, "utf8");
+          resolve(text.trim() ? text : null);
         } catch {
           resolve(null);
         }

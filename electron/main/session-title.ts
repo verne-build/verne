@@ -35,8 +35,37 @@ export interface SessionTitleDeps {
 
 const DEFAULT_MAX_LENGTH = 120;
 
+/** Proper nouns a Title Case → sentence case pass must not flatten. Only names
+ *  that look like ordinary words once lowercased need to be here — anything with
+ *  internal caps or digits (`GitHub`, `TypeScript`, `v2`) is already safe. */
+const KEEP_CAPS = new Set([
+  "verne", "codex", "claude", "vue", "react", "svelte", "angular", "rust", "python",
+  "node", "deno", "bun", "docker", "electron", "monaco", "tailwind", "vite", "vitest",
+  "pinia", "swift", "kotlin", "java", "ruby", "rails", "django", "flask", "redis",
+  "postgres", "sqlite", "linux", "windows", "chrome", "safari", "firefox", "git",
+  "figma", "slack", "notion", "stripe", "cloudflare", "anthropic", "openai", "apple",
+  "google", "sherpa", "monday", "tuesday", "wednesday", "thursday", "friday",
+  "saturday", "sunday", "january", "february", "march", "april", "june", "july",
+  "august", "september", "october", "november", "december",
+]);
+
+/** Sentence case, conservatively: force the first character up, and downcase a
+ *  word only when it's a plain Capitalized-then-lowercase word (`Fix`, `Panel`)
+ *  that isn't a known proper noun. Words with internal caps or digits (`API`,
+ *  `GitHub`, `SessionsSidebar.vue`, `v2`) are left alone — mangling an
+ *  identifier is worse than the odd Title Case leak. */
+function toSentenceCase(text: string): string {
+  const words = text.split(" ").map((w, i) => {
+    if (i === 0) return w;
+    if (!/^[A-Z][a-z]+$/.test(w)) return w;
+    return KEEP_CAPS.has(w.toLowerCase()) ? w : w.toLowerCase();
+  });
+  const out = words.join(" ");
+  return out.charAt(0).toUpperCase() + out.slice(1);
+}
+
 /** Coerce raw model output into a title: unwrap quotes, collapse whitespace,
- *  cap length. Null when nothing usable is left. */
+ *  sentence-case, cap length. Null when nothing usable is left. */
 export function normalizeGeneratedTitle(
   raw: string,
   maxLength: number = DEFAULT_MAX_LENGTH,
@@ -47,6 +76,7 @@ export function normalizeGeneratedTitle(
     text = text.slice(1, -1).trim();
   }
   if (!text) return null;
+  text = toSentenceCase(text);
   return text.length > maxLength ? text.slice(0, maxLength) : text;
 }
 
