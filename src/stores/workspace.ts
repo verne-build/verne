@@ -1080,6 +1080,21 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     triggerRef(tabRuntime);
   }
 
+  function markSessionUnread(tabId: string) {
+    const runtime = tabRuntime.value.get(tabId);
+    const dirId = tabDirId(tabId);
+    const tab = dirId
+      ? (terminalTabsByDirectory.value[dirId] ?? []).find((candidate) => candidate.id === tabId)
+      : undefined;
+    tabRuntime.value.set(tabId, {
+      tabId,
+      agentState: runtime?.agentState ?? tab?.lastAgentState ?? "unknown",
+      ...runtime,
+      needsAcknowledgement: true,
+    });
+    triggerRef(tabRuntime);
+  }
+
   function recordTabActivation(dirId: string, tabId: string | undefined) {
     if (!tabId) return;
     const h = (tabActivationHistory[dirId] ??= []);
@@ -1947,6 +1962,7 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     activeScopeId,
     focusedSessionId,
     selectSession,
+    markSessionUnread,
     hydrateArrangements,
     createWorktree,
     startPickerSession,

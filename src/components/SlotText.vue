@@ -19,9 +19,12 @@ interface SlotOptions {
 const props = withDefaults(defineProps<{
   text: string;
   direction?: "up" | "down";
+  /** Edge characters are paired/staggered from. "right" for right-aligned text. */
+  align?: "left" | "right";
   options?: SlotOptions;
 }>(), {
   direction: "down",
+  align: "left",
 });
 
 const root = ref<HTMLElement | null>(null);
@@ -101,11 +104,20 @@ function animate(toText: string, rawOptions: SlotOptions = {}) {
   const slots = [...existing];
   activeTarget = toText;
   const maxLen = Math.max(fromText.length, toText.length);
+  const rightAligned = props.align === "right";
+  // Right-aligned text pairs chars from the end, so new slots grow off the left edge.
   for (let index = slots.length; index < maxLen; index++) {
     const slot = makeSlot("");
-    el.append(slot);
-    slots.push(slot);
+    if (rightAligned) {
+      el.prepend(slot);
+      slots.unshift(slot);
+    } else {
+      el.append(slot);
+      slots.push(slot);
+    }
   }
+  const fromOffset = rightAligned ? maxLen - fromText.length : 0;
+  const toOffset = rightAligned ? maxLen - toText.length : 0;
 
   const sample = slots.find((slot) => (slot.dataset.char ?? "") !== "") ?? slots[0];
   const styles = getComputedStyle(el);
@@ -130,8 +142,8 @@ function animate(toText: string, rawOptions: SlotOptions = {}) {
   };
 
   for (let index = 0; index < maxLen; index++) {
-    const fromChar = fromText[index] ?? "";
-    const toChar = toText[index] ?? "";
+    const fromChar = fromText[index - fromOffset] ?? "";
+    const toChar = toText[index - toOffset] ?? "";
     if (fromChar === toChar && (options.skipUnchanged || fromChar === "")) continue;
 
     const slot = slots[index];
@@ -147,12 +159,14 @@ function animate(toText: string, rawOptions: SlotOptions = {}) {
     if (fromChar === "" || toChar === "") slot.classList.add("is-resizing");
 
     const isTail = toChar === "";
+    // Distance from the anchored edge — drives stagger order.
+    const orderIndex = rightAligned ? maxLen - 1 - index : index;
     const letterDuration = Math.round(
       options.duration * (isTail ? 0.75 : 1) * (1 + options.bounce * 0.45 * wobble(index, 1)),
     );
     const staggerIndex = isTail
-      ? toText.length * 0.5 + (index - toText.length) * 0.25
-      : index;
+      ? toText.length * 0.5 + (orderIndex - toText.length) * 0.25
+      : orderIndex;
     const baseDelay = Math.max(
       0,
       Math.round(staggerIndex * options.stagger * (1 + options.bounce * 0.25 * wobble(index, 2))),

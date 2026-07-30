@@ -1,15 +1,15 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, shallowRef, watch } from "vue";
-import { Archive, Check, ChevronDown, ChevronRight, FolderOpen, Plus, Search } from "@lucide/vue";
+import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from "vue";
+import { Archive, Check, ChevronDown, FolderOpen, FolderPlus, Search } from "@lucide/vue";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useRpc } from "@/composables/useRpc";
 import { useProjectIcons } from "@/composables/useProjectIcons";
 import { listen, type UnlistenFn } from "@/platform";
-import { stripSpinner } from "@/lib/agentStatus";
 import { partitionSessions, type SessionRow as SessionRowModel } from "@/lib/sessionsView";
 import { sortSessionCards, type CardSortInputs } from "@/lib/sessionSort";
 import SessionCard from "./SessionCard.vue";
 import { Button } from "@/components/ui/button";
+import { ButtonGroup } from "@/components/ui/button-group";
 import { Input } from "@/components/ui/input";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Empty, EmptyContent, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
@@ -19,30 +19,15 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { useScrollFades } from "@/composables/useScrollFades";
 import type { WorkingDirectory } from "@/types";
 
 const store = useWorkspaceStore();
 const { request } = useRpc();
 const { icons: projectIcons } = useProjectIcons();
 
-// top/bottom content fades against the fixed header
-const { bodyEl, atStart, atEnd, update } = useScrollFades();
-
 const rootDirs = computed(() =>
   store.directories.filter((d) => !d.parentDirectoryId),
 );
-
-// -- filter --
-const query = ref("");
-function matches(r: SessionRowModel): boolean {
-  const q = query.value.toLowerCase();
-  return (
-    stripSpinner(store.sessionName(r.tab.id)).toLowerCase().includes(q) ||
-    (r.agentType ?? "").toLowerCase().includes(q) ||
-    r.directory.name.toLowerCase().includes(q)
-  );
-}
 
 const activeChip = ref<string>("all"); // dirId of a ROOT, or "all"; resets every launch (not persisted)
 
@@ -92,12 +77,11 @@ const sortInputs = computed<CardSortInputs>(() => ({
 
 const liveCards = shallowRef<SessionRowModel[]>([]);
 const archivedCards = shallowRef<SessionRowModel[]>([]);
-const archivedOpen = ref(true);
+const archivedOpen = ref(false);
 function recomputeCards() {
   let rows = store.sessionsList("all");
   if (activeChip.value !== "all")
     rows = rows.filter((r) => rootOf(r.directory).id === activeChip.value);
-  if (query.value) rows = rows.filter(matches); // existing matches()
   const { live, archived } = partitionSessions(rows);
   liveCards.value = sortSessionCards(live, sortInputs.value);
   archivedCards.value = sortSessionCards(archived, sortInputs.value);
@@ -108,7 +92,6 @@ watch(
     () => store.activityVersion,
     () => store.directories,
     () => store.terminalTabsByDirectory,
-    query,
     activeChip,
   ],
   recomputeCards,
@@ -187,34 +170,11 @@ watch(() => store.directories.map((d) => d.id).join(","), () => {
   if (activeChip.value !== "all" && !store.directories.some((d) => d.id === activeChip.value))
     activeChip.value = "all";
   refreshAll();
-  nextTick(update);
 });
-// row count changes (new/closed sessions, filter) move the scroll extents
-const sessionCount = computed(() =>
-  Object.values(store.terminalTabsByDirectory).reduce((count, tabs) => count + tabs.length, 0),
-);
-watch([sessionCount, query], () => nextTick(update));
 </script>
 
 <template>
   <div class="relative flex h-full min-h-0 flex-col">
-    <div class="flex h-7 shrink-0 items-center gap-1.5 pl-3 pr-1.5">
-      <div class="text-[10px] uppercase tracking-wide text-muted-foreground/70">Sessions</div>
-      <input
-        v-model="query"
-        type="text"
-        placeholder="Filter"
-        class="h-5 min-w-0 flex-1 rounded-sm bg-transparent px-1.5 text-[11px] text-foreground outline-none placeholder:text-muted-foreground/50 focus:bg-input/30"
-      />
-    </div>
-    <div
-      class="pointer-events-none absolute inset-x-0 top-7 z-10 h-4 bg-linear-to-b from-sidebar to-transparent transition-opacity"
-      :class="atStart ? 'opacity-0' : 'opacity-100'"
-    />
-    <div
-      class="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-4 bg-linear-to-t from-sidebar to-transparent transition-opacity"
-      :class="atEnd ? 'opacity-0' : 'opacity-100'"
-    />
     <Empty v-if="rootDirs.length === 0" class="mx-2 my-3 gap-3 border border-dashed py-6">
       <EmptyHeader>
         <EmptyMedia variant="icon">
@@ -231,7 +191,7 @@ watch([sessionCount, query], () => nextTick(update));
     </Empty>
     <template v-else>
     <!-- Workspace filter -->
-    <div class="flex shrink-0 items-center gap-1.5 px-2 py-1.5">
+    <ButtonGroup class="mx-2 my-1.5 w-auto shrink-0">
       <DropdownMenu :open="workspaceMenuOpen" @update:open="setWorkspaceMenuOpen">
         <DropdownMenuTrigger as-child>
           <Button type="button" variant="outline" size="xs" aria-label="Select Workspace"
@@ -267,56 +227,43 @@ watch([sessionCount, query], () => nextTick(update));
       </DropdownMenu>
       <Button type="button" variant="outline" size="xs" aria-label="Add Workspace"
         class="shrink-0" :disabled="store.picking" @click="store.openAndSelectWorkspace()">
-        <Plus class="size-3.5" />
+        <FolderPlus class="size-3.5 text-muted-foreground" />
       </Button>
-    </div>
+    </ButtonGroup>
 
     <!-- Card list -->
-    <div ref="bodyEl" class="app-scrollbar min-h-0 flex-1 overflow-y-auto pb-3 pt-1" @scroll="update">
-      <TransitionGroup name="session-move">
-        <SessionCard v-for="row in liveCards" :key="row.tab.id"
-          :row="row"
-          :branch="branches.get(row.directory.id)"
-          :root-name="rootOf(row.directory).name"
-          :root-dir-id="rootOf(row.directory).id"
-          :is-worktree="!!row.directory.parentDirectoryId"
-          :now="now" />
-      </TransitionGroup>
+    <div class="min-h-0 flex-1 overflow-y-auto pb-3 pt-1 [scrollbar-gutter:stable]">
+      <SessionCard v-for="row in liveCards" :key="row.tab.id"
+        :row="row"
+        :branch="branches.get(row.directory.id)"
+        :root-name="rootOf(row.directory).name"
+        :root-dir-id="rootOf(row.directory).id"
+        :is-worktree="!!row.directory.parentDirectoryId"
+        :now="now" />
       <div v-if="liveCards.length === 0 && archivedCards.length === 0 && rootDirs.length" class="flex h-24 items-center justify-center px-4 text-center text-xs text-muted-foreground">
         No sessions — press ⌘T
       </div>
       <Collapsible v-if="archivedCards.length" v-model:open="archivedOpen" class="mt-1">
         <CollapsibleTrigger class="flex w-full items-center gap-1.5 px-3 py-1 text-[10px] uppercase tracking-wide text-muted-foreground/70">
-          <ChevronRight class="size-3 shrink-0 transition-transform" :class="archivedOpen ? 'rotate-90' : ''" />
+          <span
+            class="size-0 border-l-[5px] border-l-current border-y-[3.5px] border-y-transparent transition-transform"
+            :class="{ 'rotate-90': archivedOpen }"
+          />
           <Archive class="size-3 shrink-0" />
           <span>Archived</span>
           <span class="tabular-nums">({{ archivedCards.length }})</span>
         </CollapsibleTrigger>
         <CollapsibleContent>
-          <TransitionGroup name="session-move">
-            <SessionCard v-for="row in archivedCards" :key="row.tab.id"
-              :row="row"
-              :branch="branches.get(row.directory.id)"
-              :root-name="rootOf(row.directory).name"
-              :root-dir-id="rootOf(row.directory).id"
-              :is-worktree="!!row.directory.parentDirectoryId"
-              :now="now" />
-          </TransitionGroup>
+          <SessionCard v-for="row in archivedCards" :key="row.tab.id"
+            :row="row"
+            :branch="branches.get(row.directory.id)"
+            :root-name="rootOf(row.directory).name"
+            :root-dir-id="rootOf(row.directory).id"
+            :is-worktree="!!row.directory.parentDirectoryId"
+            :now="now" />
         </CollapsibleContent>
       </Collapsible>
     </div>
     </template>
   </div>
 </template>
-
-<style scoped>
-.session-move-move {
-  transition: transform 240ms ease;
-}
-.session-move-enter-active {
-  transition: opacity 180ms ease;
-}
-.session-move-enter-from {
-  opacity: 0;
-}
-</style>

@@ -112,4 +112,26 @@ describe("SessionsSidebar workspace dropdown", () => {
     namedButton("Add Workspace").click();
     expect(store.openAndSelectWorkspace).toHaveBeenCalledTimes(1);
   });
+
+  it("uses the filled disclosure caret for Archived", async () => {
+    app.unmount();
+    store.sessionsList.mockReturnValue([
+      {
+        tab: { id: "archived-1", archivedAt: 1 },
+        directory: store.directories[0],
+        agentType: null,
+      },
+    ]);
+    app = createApp({ render: () => h(SessionsSidebar) });
+    app.use(createPinia());
+    app.mount(host);
+    await flush();
+
+    const trigger = Array.from(host.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Archived"));
+    const caret = trigger?.firstElementChild;
+
+    expect(caret?.tagName).toBe("SPAN");
+    expect(caret?.classList.contains("border-l-[5px]")).toBe(true);
+  });
 });

@@ -1482,6 +1482,19 @@ describe("archive session lifecycle", () => {
     expect(store.sessionLifecycle.has(tab.id)).toBe(false);
   });
 
+  it("manual unread uses the completion acknowledgement cleared by selection", async () => {
+    const store = useWorkspaceStore();
+    store.directories.push(dir("dir-1"));
+    store.selectDirectory(dir("dir-1"));
+    const tab = await store.newSession("dir-1");
+
+    store.markSessionUnread(tab.id);
+    expect(store.tabRuntime.get(tab.id)?.needsAcknowledgement).toBe(true);
+
+    store.selectSession(tab.id);
+    expect(store.tabRuntime.get(tab.id)?.needsAcknowledgement).toBe(false);
+  });
+
   it("applying a duplicate archive local-response/event is idempotent", async () => {
     const store = useWorkspaceStore();
     const tab = await store.newSession("dir-1");
