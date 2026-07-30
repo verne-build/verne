@@ -8,6 +8,10 @@ import { agentIconSurfaceForTheme, getAgentIconForSurface } from "@/composables/
 import { useTheme } from "@/composables/useTheme";
 import { X } from "@lucide/vue";
 import {
+  commandPaletteShowsAgents,
+  type CommandPaletteMode,
+} from "@/lib/commandPalette";
+import {
   CommandDialog,
   CommandList,
   CommandGroup,
@@ -17,7 +21,7 @@ import {
 const vAutoFocus = { mounted: (el: HTMLElement) => requestAnimationFrame(() => el.focus()) };
 
 const open = defineModel<boolean>("open", { required: true });
-const props = defineProps<{ initialMode?: Mode }>();
+const props = defineProps<{ initialMode?: CommandPaletteMode }>();
 const emit = defineEmits<{ openFile: [path: string] }>();
 
 const store = useWorkspaceStore();
@@ -35,8 +39,7 @@ interface SearchResult {
 // `all` is the unified palette (⌘K) — no pill, searches files + actions together.
 // The other modes are scoped and shown as a deletable pill; Backspace at an
 // empty prompt pops any pill back to `all`. `term` is only the filter text.
-type Mode = "all" | "search" | "command" | "goto";
-const mode = ref<Mode>("search");
+const mode = ref<CommandPaletteMode>("search");
 const term = ref("");
 const results = ref<SearchResult[]>([]);
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -44,8 +47,9 @@ let searchGeneration = 0;
 
 const filesVisible = computed(() => mode.value === "search" || mode.value === "all");
 const actionsVisible = computed(() => mode.value === "command" || mode.value === "all");
+const agentsVisible = computed(() => commandPaletteShowsAgents(mode.value));
 
-const MODE_LABELS: Partial<Record<Mode, string>> = { search: "Files", command: "Actions", goto: "Go to Line" };
+const MODE_LABELS: Partial<Record<CommandPaletteMode, string>> = { search: "Files", command: "Actions", goto: "Go to Line" };
 const placeholder = computed(() =>
   mode.value === "all" ? "Search files, actions, agents…"
   : mode.value === "command" ? "Search actions…"
@@ -90,12 +94,12 @@ const gotoLine = computed<number | null>(() => {
 });
 
 const matchingAgents = computed(() => {
-  if (!filesVisible.value) return [];
+  if (!agentsVisible.value) return [];
   const q = term.value.toLowerCase().trim();
   const items = store.agentsList("current").map((i) => ({
     tabId: i.tab.id,
     directoryId: i.directory.id,
-    title: i.tab.label,
+    title: store.sessionName(i.tab.id),
     agentType: store.tabRuntime.get(i.tab.id)?.agentType ?? i.tab.lastAgentType ?? "claude",
     updatedAt: i.tab.createdAt,
   }));
@@ -149,7 +153,7 @@ watch(term, (q) => {
 });
 
 // Switch mode, reset the filter text, and refresh the list.
-function setMode(m: Mode) {
+function setMode(m: CommandPaletteMode) {
   mode.value = m;
   term.value = "";
   results.value = [];
@@ -259,8 +263,9 @@ const fileGroups = computed<{ heading: string; items: SearchResult[] }[]>(() => 
 const noResults = computed(() => {
   if (mode.value === "goto") return false;
   const hasCmd = actionsVisible.value && commandGroups.value.length > 0;
-  const hasFiles = filesVisible.value && (matchingAgents.value.length > 0 || results.value.length > 0);
-  return !hasCmd && !hasFiles;
+  const hasAgents = agentsVisible.value && matchingAgents.value.length > 0;
+  const hasFiles = filesVisible.value && results.value.length > 0;
+  return !hasCmd && !hasAgents && !hasFiles;
 });
 </script>
 
