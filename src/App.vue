@@ -27,6 +27,7 @@ import { useDiffHighlighter } from "./composables/useDiffHighlighter";
 import {
   readCachedPanelState,
   writeCachedPanelPx,
+  writeCachedRightPct,
   writeCachedSidebarCollapsed,
 } from "@/lib/bootstrapCache";
 import { PANEL_SIZES } from "@/lib/panelSizes";
@@ -165,37 +166,35 @@ const handleClass = "cursor-ew-resize";
 
 const LEFT_PANEL_MIN_PX = PANEL_SIZES.left.min;
 const LEFT_PANEL_MAX_PX = PANEL_SIZES.left.max;
-const RIGHT_PANEL_MIN_PX = PANEL_SIZES.right.min;
-const RIGHT_PANEL_MAX_PX = PANEL_SIZES.right.max;
+const RIGHT_PANEL_MIN_PX = PANEL_SIZES.right.minPx;
+const RIGHT_PANEL_DEFAULT_PCT = PANEL_SIZES.right.defaultPct;
 const CENTER_PANEL_MIN_PX = PANEL_SIZES.center.min;
 
-// The center is a flexible (%) panel so the px-sized right sidebar stays pinned
-// when the window resizes (reka-ui pins px panels only when a % panel absorbs
-// the delta). Its px floor is expressed as a % of the live inner-group width.
+// Center + right form one % group: they split the space between them, so the
+// right panel keeps its share of the group on window resize. Both px floors are
+// expressed as a % of the live inner-group width.
 const mainAreaEl = ref<HTMLElement | null>(null);
 const mainAreaWidth = ref(0);
-const centerMinPct = computed(() => {
+const pxToPct = (px: number, fallback: number) => {
   const w = mainAreaWidth.value;
-  if (!w) return 20;
-  return Math.max(5, Math.min(90, (CENTER_PANEL_MIN_PX / w) * 100));
-});
+  if (!w) return fallback;
+  return Math.max(5, Math.min(90, (px / w) * 100));
+};
+const centerMinPct = computed(() => pxToPct(CENTER_PANEL_MIN_PX, 20));
+const rightMinPct = computed(() => pxToPct(RIGHT_PANEL_MIN_PX, 20));
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 const legacyPanelPx = (percent: number | null, fallback: number, min: number, max: number) =>
   clamp(percent == null ? fallback : (window.innerWidth * percent) / 100, min, max);
 
-// Pixel-sized sidebars keep the user's width when the window changes; the
-// percentage-sized center panels absorb the available-space delta.
+// Left sidebar is px-sized so it keeps the user's width when the window changes.
+// Right is a % of the center+right group (`right` below is a percentage).
 const panelSizes = ref({
   left: clamp(
     cachedPanels.leftPx ?? legacyPanelPx(cachedPanels.left, PANEL_SIZES.left.default, LEFT_PANEL_MIN_PX, LEFT_PANEL_MAX_PX),
     LEFT_PANEL_MIN_PX,
     LEFT_PANEL_MAX_PX,
   ),
-  right: clamp(
-    cachedPanels.rightPx ?? legacyPanelPx(cachedPanels.right, PANEL_SIZES.right.default, RIGHT_PANEL_MIN_PX, RIGHT_PANEL_MAX_PX),
-    RIGHT_PANEL_MIN_PX,
-    RIGHT_PANEL_MAX_PX,
-  ),
+  right: clamp(cachedPanels.rightPct ?? RIGHT_PANEL_DEFAULT_PCT, 5, 95),
 });
 const filePanelTabs = useFilePanelTabs(() => store.activeRoot);
 const panelSaveTimers: Partial<Record<"left" | "right", ReturnType<typeof setTimeout>>> = {};
@@ -214,17 +213,17 @@ function onPanelLayout(sizes: number[]) {
   }, 500);
 }
 
-// Inner layout: center vs merged panel
+// Inner layout: center vs right panel — % of the group.
 function onInnerLayout(sizes: number[]) {
   const rightMounted = showRight.value && !rightCollapsed.value;
   const rightIdx = rightMounted ? sizes.length - 1 : -1;
   const right = rightIdx >= 0 && sizes[rightIdx] > 0 ? sizes[rightIdx] : panelSizes.value.right;
   panelSizes.value = { ...panelSizes.value, right };
-  if (rightIdx >= 0 && sizes[rightIdx] > 0) writeCachedPanelPx("right", right);
+  if (rightIdx >= 0 && sizes[rightIdx] > 0) writeCachedRightPct(right);
   if (panelSaveTimers.right) clearTimeout(panelSaveTimers.right);
   panelSaveTimers.right = setTimeout(() => {
     if (rightIdx >= 0 && sizes[rightIdx] > 0)
-      useRpc().request.setAppState({ key: "panel_right_px", value: String(Math.round(right)) });
+      useRpc().request.setAppState({ key: "panel_right_pct", value: right.toFixed(2) });
   }, 500);
 }
 
@@ -694,7 +693,7 @@ onMounted(async () => {
   const rightCollapsedAtFireTime = rightCollapsed.value;
   void Promise.all([
     rpc.request.getAppState({ key: "panel_left_px" }),
-    rpc.request.getAppState({ key: "panel_right_px" }),
+    rpc.request.getAppState({ key: "panel_right_pct" }),
     rpc.request.getAppState({ key: "sidebar_left_collapsed" }),
     rpc.request.getAppState({ key: "sidebar_right_collapsed" }),
   ]).then(([leftStr, rightStr, leftCollapseStr, rightCollapseStr]) => {
@@ -716,7 +715,7 @@ onMounted(async () => {
     }
     if (changed) {
       next.left = clamp(next.left, LEFT_PANEL_MIN_PX, LEFT_PANEL_MAX_PX);
-      next.right = clamp(next.right, RIGHT_PANEL_MIN_PX, RIGHT_PANEL_MAX_PX);
+      next.right = clamp(next.right, 5, 95);
       panelSizes.value = next;
       nextTick(() => {
         leftPanelRef.value?.resize(next.left);
@@ -958,8 +957,7 @@ onUnmounted(() => {
                     id="right-sidebar"
                     :order="2"
                     :default-size="panelSizes.right"
-                    :min-size="RIGHT_PANEL_MIN_PX"
-                    size-unit="px"
+                    :min-size="rightMinPct"
                     class="maximize-right bg-[var(--editor-bg)]"
                   >
                     <RightPanel

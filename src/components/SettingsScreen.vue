@@ -171,7 +171,7 @@ async function resetPanelSizes() {
   try {
     clearCachedPanelSizes();
     await Promise.all(
-      ["panel_left_px", "panel_right_px", "panel_explorer_px", "panel_sc_list_px", "panel_commits_list_px", "notes_list_px", "search_list_px"]
+      ["panel_left_px", "panel_right_px", "panel_right_pct", "panel_explorer_px", "panel_sc_list_px", "panel_commits_list_px", "notes_list_px", "search_list_px"]
         .map((key) => request.setAppState({ key, value: null })),
     );
     window.location.reload();

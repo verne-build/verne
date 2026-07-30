@@ -9,6 +9,8 @@ const KEYS = {
   panelCommitsList: "verne.panel.commitsList",
   panelLeftPx: "verne.panel.left.px",
   panelRightPx: "verne.panel.right.px",
+  // Right panel is % of the center+right group (px key kept only for purging).
+  panelRightPct: "verne.panel.right.pct",
   panelExplorerPx: "verne.panel.explorer.px",
   panelScListPx: "verne.panel.scList.px",
   panelCommitsListPx: "verne.panel.commitsList.px",
@@ -108,7 +110,7 @@ export interface CachedPanelState {
   scList: number | null;
   commitsList: number | null;
   leftPx: number | null;
-  rightPx: number | null;
+  rightPct: number | null;
   explorerPx: number | null;
   scListPx: number | null;
   commitsListPx: number | null;
@@ -135,7 +137,7 @@ export function readCachedPanelState(): CachedPanelState {
     scList: parseFiniteNumber(safeGet(KEYS.panelScList)),
     commitsList: parseFiniteNumber(safeGet(KEYS.panelCommitsList)),
     leftPx: parseFiniteNumber(safeGet(KEYS.panelLeftPx)),
-    rightPx: parseFiniteNumber(safeGet(KEYS.panelRightPx)),
+    rightPct: parseFiniteNumber(safeGet(KEYS.panelRightPct)),
     explorerPx: parseFiniteNumber(safeGet(KEYS.panelExplorerPx)),
     scListPx: parseFiniteNumber(safeGet(KEYS.panelScListPx)),
     commitsListPx: parseFiniteNumber(safeGet(KEYS.panelCommitsListPx)),
@@ -164,12 +166,11 @@ export function writeCachedPanelSize(
 }
 
 export function writeCachedPanelPx(
-  which: "left" | "right" | "explorer" | "scList" | "commitsList" | "notes" | "search",
+  which: "left" | "explorer" | "scList" | "commitsList" | "notes" | "search",
   value: number,
 ): void {
   const key =
     which === "left" ? KEYS.panelLeftPx :
-    which === "right" ? KEYS.panelRightPx :
     which === "explorer" ? KEYS.panelExplorerPx :
     which === "scList" ? KEYS.panelScListPx :
     which === "commitsList" ? KEYS.panelCommitsListPx :
@@ -184,8 +185,13 @@ export function clearCachedPanelSizes(): void {
   for (const key of [
     KEYS.panelLeft, KEYS.panelRight, KEYS.panelExplorer, KEYS.panelScList, KEYS.panelCommitsList,
     KEYS.panelLeftPx, KEYS.panelRightPx, KEYS.panelExplorerPx, KEYS.panelScListPx, KEYS.panelCommitsListPx,
-    KEYS.panelNotesPx, KEYS.panelSearchPx, KEYS.panelWorkspacesFrac,
+    KEYS.panelNotesPx, KEYS.panelSearchPx, KEYS.panelWorkspacesFrac, KEYS.panelRightPct,
   ]) safeRemove(key);
+}
+
+/** Right panel width as a % of the center+right group. */
+export function writeCachedRightPct(value: number): void {
+  safeSet(KEYS.panelRightPct, String(Math.round(value * 100) / 100));
 }
 
 export function writeCachedSidebarCollapsed(which: "left" | "right", collapsed: boolean): void {

@@ -3,8 +3,9 @@
 export const PANEL_SIZES = {
   /** Left sidebar (workspaces / agents). */
   left: { default: 240, min: 185, max: 420 },
-  /** Right panel (files / editor). No upper bound — center's min is the backstop. */
-  right: { default: 600, min: 500, max: Infinity },
+  /** Right panel (files / editor). Sized as a % of the center+right group;
+   *  the px floor is converted to a % of the live group width at runtime. */
+  right: { defaultPct: 50, minPx: 500 },
   /** Center (terminal / agent) area. Hard px floor, independent of window width. */
   center: { min: 500 },
   /** Inner list panels — shared min/max; per-list default widths. */
