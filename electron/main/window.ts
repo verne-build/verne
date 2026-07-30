@@ -30,7 +30,7 @@ export function createWindow(appearance: unknown = "dark"): BrowserWindow {
     minHeight: 560,
     title: "Verne",
     titleBarStyle: "hidden",
-    trafficLightPosition: { x: 12, y: 15 },
+    trafficLightPosition: { x: 12, y: 16 },
     // Dark base so a renderer reload (e.g. after a daemon restart) doesn't flash
     // white before the app paints.
     ...getWindowEffectOptions(process.platform, nativeTheme.prefersReducedTransparency),
