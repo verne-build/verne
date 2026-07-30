@@ -1,31 +1,18 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import {
-  Bot,
   Check,
   ChevronDown,
   CircleAlert,
   Cloud,
-  ArrowRight,
   GitBranch as GitBranchIcon,
   Search,
-  SquareTerminal,
-  Zap,
 } from "@lucide/vue";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useRpc } from "@/composables/useRpc";
-import { useTheme } from "@/composables/useTheme";
 import { useDirectorySettings } from "@/composables/useDirectorySettings";
-import {
-  agentIconSurfaceForTheme,
-  findAgentIconForSurface,
-} from "@/composables/useAgentIcon";
-import {
-  loadAvailableAgents,
-  type AgentDefinition,
-  type ModelDefinition,
-} from "@/lib/agentRegistry";
-import type { AgentLaunchSelection, AgentType, GitBranch, WorkingDirectory } from "@/types";
+import type { AgentLaunchSelection, GitBranch, WorkingDirectory } from "@/types";
+import SessionLaunchControls from "@/components/main/SessionLaunchControls.vue";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -52,15 +39,6 @@ import {
 const props = defineProps<{ dirId: string }>();
 const store = useWorkspaceStore();
 const rpc = useRpc();
-const { getActiveThemeSpec } = useTheme();
-
-const startButton = ref<{ $el?: HTMLElement } | null>(null);
-const agents = ref<AgentDefinition[]>([]);
-const selectedAgentType = ref<AgentType | "terminal" | null>(null);
-const agentSelectionTouched = ref(false);
-const selectedModelId = ref<string | null>(null);
-const selectedEffort = ref<string | null>(null);
-const fast = ref(false);
 const checkoutMode = ref<"current" | "worktree">("current");
 const branches = ref<GitBranch[]>([]);
 const selectedBranch = ref<GitBranch | null>(null);
@@ -69,7 +47,6 @@ const branchQuery = ref("");
 const dirtyWarningOpen = ref(false);
 const launching = ref(false);
 const loadingBranches = ref(false);
-const agentLoading = ref(false);
 interface PickerError {
   title: string;
   message: string;
@@ -77,11 +54,9 @@ interface PickerError {
 }
 
 const scopeError = ref<PickerError | null>(null);
-const agentError = ref<PickerError | null>(null);
 const branchError = ref<PickerError | null>(null);
 const launchError = ref<PickerError | null>(null);
 let mounted = false;
-let agentRequestId = 0;
 let branchRequestId = 0;
 let startRequestId = 0;
 
@@ -102,44 +77,6 @@ const current = computed<WorkingDirectory | null>(() =>
 const roots = computed(() => store.directories.filter((dir) => !dir.parentDirectoryId));
 const directoryId = computed(() => current.value?.id ?? null);
 const { settings: directorySettings } = useDirectorySettings(directoryId);
-const surface = computed(() => agentIconSurfaceForTheme(getActiveThemeSpec().type));
-const agentChoices = computed(() => agents.value.map((agent) => ({
-  ...agent,
-  icon: findAgentIconForSurface(agent.type, surface.value),
-})));
-const selectedAgent = computed(() => selectedAgentType.value && selectedAgentType.value !== "terminal"
-  ? agents.value.find((agent) => agent.type === selectedAgentType.value) ?? null
-  : null,
-);
-const selectedModel = computed<ModelDefinition | null>(() => selectedModelId.value
-  ? selectedAgent.value?.models.find((model) => model.id === selectedModelId.value) ?? null
-  : null,
-);
-const isTerminal = computed(() => !selectedAgent.value);
-function effortsFor(model: ModelDefinition | null): string[] {
-  if (!model) return [];
-  if (model.efforts) return [...model.efforts];
-  return [...new Set(Object.keys(model.cursorVariants ?? {})
-    .map((variant) => variant.split(":")[0]!)
-    .filter((effort) => effort !== "default"))];
-}
-function supportsFastFor(model: ModelDefinition | null): boolean {
-  return !!model?.fast || Object.keys(model?.cursorVariants ?? {}).some((variant) => variant.endsWith(":on"));
-}
-const availableEfforts = computed(() => effortsFor(selectedModel.value));
-const supportsFast = computed(() => supportsFastFor(selectedModel.value));
-const showTuning = computed(() => availableEfforts.value.length > 0 || supportsFast.value);
-const selectedAgentLabel = computed(() => selectedAgent.value?.label ?? "Terminal");
-const selectedModelLabel = computed(() => selectedModel.value?.label ?? "Model Default");
-const tuningLabel = computed(() => {
-  const labels: string[] = [];
-  if (isTerminal.value || availableEfforts.value.length)
-    labels.push(selectedEffort.value
-      ? `Effort ${selectedEffort.value[0]!.toUpperCase()}${selectedEffort.value.slice(1)}`
-      : "Effort Default");
-  if (supportsFast.value) labels.push(`Fast Mode ${fast.value ? "On" : "Off"}`);
-  return labels.join(" · ");
-});
 const checkoutModeLabel = computed(() => checkoutMode.value === "current"
   ? "Current Checkout"
   : "Create New Worktree");
@@ -156,7 +93,7 @@ const filteredRemoteBranches = computed(() => remoteBranches.value.filter(matche
 const hasFilteredBranches = computed(() => filteredLocalBranches.value.length > 0 || filteredRemoteBranches.value.length > 0);
 const busy = computed(() => launching.value || loadingBranches.value);
 const canStart = computed(() => !!current.value && !!selectedBranch.value && !busy.value);
-const pickerError = computed(() => launchError.value ?? branchError.value ?? agentError.value ?? scopeError.value);
+const pickerError = computed(() => launchError.value ?? branchError.value ?? scopeError.value);
 
 function isCurrentInstance(): boolean {
   return mounted
@@ -166,43 +103,6 @@ function isCurrentInstance(): boolean {
 
 function homePath(path: string): string {
   return path.replace(/^\/Users\/[^/]+(?=\/|$)/, "~");
-}
-
-function compatibleModel(): void {
-  if (!selectedModel.value) {
-    selectedEffort.value = null;
-    fast.value = false;
-    return;
-  }
-  if (selectedEffort.value && !availableEfforts.value.includes(selectedEffort.value))
-    selectedEffort.value = null;
-  if (!supportsFast.value) fast.value = false;
-}
-
-function selectAgent(value: AgentType | "terminal"): void {
-  agentSelectionTouched.value = true;
-  selectedAgentType.value = value === "terminal" ? "terminal" : value as AgentType;
-  selectedModelId.value = null;
-  selectedEffort.value = null;
-  fast.value = false;
-}
-
-function selectModel(value: string): void {
-  selectedModelId.value = value === "default" ? null : value;
-  const nextModel = selectedModelId.value
-    ? selectedAgent.value?.models.find((model) => model.id === selectedModelId.value) ?? null
-    : null;
-  if (selectedEffort.value && !effortsFor(nextModel).includes(selectedEffort.value))
-    selectedEffort.value = null;
-  if (!supportsFastFor(nextModel)) fast.value = false;
-}
-
-function selectEffort(value: string): void {
-  selectedEffort.value = value === "default" ? null : value;
-}
-
-function selectFast(value: "on" | "off"): void {
-  fast.value = value === "on";
 }
 
 function selectBranch(value: string): void {
@@ -270,31 +170,6 @@ async function loadCurrentScope(): Promise<void> {
   }
 }
 
-async function loadAgentChoices(): Promise<void> {
-  const requestId = ++agentRequestId;
-  agentLoading.value = true;
-  try {
-    const available = await loadAvailableAgents((bins) => rpc.request.agentBinsAvailable({ bins }));
-    if (!isCurrentInstance() || requestId !== agentRequestId) return;
-    agents.value = available;
-    if (!agentSelectionTouched.value)
-      selectedAgentType.value = available[0]?.type ?? "terminal";
-    agentError.value = null;
-  } catch (error) {
-    if (!isCurrentInstance() || requestId !== agentRequestId) return;
-    console.warn("[NewSessionPicker] agent availability failed:", error);
-    agents.value = [];
-    if (!agentSelectionTouched.value) selectedAgentType.value = "terminal";
-    agentError.value = {
-      title: "Couldn't Load Agents",
-      message: "Verne couldn't check installed agents. Terminal is still available.",
-      retry: () => void loadAgentChoices(),
-    };
-  } finally {
-    if (isCurrentInstance() && requestId === agentRequestId) agentLoading.value = false;
-  }
-}
-
 async function loadBranches(): Promise<void> {
   const dir = current.value;
   if (!dir || !isCurrentInstance()) return;
@@ -326,17 +201,7 @@ async function loadBranches(): Promise<void> {
   }
 }
 
-function launchSelection(): AgentLaunchSelection | undefined {
-  if (!selectedAgent.value) return undefined;
-  return {
-    agentType: selectedAgent.value.type,
-    modelId: selectedModelId.value,
-    effort: selectedEffort.value,
-    fast: supportsFast.value ? fast.value : null,
-  };
-}
-
-function snapshotStart(): StartSnapshot | null {
+function snapshotStart(agentLaunch: AgentLaunchSelection | undefined): StartSnapshot | null {
   const dir = current.value;
   const branch = selectedBranch.value;
   if (!dir || !branch) return null;
@@ -347,7 +212,7 @@ function snapshotStart(): StartSnapshot | null {
     path: dir.path,
     mode: checkoutMode.value,
     branch,
-    agentLaunch: launchSelection(),
+    agentLaunch,
   };
 }
 
@@ -378,9 +243,9 @@ async function continueStart(snapshot: StartSnapshot): Promise<void> {
   }
 }
 
-async function start(): Promise<void> {
+async function start(agentLaunch: AgentLaunchSelection | undefined): Promise<void> {
   if (launching.value) return;
-  const snapshot = snapshotStart();
+  const snapshot = snapshotStart(agentLaunch);
   if (!snapshot) return;
   if (snapshot.mode === "worktree" || snapshot.branch.isHead) {
     await continueStart(snapshot);
@@ -404,7 +269,7 @@ async function start(): Promise<void> {
     launchError.value = {
       title: "Couldn't Check Changes",
       message: "Verne couldn't check local changes. Try again.",
-      retry: () => void start(),
+      retry: () => void start(agentLaunch),
     };
   } finally {
     if (isCurrentInstance() && snapshot.requestId === startRequestId) launching.value = false;
@@ -428,19 +293,14 @@ watch([() => current.value?.id, checkoutMode], () => {
 watch(() => directorySettings.value.defaultBaseRef, () => {
   if (checkoutMode.value === "worktree") void loadBranches();
 });
-watch([selectedAgent, selectedModel], compatibleModel);
-
 onMounted(() => {
   mounted = true;
   void loadCurrentScope();
-  void loadAgentChoices();
   void loadBranches();
-  void nextTick(() => startButton.value?.$el?.focus?.());
 });
 
 onUnmounted(() => {
   mounted = false;
-  agentRequestId++;
   branchRequestId++;
   startRequestId++;
 });
@@ -470,96 +330,12 @@ onUnmounted(() => {
         </DropdownMenu>
       </h2>
       <section aria-labelledby="new-session-picker-title" :aria-busy="busy" class="w-full max-w-4xl rounded-xl border bg-card shadow-sm">
-        <div class="grid gap-3 p-5 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
-          <DropdownMenu>
-            <DropdownMenuTrigger as-child>
-              <Button type="button" variant="outline" class="min-h-10 w-full justify-between px-3" :disabled="launching" aria-label="Select Agent">
-                <span class="flex min-w-0 items-center gap-2">
-                  <img v-if="selectedAgent && findAgentIconForSurface(selectedAgent.type, surface)" :src="findAgentIconForSurface(selectedAgent.type, surface)" alt="" class="size-4" />
-                  <SquareTerminal v-else-if="isTerminal" aria-hidden="true" class="size-4 text-muted-foreground" />
-                  <Bot v-else aria-hidden="true" class="size-4 text-muted-foreground" />
-                  <span class="truncate">{{ selectedAgentLabel }}</span>
-                </span>
-                <ChevronDown aria-hidden="true" class="size-4 text-muted-foreground" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" class="w-[var(--reka-dropdown-menu-trigger-width)]">
-              <DropdownMenuLabel class="text-xs font-normal text-muted-foreground">Agents</DropdownMenuLabel>
-              <DropdownMenuItem v-for="agent in agentChoices" :key="agent.type" @select="selectAgent(agent.type)">
-                <img v-if="agent.icon" :src="agent.icon" alt="" class="size-4" />
-                <Bot v-else aria-hidden="true" class="size-4 text-muted-foreground" />
-                {{ agent.label }}
-                <Check :class="['ml-auto size-3.5', selectedAgentType === agent.type ? 'opacity-100' : 'opacity-0']" />
-              </DropdownMenuItem>
-              <DropdownMenuSeparator v-if="agentChoices.length" />
-              <DropdownMenuItem @select="selectAgent('terminal')">
-                <SquareTerminal aria-hidden="true" class="size-4 text-muted-foreground" />
-                Terminal
-                <Check :class="['ml-auto size-3.5', isTerminal ? 'opacity-100' : 'opacity-0']" />
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-
-          <DropdownMenu>
-            <DropdownMenuTrigger as-child>
-              <Button type="button" variant="outline" class="min-h-10 w-full justify-between px-3" :disabled="isTerminal || launching" aria-label="Select Model">
-                <span class="truncate">{{ selectedModelLabel }}</span>
-                <ChevronDown aria-hidden="true" class="size-4 text-muted-foreground" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" class="w-[var(--reka-dropdown-menu-trigger-width)]">
-              <DropdownMenuLabel class="text-xs font-normal text-muted-foreground">Model</DropdownMenuLabel>
-              <DropdownMenuItem @select="selectModel('default')">
-                Default
-                <Check :class="['ml-auto size-3.5', selectedModelId === null ? 'opacity-100' : 'opacity-0']" />
-              </DropdownMenuItem>
-              <DropdownMenuItem v-for="model in selectedAgent?.models ?? []" :key="model.id" @select="selectModel(model.id)">
-                {{ model.label }}
-                <Check :class="['ml-auto size-3.5', selectedModelId === model.id ? 'opacity-100' : 'opacity-0']" />
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-
-          <DropdownMenu v-if="showTuning || isTerminal">
-            <DropdownMenuTrigger as-child>
-              <Button type="button" variant="outline" class="min-h-10 w-full justify-between px-3" :disabled="isTerminal || launching" aria-label="Select Effort Or Fast Mode">
-                <span class="truncate">{{ tuningLabel }}</span>
-                <ChevronDown aria-hidden="true" class="size-4 text-muted-foreground" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" class="w-[var(--reka-dropdown-menu-trigger-width)]">
-              <template v-if="availableEfforts.length">
-                <DropdownMenuLabel class="text-xs font-normal text-muted-foreground">Effort</DropdownMenuLabel>
-                <DropdownMenuItem @select="selectEffort('default')">
-                  Default
-                  <Check :class="['ml-auto size-3.5', selectedEffort === null ? 'opacity-100' : 'opacity-0']" />
-                </DropdownMenuItem>
-                <DropdownMenuItem v-for="effort in availableEfforts" :key="effort" @select="selectEffort(effort)">
-                  {{ effort[0]?.toUpperCase() }}{{ effort.slice(1) }}
-                  <Check :class="['ml-auto size-3.5', selectedEffort === effort ? 'opacity-100' : 'opacity-0']" />
-                </DropdownMenuItem>
-              </template>
-              <DropdownMenuSeparator v-if="availableEfforts.length && supportsFast" />
-              <template v-if="supportsFast">
-                <DropdownMenuLabel class="text-xs font-normal text-muted-foreground">Fast Mode</DropdownMenuLabel>
-                <DropdownMenuItem @select="selectFast('on')">
-                  <Zap aria-hidden="true" class="size-4" />
-                  On
-                  <Check :class="['ml-auto size-3.5', fast ? 'opacity-100' : 'opacity-0']" />
-                </DropdownMenuItem>
-                <DropdownMenuItem @select="selectFast('off')">
-                  Off
-                  <Check :class="['ml-auto size-3.5', !fast ? 'opacity-100' : 'opacity-0']" />
-                </DropdownMenuItem>
-              </template>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <div v-else class="hidden sm:block" aria-hidden="true" />
-
-          <Button ref="startButton" type="button" class="min-h-10 px-5 active:scale-[0.96] transition-transform" :disabled="!canStart" @click="start">
-            {{ launching ? "Starting" : "Start" }}
-            <ArrowRight aria-hidden="true" class="size-4" />
-          </Button>
+        <div class="p-5">
+          <SessionLaunchControls
+            :busy="launching"
+            :disabled="!canStart"
+            @start="start"
+          />
         </div>
 
         <div class="flex flex-col gap-2 border-t px-5 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
