@@ -11,6 +11,8 @@ import {
   commandPaletteShowsActions,
   commandPaletteShowsAgents,
   commandPaletteShowsFiles,
+  commandPaletteNeedsInitialHighlight,
+  commandPaletteResultsScrolled,
   cycleCommandPaletteFilter,
   isSettingsCommand,
   type CommandPaletteMode,
@@ -43,6 +45,7 @@ interface SearchResult {
 const mode = ref<CommandPaletteMode>("search");
 const term = ref("");
 const results = ref<SearchResult[]>([]);
+const resultsScrolled = ref(false);
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let searchGeneration = 0;
 
@@ -160,6 +163,7 @@ watch(term, (q) => {
 // Switch mode, reset the filter text, and refresh the list.
 function setMode(nextMode: CommandPaletteMode) {
   searchGeneration++;
+  resultsScrolled.value = false;
   mode.value = nextMode;
   term.value = "";
   results.value = [];
@@ -184,6 +188,12 @@ const rootRef = ref<HTMLElement | null>(null);
 
 function getListbox() {
   return rootRef.value?.querySelector("[data-slot=command] [role=listbox]") ?? null;
+}
+
+function onResultsScroll(event: Event) {
+  resultsScrolled.value = commandPaletteResultsScrolled(
+    (event.currentTarget as HTMLElement).scrollTop,
+  );
 }
 
 function onKeydown(e: KeyboardEvent) {
@@ -220,7 +230,8 @@ function highlightFirst() {
   nextTick(() => nextTick(() => {
     const listbox = getListbox();
     if (!listbox) return;
-    // Clear existing highlight by dispatching Home key, then ArrowDown to first item
+    // Live All-view updates must not reset an existing highlight or scroll position.
+    if (!commandPaletteNeedsInitialHighlight(listbox)) return;
     listbox.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true }));
     // Refocus input since reka-ui moves focus to highlighted item
     requestAnimationFrame(() => inputRef.value?.focus());
@@ -281,7 +292,8 @@ const noResults = computed(() => {
     description="Search files, run actions, jump to a line"
     :ignore-filter="true"
     :show-overlay="true"
-    content-class="h-[525px] max-h-[calc(100vh-2rem)] rounded-2xl sm:w-[660px] sm:max-w-[calc(100vw-2rem)]"
+    content-class="h-[525px] max-h-[calc(100vh-2rem)] rounded-2xl bg-[color-mix(in_oklab,var(--color-background)_88%,white_12%)]/65 backdrop-blur-[24px] shadow-[0_24px_80px_rgba(0,0,0,0.65),inset_1px_0_0_rgba(255,255,255,0.10),inset_0_1px_0_rgba(255,255,255,0.08),inset_8px_0_16px_-8px_rgba(255,255,255,0.06),inset_0_8px_16px_-8px_rgba(255,255,255,0.04)] sm:w-[660px] sm:max-w-[calc(100vw-2rem)] [&_[data-slot=command]]:bg-transparent"
+    overlay-class="bg-black/35"
   >
     <div ref="rootRef" class="flex h-full min-h-0 flex-col">
       <div class="flex h-14 shrink-0 items-center border-b px-4">
@@ -294,18 +306,23 @@ const noResults = computed(() => {
           autocorrect="off"
           autocapitalize="off"
           spellcheck="false"
-          class="h-10 w-full bg-transparent text-base outline-hidden placeholder:text-muted-foreground"
+          class="h-10 w-full bg-transparent text-base outline-hidden placeholder:text-muted-foreground/70"
           @keydown="onKeydown"
         />
       </div>
-      <div class="flex shrink-0 items-center gap-1 px-3 py-1" role="group" aria-label="Command palette filters">
+      <div
+        class="flex shrink-0 items-center gap-1 border-b px-3 py-1 transition-[border-color] duration-150"
+        :class="resultsScrolled ? 'border-border/60' : 'border-transparent'"
+        role="group"
+        aria-label="Command palette filters"
+      >
         <button
           v-for="filter in COMMAND_PALETTE_FILTERS"
           :key="filter.mode"
           type="button"
           class="h-8 rounded-full px-3 text-sm font-medium transition-[color,background-color,scale] duration-150 active:scale-[0.96]"
           :class="mode === filter.mode
-            ? 'bg-secondary text-secondary-foreground'
+            ? 'bg-tab-active-bg text-secondary-foreground'
             : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'"
           :aria-pressed="mode === filter.mode"
           @click="setMode(filter.mode)"
@@ -314,7 +331,10 @@ const noResults = computed(() => {
           {{ filter.label }}
         </button>
       </div>
-      <CommandList class="min-h-0 max-h-none flex-1">
+      <CommandList
+        class="min-h-0 max-h-none flex-1 [&_[data-slot=command-group]]:px-[11px]"
+        @scroll.passive="onResultsScroll"
+      >
         <div v-if="noResults" class="py-6 text-center text-sm text-muted-foreground">No results found.</div>
 
         <!-- Go to line -->
@@ -332,7 +352,7 @@ const noResults = computed(() => {
               :value="`cmd:${c.id}`"
               @select="selectCommand(c)"
             >
-              <component :is="c.icon" class="mr-2 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+              <component :is="c.icon" class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
               <span class="truncate text-sm">{{ c.title }}</span>
               <span v-if="c.shortcut" class="ml-auto text-xs tracking-wide text-muted-foreground">{{ c.shortcut }}</span>
             </CommandItem>
@@ -347,7 +367,7 @@ const noResults = computed(() => {
               :value="`agent:${a.title}`"
               @select="selectAgent(a.tabId)"
             >
-              <img :src="agentIcon(a.agentType)" class="mr-2 size-4 shrink-0" aria-hidden="true" />
+              <img :src="agentIcon(a.agentType)" class="size-4 shrink-0" aria-hidden="true" />
               <span class="truncate text-sm">{{ a.title }}</span>
               <span class="text-xs text-muted-foreground">{{ timeAgo(a.updatedAt) }}</span>
             </CommandItem>
@@ -361,7 +381,7 @@ const noResults = computed(() => {
               :value="r.relPath"
               @select="selectFile(r.path)"
             >
-              <FileIcon :name="r.name" :size="16" class="mr-2" />
+              <FileIcon :name="r.name" :size="16" />
               <div class="flex items-center justify-between gap-2 min-w-0">
                 <span class="truncate text-sm">{{ r.name }}</span>
                 <span class="truncate text-xs text-muted-foreground">{{ r.relPath }}</span>
@@ -370,10 +390,10 @@ const noResults = computed(() => {
           </CommandGroup>
         </template>
       </CommandList>
-      <footer class="flex h-8 shrink-0 items-center gap-4 border-t border-border/60 px-4 text-xs text-muted-foreground/60">
+      <footer class="flex h-8 shrink-0 items-center gap-4 border-t border-border/60 px-4 text-xs text-muted-foreground/80">
         <span><kbd class="font-sans">↑↓</kbd> Select</span>
         <span><kbd class="font-sans">↵</kbd> Open</span>
-        <span><kbd class="font-sans">⌘[</kbd> / <kbd class="font-sans">⌘]</kbd> Change Filter</span>
+        <span><kbd class="font-sans">⌘[</kbd> or <kbd class="font-sans">⌘]</kbd> Change Filter</span>
       </footer>
     </div>
   </CommandDialog>

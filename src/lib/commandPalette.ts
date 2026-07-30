@@ -31,6 +31,14 @@ export function isSettingsCommand(id: string): boolean {
   return SETTINGS_COMMAND_IDS.has(id);
 }
 
+export function commandPaletteNeedsInitialHighlight(listbox: ParentNode): boolean {
+  return !listbox.querySelector("[data-highlighted]");
+}
+
+export function commandPaletteResultsScrolled(scrollTop: number): boolean {
+  return scrollTop > 0;
+}
+
 export function cycleCommandPaletteFilter(
   mode: CommandPaletteMode,
   direction: -1 | 1,

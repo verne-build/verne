@@ -13,6 +13,7 @@ const props = withDefaults(defineProps<DialogRootProps & {
   ignoreFilter?: boolean
   showOverlay?: boolean
   contentClass?: HTMLAttributes["class"]
+  overlayClass?: HTMLAttributes["class"]
 }>(), {
   title: "Command Palette",
   description: "Search for a command to run...",
@@ -21,7 +22,7 @@ const props = withDefaults(defineProps<DialogRootProps & {
 })
 const emits = defineEmits<DialogRootEmits>()
 
-const delegatedProps = reactiveOmit(props, "title", "description", "ignoreFilter", "showOverlay", "contentClass")
+const delegatedProps = reactiveOmit(props, "title", "description", "ignoreFilter", "showOverlay", "contentClass", "overlayClass")
 const forwarded = useForwardPropsEmits(delegatedProps, emits)
 </script>
 
@@ -31,6 +32,7 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits)
       :class="cn('overflow-hidden p-0 sm:max-w-[550px] sm:w-[550px]', contentClass)"
       :show-close-button="false"
       :show-overlay="showOverlay"
+      :overlay-class="overlayClass"
     >
       <DialogHeader class="sr-only">
         <DialogTitle>{{ title }}</DialogTitle>
