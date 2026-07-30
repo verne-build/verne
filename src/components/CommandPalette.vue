@@ -281,9 +281,10 @@ const noResults = computed(() => {
     description="Search files, run actions, jump to a line"
     :ignore-filter="true"
     :show-overlay="true"
+    content-class="h-[525px] max-h-[calc(100vh-2rem)] rounded-2xl sm:w-[660px] sm:max-w-[calc(100vw-2rem)]"
   >
-    <div ref="rootRef">
-      <div class="flex h-14 items-center border-b px-4">
+    <div ref="rootRef" class="flex h-full min-h-0 flex-col">
+      <div class="flex h-14 shrink-0 items-center border-b px-4">
         <input
           ref="inputRef"
           v-auto-focus
@@ -293,16 +294,16 @@ const noResults = computed(() => {
           autocorrect="off"
           autocapitalize="off"
           spellcheck="false"
-          class="h-10 w-full bg-transparent text-sm outline-hidden placeholder:text-muted-foreground"
+          class="h-10 w-full bg-transparent text-base outline-hidden placeholder:text-muted-foreground"
           @keydown="onKeydown"
         />
       </div>
-      <div class="flex items-center gap-1 px-3 py-1.5" role="group" aria-label="Command palette filters">
+      <div class="flex shrink-0 items-center gap-1 px-3 py-1" role="group" aria-label="Command palette filters">
         <button
           v-for="filter in COMMAND_PALETTE_FILTERS"
           :key="filter.mode"
           type="button"
-          class="h-10 rounded-full px-3 text-sm font-medium transition-[color,background-color,scale] duration-150 active:scale-[0.96]"
+          class="h-8 rounded-full px-3 text-sm font-medium transition-[color,background-color,scale] duration-150 active:scale-[0.96]"
           :class="mode === filter.mode
             ? 'bg-secondary text-secondary-foreground'
             : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'"
@@ -313,7 +314,7 @@ const noResults = computed(() => {
           {{ filter.label }}
         </button>
       </div>
-      <CommandList class="h-[300px]">
+      <CommandList class="min-h-0 max-h-none flex-1">
         <div v-if="noResults" class="py-6 text-center text-sm text-muted-foreground">No results found.</div>
 
         <!-- Go to line -->
@@ -369,7 +370,7 @@ const noResults = computed(() => {
           </CommandGroup>
         </template>
       </CommandList>
-      <footer class="flex h-10 items-center gap-4 border-t px-4 text-xs text-muted-foreground">
+      <footer class="flex h-8 shrink-0 items-center gap-4 border-t border-border/60 px-4 text-xs text-muted-foreground/60">
         <span><kbd class="font-sans">↑↓</kbd> Select</span>
         <span><kbd class="font-sans">↵</kbd> Open</span>
         <span><kbd class="font-sans">⌘[</kbd> / <kbd class="font-sans">⌘]</kbd> Change Filter</span>
