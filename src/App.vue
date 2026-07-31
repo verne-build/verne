@@ -53,10 +53,12 @@ import { useShortcuts } from "@/composables/useShortcuts";
 import { wireAgentNotifications, unwireAgentNotifications } from "@/composables/useAgentNotifications";
 import { useSettingsScreen } from "@/composables/useSettingsScreen";
 import { useAppUpdates } from "@/composables/useAppUpdates";
+import { useDaemonStaleness } from "@/composables/useDaemonStaleness";
 
 const dictation = useDictation();
 const shortcuts = useShortcuts();
 useAppUpdates();
+useDaemonStaleness();
 const BttfEasterEgg = defineAsyncComponent(() => import("./components/BttfEasterEgg.vue"));
 
 // Manual window-drag fallback for tab bars clipped by reka-ui resizable panels,
