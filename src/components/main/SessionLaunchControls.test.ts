@@ -81,6 +81,12 @@ function pressKey(init: KeyboardEventInit, target: EventTarget = window): void {
   target.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }));
 }
 
+function rootOf(hostElement: HTMLElement): HTMLElement {
+  const match = hostElement.firstElementChild;
+  if (!(match instanceof HTMLElement)) throw new Error("Missing root element");
+  return match;
+}
+
 describe("SessionLaunchControls", () => {
   let host: HTMLDivElement;
   let app: ReturnType<typeof createApp>;
@@ -264,6 +270,7 @@ describe("SessionLaunchControls", () => {
 
   it("pressing 2 selects the second agent; 9 with only two agents changes nothing", async () => {
     await flush();
+    radio("Claude").focus();
 
     pressKey({ key: "2" });
     await flush();
@@ -279,7 +286,7 @@ describe("SessionLaunchControls", () => {
     await pickAgent("Antigravity");
 
     const input = document.createElement("input");
-    document.body.append(input);
+    rootOf(host).append(input);
     input.focus();
 
     pressKey({ key: "1" }, input);
@@ -289,9 +296,23 @@ describe("SessionLaunchControls", () => {
     input.remove();
   });
 
+  it("does not switch agents while the Model menu is open", async () => {
+    await flush();
+    await pickAgent("Antigravity");
+    namedButton("Select Model").click();
+    await flush();
+    namedButton("Select Model").focus();
+
+    pressKey({ key: "2" });
+    await flush();
+
+    expect(checkedRadio()).toBe("Antigravity");
+  });
+
   it("pressing Enter emits start once with the current selection; Enter while busy emits nothing", async () => {
     await flush();
     await pickAgent("Antigravity");
+    radio("Antigravity").focus();
 
     pressKey({ key: "Enter" });
     await flush();
@@ -312,6 +333,7 @@ describe("SessionLaunchControls", () => {
     });
     app.mount(host);
     await flush();
+    radio("Claude").focus();
 
     pressKey({ key: "Enter" });
     await flush();
@@ -322,6 +344,7 @@ describe("SessionLaunchControls", () => {
   it("pressing 1 with a modifier held does nothing", async () => {
     await flush();
     await pickAgent("Antigravity");
+    radio("Antigravity").focus();
 
     pressKey({ key: "1", metaKey: true });
     await flush();
@@ -332,11 +355,45 @@ describe("SessionLaunchControls", () => {
   it("removes the keydown listener on unmount", async () => {
     await flush();
     await pickAgent("Claude");
+    radio("Claude").focus();
     app.unmount();
 
     pressKey({ key: "2" });
     await flush();
 
     expect(starts).toEqual([]);
+  });
+
+  it("ignores keypresses when focus belongs to a different mounted picker", async () => {
+    const hostB = document.createElement("div");
+    document.body.append(hostB);
+    const startsB: Array<AgentLaunchSelection | undefined> = [];
+    const appB = createApp({
+      render: () => h(SessionLaunchControls, {
+        onStart: (selection: AgentLaunchSelection | undefined) => startsB.push(selection),
+      }),
+    });
+    appB.mount(hostB);
+
+    await flush();
+    const radiosA = () => Array.from(host.querySelectorAll<HTMLButtonElement>("[role=radiogroup] button[role=radio]"));
+    const radiosB = () => Array.from(hostB.querySelectorAll<HTMLButtonElement>("[role=radiogroup] button[role=radio]"));
+
+    radiosA()[0]!.focus();
+    pressKey({ key: "Enter" });
+    await flush();
+
+    expect(starts).toEqual([{ agentType: "claude", modelId: null, effort: null, fast: null }]);
+    expect(startsB).toEqual([]);
+
+    radiosB()[0]!.focus();
+    pressKey({ key: "Enter" });
+    await flush();
+
+    expect(starts).toEqual([{ agentType: "claude", modelId: null, effort: null, fast: null }]);
+    expect(startsB).toEqual([{ agentType: "claude", modelId: null, effort: null, fast: null }]);
+
+    appB.unmount();
+    hostB.remove();
   });
 });

@@ -57,6 +57,7 @@ const radioOptions = computed(() => agentChoices.value.length > 0
   : [{ value: "terminal" as AgentType | "terminal", label: "Terminal", icon: undefined }]);
 
 const radioGroup = ref<HTMLElement | null>(null);
+const root = ref<HTMLElement | null>(null);
 
 function focusRadio(index: number): void {
   const options = radioOptions.value;
@@ -180,6 +181,7 @@ function isMenuOpen(): boolean {
 }
 
 function onWindowKeydown(event: KeyboardEvent): void {
+  if (!root.value?.contains(document.activeElement)) return;
   if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
   if (isEditableTarget(event.target)) return;
   if (isMenuOpen()) return;
@@ -214,7 +216,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div :class="['flex gap-2', compact ? 'flex-col items-stretch' : 'flex-wrap items-center']" :aria-busy="loading || busy">
+  <div ref="root" :class="['flex gap-2', compact ? 'flex-col items-stretch' : 'flex-wrap items-center']" :aria-busy="loading || busy">
     <TooltipProvider :delay-duration="300">
       <div
         ref="radioGroup"

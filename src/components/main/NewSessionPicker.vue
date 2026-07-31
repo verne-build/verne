@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import {
   Check,
   ChevronDown,
@@ -73,6 +73,7 @@ interface StartSnapshot {
 }
 
 const pendingStart = ref<StartSnapshot | null>(null);
+const root = ref<HTMLElement | null>(null);
 const current = computed<WorkingDirectory | null>(() =>
   store.directories.find((dir) => dir.id === props.dirId) ?? null,
 );
@@ -299,6 +300,7 @@ onMounted(() => {
   mounted = true;
   void loadCurrentScope();
   void loadBranches();
+  void nextTick(() => root.value?.focus());
 });
 
 onUnmounted(() => {
@@ -309,7 +311,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="flex h-full min-h-0 items-center justify-center p-5 sm:p-8" @keydown.esc.stop="onEscape">
+  <div ref="root" tabindex="-1" class="flex h-full min-h-0 items-center justify-center p-5 sm:p-8 outline-none" @keydown.esc.stop="onEscape">
     <div class="w-full max-w-4xl">
       <h2 id="new-session-picker-title" class="mb-3 flex flex-wrap items-center gap-1 text-xl font-semibold tracking-tight text-foreground">
         <span>Start New Session In</span>
