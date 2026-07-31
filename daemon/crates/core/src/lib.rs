@@ -1,3 +1,8 @@
+/// Build identity of this daemon binary. Release: git sha of the last commit
+/// touching `daemon/`. Debug: build timestamp. `"unknown"` if git was absent.
+/// Electron compares this against the on-disk binary to detect a stale daemon.
+pub const DAEMON_SRC: &str = env!("VERNE_DAEMON_SRC");
+
 pub mod paths;
 pub mod protocol;
 pub mod daemon;

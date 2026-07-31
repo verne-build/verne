@@ -2569,6 +2569,7 @@ dependencies = [
 name = "verne-daemon"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
  "verne-core",
 ]
 

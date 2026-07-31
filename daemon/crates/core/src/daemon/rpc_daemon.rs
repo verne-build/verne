@@ -288,6 +288,10 @@ async fn dispatch_impl(req: Request, state: Arc<DaemonState>) -> Response {
             }
         }
 
+        m if m == methods::DAEMON_BUILD_ID => {
+            Response::ok(req.id, serde_json::json!({ "src": crate::DAEMON_SRC }))
+        }
+
         other => Response::err(req.id, format!("unknown daemon method: {other}")),
     }
 }

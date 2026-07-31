@@ -9,6 +9,10 @@ pub const PING: &str = "ping";
 // system.rs — still RPC-forwarded (touch session counts).
 pub const GET_DAEMON_DIAGNOSTICS: &str = "get_daemon_diagnostics";
 
+// Build identity — Electron compares this against `verne --version` on disk
+// to detect a daemon left running from a previous install.
+pub const DAEMON_BUILD_ID: &str = "daemon_build_id";
+
 // tabs — split across processes. Row/DB methods (sidecar) vs PTY methods
 // (daemon). The composite `tabs_create`/`tabs_close`/`tabs_session_id` flows are
 // orchestrated in Electron main over both processes (Star topology).

@@ -9,3 +9,4 @@ path = "src/main.rs"
 
 [dependencies]
 verne-core = { path = "../core" }
+serde_json = "1"
