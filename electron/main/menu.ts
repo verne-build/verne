@@ -11,6 +11,18 @@ let getWindowRef: (() => BrowserWindow) | undefined;
 export type UpdaterMenuPhase = "idle" | "checking" | "downloading" | "installing" | "ready";
 let updaterPhase: UpdaterMenuPhase = "idle";
 
+// Set when the running daemon is older than the binary on disk. Renders a dot on
+// the Restart Daemon item — the way back after dismissing the toast.
+let daemonStale = false;
+
+/** Flags the Restart Daemon menu item. No-ops when unchanged so we don't churn
+ *  full menu rebuilds. */
+export function setDaemonStale(stale: boolean): void {
+  if (stale === daemonStale || !getWindowRef) return;
+  daemonStale = stale;
+  buildAppMenu(getWindowRef);
+}
+
 function updaterMenuItem(
   send: (action: string) => void,
 ): Electron.MenuItemConstructorOptions {
@@ -75,7 +87,7 @@ export function buildAppMenu(getWindow: () => BrowserWindow, onRestartDaemon?: (
         // Hard-restarts the detached daemon (shutdown + respawn + reconnect in
         // place). Wired natively in index.ts (confirm dialog → restartDaemon),
         // since the renderer has no part in daemon lifecycle.
-        { label: "Restart Daemon", click: () => restartDaemon?.() },
+        { label: daemonStale ? "Restart Daemon ●" : "Restart Daemon", click: () => restartDaemon?.() },
         { type: "separator" },
         { role: "quit" },
       ],

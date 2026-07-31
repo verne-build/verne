@@ -5,7 +5,8 @@ import { ensureDaemon, ensureSidecar, killSidecar, restartDaemon } from "./daemo
 import { installRouter, registerNative } from "./ipc-router";
 import { createWindow } from "./window";
 import { showTestNotification, forgetTab as forgetNotificationTab } from "./native/notifications";
-import { buildAppMenu } from "./menu";
+import { buildAppMenu, setDaemonStale } from "./menu";
+import { checkDaemonStale } from "./native/daemon-version";
 import { registerAssetSchemePrivilege, handleAssetProtocol } from "./asset-protocol";
 import { registerWindowCommands } from "./native/window-cmds";
 import { registerDialogCommands } from "./native/dialog-cmds";
@@ -144,6 +145,9 @@ async function confirmAndRestartDaemon(): Promise<void> {
 function registerExtraNatives(): void {
   // debug: fire a test notification (hidden ⌘⌃⇧N shortcut), bypassing the focus gate
   registerNative("notify_test", (_p, win) => showTestNotification(win));
+  // The toast's "Restart Daemon" action needs a renderer-reachable path to the
+  // same confirm flow the menu item uses.
+  registerNative("daemon_restart_confirm", () => confirmAndRestartDaemon());
   registerNative("get_resource_path", (p: { name?: string }) => {
     const name = p.name ?? "";
     if (!/^[\w.-]+$/.test(name)) throw new Error("invalid_resource_name");
@@ -388,6 +392,19 @@ app.whenReady().then(async () => {
   catch (e) { console.error("[settings] startup set_config push failed:", e); }
   try { await timed("terminal_set_colors", () => pushTerminalColorsToDaemon(d0, startupSettings)); }
   catch (e) { console.error("[terminal] startup color push failed:", e); }
+
+  // Fire-and-forget: the detached daemon survives app close, so a freshly-updated
+  // Electron can be talking to a daemon from the previous install. Must not gate
+  // first paint, and must never reject.
+  void checkDaemonStale(d0)
+    .then((verdict) => {
+      if (verdict !== "stale") return;
+      setDaemonStale(true);
+      if (win && !win.isDestroyed()) {
+        win.webContents.send("daemon-event", "daemon-stale", {});
+      }
+    })
+    .catch((e) => console.error("[daemon] staleness check failed:", e));
 
   // Register the handlers the renderer needs, then bring the window up. Everything
   // not required for first render (session reconcile, hook install, agent-shadow
