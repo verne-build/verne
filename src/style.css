@@ -356,93 +356,24 @@ html[data-scrolling] [data-slot="tooltip-content"] {
   color: var(--color-popover-foreground);
 }
 
-/* --- Session list view transitions (SessionsSidebar) ----------------------
-   The sessions scroll container carries data-vt="<kind>" while a transition
-   runs; the same attribute is mirrored on :root so the document-level
-   fallback path picks up identical rules. Rows carry a stable per-tab
-   view-transition-name, so the default group animation already produces the
-   position + size morph and the default old/new cross-fade already handles
-   the live→archived content swap. Only the enter- and exit-only cases need
-   bespoke keyframes. */
+/* --- Session list motion (SessionsSidebar) -------------------------------
+   Rows are absolutely positioned by the virtualizer via inline
+   `transform: translateY(...)`. Arming a transition on `transform` means the
+   virtualizer writing new offsets IS the animation. Gated behind data-anim
+   because the same offsets are rewritten during scrolling, where animating
+   them would be wrong. */
 
-/* Fallback path only: opt the root out of being snapshotted so the WebGL
-   terminal canvas keeps rendering live instead of freezing. No-op when the
-   element-scoped API is in use. */
-:root {
-  view-transition-name: none;
+[data-anim] [data-session-row] {
+  transition: transform 240ms cubic-bezier(0.2, 0, 0, 1);
 }
 
-[data-vt]::view-transition-group(*) {
-  animation-duration: 240ms;
-  animation-timing-function: cubic-bezier(0.2, 0, 0, 1);
+[data-anim] [data-session-rows] {
+  transition: height 240ms cubic-bezier(0.2, 0, 0, 1);
 }
 
-[data-vt]::view-transition-old(*),
-[data-vt]::view-transition-new(*) {
-  animation-duration: 240ms;
-  animation-timing-function: cubic-bezier(0.2, 0, 0, 1);
-  transform-origin: top;
-}
-
-/* Exits are quicker than entrances and ease in — the element is leaving,
-   don't dwell on it. */
-[data-vt="exit"]::view-transition-group(*) {
-  animation-duration: 180ms;
-}
-
-/* Archived into a collapsed section: collapse toward the top and fade. */
-[data-vt="archive"]::view-transition-old(*):only-child {
-  animation: verne-session-collapse 180ms cubic-bezier(0.4, 0, 1, 1) both;
-}
-
-/* Session closed: fade only. Closing is destructive — a shrink toward the
-   archive would imply the session went somewhere. */
-[data-vt="exit"]::view-transition-old(*):only-child {
-  animation: verne-session-fade-out 180ms cubic-bezier(0.4, 0, 1, 1) both;
-}
-
-/* New session: understated. It usually also steals focus and swaps the main
-   pane, and two competing animations is one too many. */
-[data-vt="enter"]::view-transition-group(*) {
-  animation-duration: 160ms;
-}
-[data-vt="enter"]::view-transition-new(*):only-child {
-  animation: verne-session-enter 160ms cubic-bezier(0.2, 0, 0, 1) both;
-}
-
-[data-vt="unarchive"]::view-transition-new(*):only-child {
-  animation: verne-session-enter 240ms cubic-bezier(0.2, 0, 0, 1) both;
-}
-
-/* Archived section expand / collapse. */
-[data-vt="toggle"]::view-transition-new(*):only-child {
-  animation: verne-session-enter 240ms cubic-bezier(0.2, 0, 0, 1) both;
-}
-[data-vt="toggle"]::view-transition-old(*):only-child {
-  animation: verne-session-collapse 240ms cubic-bezier(0.2, 0, 0, 1) both;
-}
-
-@keyframes verne-session-collapse {
-  from { opacity: 1; transform: scaleY(1); }
-  to { opacity: 0; transform: scaleY(0.85); }
-}
-
-@keyframes verne-session-fade-out {
-  from { opacity: 1; }
-  to { opacity: 0; }
-}
-
-@keyframes verne-session-enter {
-  from { opacity: 0; transform: translateY(-4px); }
-  to { opacity: 1; transform: none; }
-}
-
-/* JS already bypasses transitions under reduced motion; this is a safety net
-   for any path that reaches the pseudo tree anyway. */
 @media (prefers-reduced-motion: reduce) {
-  [data-vt]::view-transition-group(*),
-  [data-vt]::view-transition-old(*),
-  [data-vt]::view-transition-new(*) {
-    animation: none !important;
+  [data-anim] [data-session-row],
+  [data-anim] [data-session-rows] {
+    transition: none;
   }
 }

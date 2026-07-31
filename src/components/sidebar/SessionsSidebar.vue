@@ -12,7 +12,7 @@ import {
   type ListSnapshotEntry,
   type SessionRow as SessionRowModel,
 } from "@/lib/sessionsView";
-import { useSessionListTransition } from "@/composables/useSessionListTransition";
+import { useSessionListAnimation } from "@/composables/useSessionListAnimation";
 import { sortSessionCards, type CardSortInputs } from "@/lib/sessionSort";
 import SessionCard from "./SessionCard.vue";
 import { Button } from "@/components/ui/button";
@@ -90,16 +90,10 @@ type SessionListItem =
   | { kind: "session"; key: string; row: SessionRowModel }
   | { kind: "archive-header"; key: "archive-header" };
 
-const { commit } = useSessionListTransition(sessionsScrollRef);
+const { commit } = useSessionListAnimation(sessionsScrollRef);
 
 function setArchivedOpen(open: boolean): void {
   commit("toggle", () => { archivedOpen.value = open; });
-}
-
-/** Stable per-tab name so the live→archived shape change is captured as one
- *  morphing element rather than a remove plus an insert. */
-function vtName(item: SessionListItem): string {
-  return item.kind === "archive-header" ? "session-archive-header" : `session-${item.row.tab.id}`;
 }
 
 const sessionListItems = computed<SessionListItem[]>(() => {
@@ -148,17 +142,6 @@ const virtualSessionRows = computed(() =>
 
 function measureSessionRow(element: unknown): void {
   if (element instanceof Element) sessionVirtualizer.value.measureElement(element);
-}
-
-// Duplicate view-transition-names abort the whole transition silently.
-// partitionSessions makes that impossible today; this surfaces a future
-// regression as a warning rather than as mysteriously dead animation.
-if (import.meta.env.DEV) {
-  watch(virtualSessionRows, (entries) => {
-    const names = entries.map((entry) => vtName(entry.item));
-    if (new Set(names).size !== names.length)
-      console.warn("[SessionsSidebar] duplicate view-transition-name, animation will abort", names);
-  });
 }
 
 function nextCards(): { live: SessionRowModel[]; archived: SessionRowModel[] } {
@@ -350,12 +333,13 @@ watch(() => store.directories.map((d) => d.id).join(","), () => {
 
     <!-- Unified virtual session list -->
     <Collapsible :open="archivedOpen" class="contents" @update:open="setArchivedOpen">
-      <div ref="sessionsScrollRef" class="min-h-0 flex-1 overflow-y-auto pb-3 pt-1 [scrollbar-gutter:stable] [view-transition-scope:all]">
+      <div ref="sessionsScrollRef" class="min-h-0 flex-1 overflow-y-auto pb-3 pt-1 [scrollbar-gutter:stable]">
         <div v-if="sessionListItems.length === 0 && rootDirs.length" class="flex h-24 items-center justify-center px-4 text-center text-xs text-muted-foreground">
           No sessions — press ⌘T
         </div>
         <div
           v-else
+          data-session-rows
           class="relative w-full overflow-hidden"
           :style="{ height: `${sessionVirtualizer.getTotalSize()}px` }"
         >
@@ -364,12 +348,9 @@ watch(() => store.directories.map((d) => d.id).join(","), () => {
             :key="entry.item.key"
             :ref="measureSessionRow"
             :data-index="entry.virtualRow.index"
-            :data-vt-name="vtName(entry.item)"
+            data-session-row
             class="absolute left-0 top-0 flow-root w-full"
-            :style="{
-              transform: `translateY(${entry.virtualRow.start}px)`,
-              'view-transition-name': vtName(entry.item),
-            }"
+            :style="{ transform: `translateY(${entry.virtualRow.start}px)` }"
           >
             <SessionCard
               v-if="entry.item.kind === 'session'"

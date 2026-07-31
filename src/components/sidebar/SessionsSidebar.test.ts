@@ -181,7 +181,7 @@ describe("SessionsSidebar workspace dropdown", () => {
     expect(trigger?.textContent?.trim()).toBe("Archived");
   });
 
-  it("gives every rendered row a unique view-transition name", async () => {
+  it("marks rows and the sizing container so the transition window can target them", async () => {
     app.unmount();
     store.sessionsList.mockReturnValue([
       { tab: { id: "live-1" }, directory: store.directories[0], agentType: null },
@@ -193,13 +193,10 @@ describe("SessionsSidebar workspace dropdown", () => {
     app.mount(host);
     await flush();
 
-    const names = Array.from(host.querySelectorAll<HTMLElement>("[data-vt-name]"))
-      .map((el) => el.dataset.vtName ?? "");
-    expect(names.length).toBeGreaterThan(0);
-    expect(new Set(names).size).toBe(names.length);
-    expect(names).toContain("session-live-1");
-    expect(names).toContain("session-archive-header");
+    expect(host.querySelectorAll("[data-session-row]").length).toBeGreaterThan(0);
+    expect(host.querySelectorAll("[data-session-rows]").length).toBe(1);
   });
+
 
   it("no longer renders the hand-rolled archive height transition", async () => {
     await flush();
