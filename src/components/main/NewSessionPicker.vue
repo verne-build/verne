@@ -365,7 +365,7 @@ onUnmounted(() => {
 
           <DropdownMenu :open="branchMenuOpen" @update:open="setBranchMenuOpen">
             <DropdownMenuTrigger as-child>
-              <Button type="button" variant="ghost" class="h-8 -me-2 min-w-0 justify-start px-2 sm:justify-end" :disabled="launching || loadingBranches || !branches.length" aria-label="Select Branch">
+              <Button type="button" variant="ghost" class="h-8 -ms-2 min-w-0 justify-start px-2 sm:-me-2 sm:justify-end" :disabled="launching || loadingBranches || !branches.length" aria-label="Select Branch">
                 <GitBranchIcon aria-hidden="true" class="size-4 text-muted-foreground" />
                 <span class="text-muted-foreground">{{ branchLabel }}</span>
                 <span class="truncate font-medium">{{ selectedBranch?.name ?? "Loading" }}</span>
