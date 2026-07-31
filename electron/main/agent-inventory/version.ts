@@ -50,7 +50,8 @@ export function parseInstalledVersion(key: AgentInventoryKey, output: string): s
     opencode: "(?:opencode|open-code)",
     pi: "pi",
   }[key];
-  const match = normalized.match(new RegExp(`^(?:${productPrefix}\\s+)?v?(${SEMVER_SOURCE})(?=$|\\s|\\()`, "i"));
+  const suffix = key === "claude" ? "(?:\\s+\\(Claude Code\\))?" : "";
+  const match = normalized.match(new RegExp(`^(?:${productPrefix}\\s+)?v?(${SEMVER_SOURCE})${suffix}$`, "i"));
   return match?.[1] && parseSemver(match[1]) ? match[1] : null;
 }
 
@@ -116,9 +117,9 @@ const SEMVER_SOURCE = "(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-([0-9A-Z
 const SEMVER = new RegExp(`^${SEMVER_SOURCE}$`);
 
 interface Semver {
-  major: number;
-  minor: number;
-  patch: number;
+  major: string;
+  minor: string;
+  patch: string;
   prerelease: string[] | null;
 }
 
@@ -127,12 +128,13 @@ function parseSemver(value: string): Semver | null {
   if (!match) return null;
   const prerelease = match[4]?.split(".") ?? null;
   if (prerelease?.some((part) => /^\d+$/.test(part) && part.length > 1 && part.startsWith("0"))) return null;
-  return { major: Number(match[1]), minor: Number(match[2]), patch: Number(match[3]), prerelease };
+  return { major: match[1], minor: match[2], patch: match[3], prerelease };
 }
 
 function compareSemver(a: Semver, b: Semver): number {
   for (const field of ["major", "minor", "patch"] as const) {
-    if (a[field] !== b[field]) return a[field] < b[field] ? -1 : 1;
+    const comparison = compareNumericStrings(a[field], b[field]);
+    if (comparison !== 0) return comparison;
   }
   if (!a.prerelease && !b.prerelease) return 0;
   if (!a.prerelease) return 1;
@@ -146,11 +148,17 @@ function compareSemver(a: Semver, b: Semver): number {
     if (left === right) continue;
     const leftNumber = /^\d+$/.test(left);
     const rightNumber = /^\d+$/.test(right);
-    if (leftNumber && rightNumber) return Number(left) < Number(right) ? -1 : 1;
+    if (leftNumber && rightNumber) return compareNumericStrings(left, right);
     if (leftNumber !== rightNumber) return leftNumber ? -1 : 1;
     return left < right ? -1 : 1;
   }
   return 0;
+}
+
+function compareNumericStrings(left: string, right: string): number {
+  if (left.length !== right.length) return left.length < right.length ? -1 : 1;
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
 }
 
 function parseCursorBuild(value: string): string | null {

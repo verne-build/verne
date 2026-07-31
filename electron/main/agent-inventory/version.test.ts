@@ -61,6 +61,8 @@ describe("installed agent versions", () => {
   it("accepts ANSI output and rejects non-versions and oversized output", () => {
     expect(parseInstalledVersion("claude", "\u001b[32m2.1.4\u001b[0m")).toBe("2.1.4");
     expect(parseInstalledVersion("claude", "release 21")).toBeNull();
+    expect(parseInstalledVersion("claude", "2.1.4 garbage")).toBeNull();
+    expect(parseInstalledVersion("claude", "2.1.4 (")).toBeNull();
     expect(parseInstalledVersion("claude", "x".repeat(65_537))).toBeNull();
   });
 
@@ -68,6 +70,11 @@ describe("installed agent versions", () => {
     expect(compareAgentVersions("claude", "2.1.4-beta.1", "2.1.4")).toBe("outdated");
     expect(compareAgentVersions("cursor", "2026.07.30-a1", "2026.07.31-b2")).toBe("outdated");
     expect(compareAgentVersions("cursor", "2026.07.31-a1", "2026.07.31-b2")).toBe("unknown");
+  });
+
+  it("orders large semver core and prerelease identifiers exactly", () => {
+    expect(compareAgentVersions("claude", "9007199254740992.0.0", "9007199254740993.0.0")).toBe("outdated");
+    expect(compareAgentVersions("claude", "1.0.0-9007199254740992", "1.0.0-9007199254740993")).toBe("outdated");
   });
 
   it("falls back when a probe's primary invocation fails", async () => {
