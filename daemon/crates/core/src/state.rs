@@ -65,7 +65,6 @@ pub struct AppState {
     /// __debug_hook_secret to forge valid hook requests. Empty until the
     /// hook server starts.
     pub hook_secret: Mutex<String>,
-    pub agent_bin_cache: Mutex<HashMap<String, bool>>,
     /// Serializes worktree creation per canonical repository root.
     pub worktree_create_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
 }
@@ -163,7 +162,6 @@ impl AppState {
             event_bus: Arc::new(EventBus::new()),
             hook_port: AtomicU16::new(0),
             hook_secret: Mutex::new(String::new()),
-            agent_bin_cache: Mutex::new(HashMap::new()),
             worktree_create_locks: Mutex::new(HashMap::new()),
         }
     }
