@@ -1,21 +1,29 @@
 <script setup lang="ts">
 import type { TooltipContentEmits, TooltipContentProps } from "reka-ui"
 import type { HTMLAttributes } from "vue"
+import type { FloatingSurfaceVariant } from "@/components/ui/floatingSurface"
 import { reactiveOmit } from "@vueuse/core"
 import { TooltipContent, TooltipPortal, useForwardPropsEmits } from "reka-ui"
 import { cn } from "@/lib/utils"
+import { floatingSurfaceVariants } from "@/components/ui/floatingSurface"
 
 defineOptions({
   inheritAttrs: false,
 })
 
-const props = withDefaults(defineProps<TooltipContentProps & { class?: HTMLAttributes["class"] }>(), {
-  sideOffset: 4,
-})
+const props = withDefaults(
+  defineProps<TooltipContentProps & {
+    class?: HTMLAttributes["class"]
+    variant?: FloatingSurfaceVariant
+  }>(),
+  {
+    sideOffset: 4,
+  },
+)
 
 const emits = defineEmits<TooltipContentEmits>()
 
-const delegatedProps = reactiveOmit(props, "class")
+const delegatedProps = reactiveOmit(props, "class", "variant")
 const forwarded = useForwardPropsEmits(delegatedProps, emits)
 </script>
 
@@ -24,7 +32,11 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits)
     <TooltipContent
       data-slot="tooltip-content"
       v-bind="{ ...forwarded, ...$attrs }"
-      :class="cn('bg-popover text-popover-foreground animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 z-50 w-fit rounded-md border py-2 px-3 text-xs text-balance shadow-md [&:has(kbd)]:pr-2', props.class)"
+      :class="cn(
+        'animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 z-50 w-fit rounded-md py-2 px-3 text-xs text-balance shadow-md [&:has(kbd)]:pr-2',
+        floatingSurfaceVariants({ variant: props.variant }),
+        props.class,
+      )"
     >
       <slot />
     </TooltipContent>

@@ -211,3 +211,18 @@ html[data-scrolling] [data-slot="tooltip-content"] {
   justify-self: start;
   margin: 0 !important;
 }
+
+/* Sonner's styled-toast selector outranks ordinary utility classes. Bridge only
+   material properties here; Sonner continues to own layout, motion, and swipe. */
+[data-sonner-toast][data-styled="true"].floating-surface-glass {
+  background: color-mix(in oklab, color-mix(in oklab, var(--color-background) 88%, white 12%) 80%, transparent);
+  border-color: color-mix(in oklab, var(--color-border) 60%, transparent);
+  color: var(--color-popover-foreground);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45), inset 1px 0 0 rgba(255, 255, 255, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+[data-sonner-toast][data-styled="true"].floating-surface-solid {
+  background: var(--color-popover);
+  border-color: var(--color-border);
+  color: var(--color-popover-foreground);
+}
