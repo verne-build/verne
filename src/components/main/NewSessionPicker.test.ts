@@ -90,6 +90,22 @@ async function openMenu(name: string): Promise<void> {
   await flush();
 }
 
+function radios(): HTMLButtonElement[] {
+  return Array.from(document.querySelectorAll<HTMLButtonElement>("[role=radiogroup] button[role=radio]"));
+}
+
+function radio(label: string): HTMLButtonElement {
+  const match = radios().find((element) => element.getAttribute("aria-label") === label);
+  if (!match) throw new Error(`Missing radio: ${label}`);
+  return match;
+}
+
+function checkedRadio(): string {
+  const match = radios().find((element) => element.getAttribute("aria-checked") === "true");
+  if (!match) throw new Error("No checked radio");
+  return match.getAttribute("aria-label") ?? "";
+}
+
 describe("NewSessionPicker", () => {
   let host: HTMLDivElement;
   let app: ReturnType<typeof createApp>;
@@ -140,7 +156,7 @@ describe("NewSessionPicker", () => {
     await flush();
 
     expect(rpc.agentBinsAvailable).toHaveBeenCalledOnce();
-    expect(button("Antigravity")).toBeTruthy();
+    expect(radio("Antigravity")).toBeTruthy();
   });
 
   it("renders and selects the registry-first Claude result", async () => {
@@ -154,8 +170,8 @@ describe("NewSessionPicker", () => {
     app.mount(host);
     await flush();
 
-    expect(button("Claude")).toBeTruthy();
-    expect(namedButton("Select Agent").textContent).toContain("Claude");
+    expect(radio("Claude")).toBeTruthy();
+    expect(checkedRadio()).toBe("Claude");
   });
 
   it("retargets the picker from the directory heading dropdown", async () => {
@@ -228,18 +244,16 @@ describe("NewSessionPicker", () => {
     app.mount(host);
     await nextTick();
 
-    await openMenu("Select Agent");
-    menuItem("Terminal").click();
+    radio("Terminal").click();
     resolveBins({ available: ["agy"] });
     await flush();
 
-    expect(button("Terminal")).toBeTruthy();
+    expect(checkedRadio()).toBe("Terminal");
   });
 
   it("disables Model and Effort for Terminal", async () => {
     await flush();
-    await openMenu("Select Agent");
-    menuItem("Terminal").click();
+    radio("Terminal").click();
     await nextTick();
 
     expect(button("Model Default").disabled).toBe(true);

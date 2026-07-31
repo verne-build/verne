@@ -50,6 +50,27 @@ async function selectFrom(menu: string, item: string): Promise<void> {
   await flush();
 }
 
+function radios(): HTMLButtonElement[] {
+  return Array.from(document.querySelectorAll<HTMLButtonElement>("[role=radiogroup] button[role=radio]"));
+}
+
+function radio(label: string): HTMLButtonElement {
+  const match = radios().find((element) => element.getAttribute("aria-label") === label);
+  if (!match) throw new Error(`Missing radio: ${label}`);
+  return match;
+}
+
+function checkedRadio(): string {
+  const match = radios().find((element) => element.getAttribute("aria-checked") === "true");
+  if (!match) throw new Error("No checked radio");
+  return match.getAttribute("aria-label") ?? "";
+}
+
+async function pickAgent(label: string): Promise<void> {
+  radio(label).click();
+  await flush();
+}
+
 describe("SessionLaunchControls", () => {
   let host: HTMLDivElement;
   let app: ReturnType<typeof createApp>;
@@ -99,7 +120,7 @@ describe("SessionLaunchControls", () => {
 
   it("emits undefined for Terminal", async () => {
     await flush();
-    await selectFrom("Select Agent", "Terminal");
+    await pickAgent("Terminal");
 
     button("Start").click();
 
@@ -115,13 +136,13 @@ describe("SessionLaunchControls", () => {
     rpc.agentBinsAvailable.mockImplementation(() => new Promise((done) => { resolve = done; }));
     mount();
     await nextTick();
-    await selectFrom("Select Agent", "Terminal");
+    await pickAgent("Terminal");
 
     resolve({ available: ["claude"] });
     await flush();
     button("Start").click();
 
-    expect(namedButton("Select Agent").textContent).toContain("Terminal");
+    expect(checkedRadio()).toBe("Terminal");
     expect(starts).toEqual([undefined]);
   });
 
@@ -137,11 +158,53 @@ describe("SessionLaunchControls", () => {
     await flush();
 
     expect(document.body.textContent).toContain("Couldn't Load Agents");
-    expect(namedButton("Select Agent").textContent).toContain("Terminal");
+    expect(checkedRadio()).toBe("Terminal");
     button("Retry").click();
     await flush();
 
     expect(rpc.agentBinsAvailable).toHaveBeenCalledTimes(2);
-    expect(namedButton("Select Agent").textContent).toContain("Antigravity");
+    expect(checkedRadio()).toBe("Antigravity");
+  });
+
+  it("renders one radio per installed agent plus Terminal, first agent checked", async () => {
+    await flush();
+
+    expect(radios().map((element) => element.getAttribute("aria-label")))
+      .toEqual(["Claude", "Antigravity", "Terminal"]);
+    expect(checkedRadio()).toBe("Claude");
+  });
+
+  it("switches agent in one click", async () => {
+    await flush();
+    await pickAgent("Antigravity");
+
+    button("Start").click();
+
+    expect(checkedRadio()).toBe("Antigravity");
+    expect(starts).toEqual([{ agentType: "agy", modelId: null, effort: null, fast: null }]);
+  });
+
+  it("moves selection with arrow keys and wraps at the ends", async () => {
+    await flush();
+    radio("Claude").dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    await flush();
+
+    expect(checkedRadio()).toBe("Antigravity");
+
+    radio("Antigravity").dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true }));
+    await flush();
+
+    expect(checkedRadio()).toBe("Terminal");
+
+    radio("Terminal").dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    await flush();
+
+    expect(checkedRadio()).toBe("Claude");
+  });
+
+  it("exposes a single tab stop", async () => {
+    await flush();
+
+    expect(radios().map((element) => element.tabIndex)).toEqual([0, -1, -1]);
   });
 });

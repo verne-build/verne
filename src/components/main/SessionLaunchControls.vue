@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { ArrowRight, Bot, Check, ChevronDown, CircleAlert, SquareTerminal, Zap } from "@lucide/vue";
 import { useRpc } from "@/composables/useRpc";
 import { useTheme } from "@/composables/useTheme";
@@ -16,6 +16,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 const props = withDefaults(defineProps<{ busy?: boolean; compact?: boolean; disabled?: boolean }>(), {
   busy: false,
@@ -49,6 +50,33 @@ const selectedModel = computed<ModelDefinition | null>(() => selectedModelId.val
   ? selectedAgent.value?.models.find((model) => model.id === selectedModelId.value) ?? null
   : null);
 const isTerminal = computed(() => !selectedAgent.value);
+
+const radioOptions = computed(() => [
+  ...agentChoices.value.map((agent) => ({ value: agent.type as AgentType | "terminal", label: agent.label, icon: agent.icon })),
+  { value: "terminal" as AgentType | "terminal", label: "Terminal", icon: undefined },
+]);
+
+const radioGroup = ref<HTMLElement | null>(null);
+
+function focusRadio(index: number): void {
+  const options = radioOptions.value;
+  if (!options.length) return;
+  const next = ((index % options.length) + options.length) % options.length;
+  selectAgent(options[next]!.value);
+  void nextTick(() => {
+    radioGroup.value?.querySelectorAll<HTMLButtonElement>("button[role=radio]")[next]?.focus();
+  });
+}
+
+function onRadioKeydown(event: KeyboardEvent, index: number): void {
+  const last = radioOptions.value.length - 1;
+  if (event.key === "ArrowRight" || event.key === "ArrowDown") focusRadio(index + 1);
+  else if (event.key === "ArrowLeft" || event.key === "ArrowUp") focusRadio(index - 1);
+  else if (event.key === "Home") focusRadio(0);
+  else if (event.key === "End") focusRadio(last);
+  else return;
+  event.preventDefault();
+}
 
 function effortsFor(model: ModelDefinition | null): string[] {
   if (!model) return [];
@@ -148,34 +176,39 @@ onUnmounted(() => {
 
 <template>
   <div :class="['grid gap-3', compact ? 'grid-cols-1' : 'sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]']" :aria-busy="loading || busy">
-    <DropdownMenu>
-      <DropdownMenuTrigger as-child>
-        <Button type="button" variant="outline" class="min-h-10 w-full justify-between px-3" :disabled="busy" aria-label="Select Agent">
-          <span class="flex min-w-0 items-center gap-2">
-            <img v-if="selectedAgent && findAgentIconForSurface(selectedAgent.type, surface)" :src="findAgentIconForSurface(selectedAgent.type, surface)" alt="" class="size-4" />
-            <SquareTerminal v-else-if="isTerminal" aria-hidden="true" class="size-4 text-muted-foreground" />
-            <Bot v-else aria-hidden="true" class="size-4 text-muted-foreground" />
-            <span class="truncate">{{ selectedAgentLabel }}</span>
-          </span>
-          <ChevronDown aria-hidden="true" class="size-4 text-muted-foreground" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" class="w-[var(--reka-dropdown-menu-trigger-width)]">
-        <DropdownMenuLabel class="text-xs font-normal text-muted-foreground">Agents</DropdownMenuLabel>
-        <DropdownMenuItem v-for="agent in agentChoices" :key="agent.type" @select="selectAgent(agent.type)">
-          <img v-if="agent.icon" :src="agent.icon" alt="" class="size-4" />
-          <Bot v-else aria-hidden="true" class="size-4 text-muted-foreground" />
-          {{ agent.label }}
-          <Check :class="['ml-auto size-3.5', selectedAgentType === agent.type ? 'opacity-100' : 'opacity-0']" />
-        </DropdownMenuItem>
-        <DropdownMenuSeparator v-if="agentChoices.length" />
-        <DropdownMenuItem @select="selectAgent('terminal')">
-          <SquareTerminal aria-hidden="true" class="size-4 text-muted-foreground" />
-          Terminal
-          <Check :class="['ml-auto size-3.5', isTerminal ? 'opacity-100' : 'opacity-0']" />
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <TooltipProvider :delay-duration="300">
+      <div
+        ref="radioGroup"
+        role="radiogroup"
+        aria-label="Agent"
+        :aria-disabled="busy || undefined"
+        class="inline-flex h-8 shrink-0 items-center gap-0.5 rounded-md border bg-background p-px dark:bg-input/30 dark:border-input"
+      >
+        <Tooltip v-for="(option, index) in radioOptions" :key="option.value">
+          <TooltipTrigger as-child>
+            <button
+              type="button"
+              role="radio"
+              :aria-label="option.label"
+              :aria-checked="selectedAgentType === option.value"
+              :tabindex="selectedAgentType === option.value ? 0 : -1"
+              :disabled="busy"
+              :class="[
+                'inline-flex size-7 items-center justify-center rounded-sm outline-none transition-colors disabled:pointer-events-none disabled:opacity-50 focus-visible:ring-[3px] focus-visible:ring-ring/50',
+                selectedAgentType === option.value ? 'bg-secondary opacity-100' : 'opacity-55 hover:opacity-100 hover:bg-border/25',
+              ]"
+              @click="selectAgent(option.value)"
+              @keydown="onRadioKeydown($event, index)"
+            >
+              <img v-if="option.icon" :src="option.icon" alt="" class="size-4" />
+              <SquareTerminal v-else-if="option.value === 'terminal'" aria-hidden="true" class="size-4" />
+              <Bot v-else aria-hidden="true" class="size-4" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>{{ option.label }}</TooltipContent>
+        </Tooltip>
+      </div>
+    </TooltipProvider>
 
     <DropdownMenu>
       <DropdownMenuTrigger as-child>
