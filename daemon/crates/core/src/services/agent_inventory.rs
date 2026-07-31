@@ -34,6 +34,12 @@ pub struct AgentInventoryProbeItem {
 pub fn probe(shell: &str, timeout: Duration) -> Result<Vec<AgentInventoryProbeItem>, String> {
     let script = probe_script()?;
     let output = run_shell_timed(shell, &script, timeout)?;
+    if !output.status.success() {
+        return Err(format!(
+            "agent inventory shell exited unsuccessfully: {}",
+            output.status
+        ));
+    }
     Ok(parse_probe_output(&String::from_utf8_lossy(&output.stdout)))
 }
 
@@ -293,5 +299,17 @@ mod tests {
 
         assert!(error.contains("timed out after"), "{error}");
         assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn probe_rejects_a_nonzero_login_shell() {
+        let temp = tempfile::tempdir().unwrap();
+        let shell = temp.path().join("failing-shell");
+        fs::write(&shell, "#!/bin/sh\nexit 1\n").unwrap();
+        fs::set_permissions(&shell, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let error = probe(shell.to_str().unwrap(), Duration::from_secs(1)).unwrap_err();
+
+        assert!(error.contains("exited unsuccessfully"), "{error}");
     }
 }
