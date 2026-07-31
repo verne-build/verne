@@ -8,7 +8,7 @@ import { socketPath, sidecarSocketPath, internalDataDir, daemonLog, sidecarLog, 
 // Bundled daemon binary path: resources/verne in production. In dev the in-repo
 // crate builds to daemon/target/debug/verne (app.getAppPath() is the repo root).
 // VERNE_DAEMON_BIN remains an optional override.
-function daemonBinary(): string {
+export function daemonBinary(): string {
   if (app.isPackaged) return join(process.resourcesPath, "verne");
   return process.env.VERNE_DAEMON_BIN ?? join(app.getAppPath(), "daemon", "target", "debug", "verne");
 }
