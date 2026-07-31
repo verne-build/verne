@@ -30,8 +30,10 @@ function namedButton(name: string): HTMLButtonElement {
 }
 
 function buttonLabel(element: HTMLElement): string {
+  // Strip aria-hidden content: shortcut badges and the invisible width-pinning
+  // label are not part of the button's accessible name.
   const clone = element.cloneNode(true) as HTMLElement;
-  clone.querySelectorAll("kbd").forEach((kbd) => kbd.remove());
+  clone.querySelectorAll("[aria-hidden=true]").forEach((node) => node.remove());
   return clone.textContent?.trim() ?? "";
 }
 
@@ -281,6 +283,21 @@ describe("SessionLaunchControls", () => {
     pressKey({ key: "9" }, radio("Antigravity"));
     await flush();
     expect(checkedRadio()).toBe("Antigravity");
+  });
+
+  it("moves focus onto the agent picked by number, not the one last clicked", async () => {
+    await flush();
+    // jsdom's click() doesn't focus; browsers focus a button on mousedown.
+    radio("Antigravity").focus();
+    radio("Antigravity").click();
+    await flush();
+    expect(document.activeElement).toBe(radio("Antigravity"));
+
+    pressKey({ key: "1" }, radio("Antigravity"));
+    await flush();
+
+    expect(checkedRadio()).toBe("Claude");
+    expect(document.activeElement).toBe(radio("Claude"));
   });
 
   it("pressing 1 while an input has focus does not change the selection", async () => {

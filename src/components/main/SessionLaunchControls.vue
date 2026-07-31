@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
-import { ArrowRight, Bot, Check, ChevronDown, CircleAlert, SquareTerminal, Zap } from "@lucide/vue";
+import { Bot, Check, ChevronDown, CircleAlert, SquareTerminal, Zap } from "@lucide/vue";
 import { useRpc } from "@/composables/useRpc";
 import { useTheme } from "@/composables/useTheme";
 import { agentIconSurfaceForTheme, findAgentIconForSurface } from "@/composables/useAgentIcon";
@@ -217,7 +217,9 @@ function onWindowKeydown(event: KeyboardEvent): void {
   const option = radioOptions.value[index - 1];
   if (!option) return;
   event.preventDefault();
-  selectAgent(option.value);
+  // focusRadio, not selectAgent — the focus ring must follow the selection,
+  // otherwise it strands on whichever icon was last clicked.
+  focusRadio(index - 1);
 }
 
 onMounted(() => {
@@ -333,10 +335,11 @@ onUnmounted(() => {
       </DropdownMenuContent>
     </DropdownMenu>
 
-    <Button type="button" :class="['h-8 px-4 has-[>svg]:px-4 transition-transform active:scale-[0.96]', compact ? 'w-full' : 'ms-auto']" :disabled="busy || disabled" @click="emit('start', launchSelection())">
-      {{ busy ? "Starting" : "Start" }}
-      <ArrowRight aria-hidden="true" class="size-4" />
-      <Kbd aria-hidden="true" variant="outline" class="h-4 min-w-0 border-primary-foreground/30 px-1 text-[10px] text-primary-foreground/70">⏎</Kbd>
+    <Button type="button" variant="outline" :class="['h-8 px-3 transition-transform active:scale-[0.96]', compact ? 'w-full' : 'ms-auto']" :disabled="busy || disabled" @click="emit('start', launchSelection())">
+      <!-- Label stays "Start" while busy; the disabled state carries the feedback,
+           so the button can't change width mid-launch. -->
+      Start
+      <Kbd aria-hidden="true" variant="outline" class="h-4 min-w-0 px-1 text-[10px]">⏎</Kbd>
     </Button>
   </div>
 

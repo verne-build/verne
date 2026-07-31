@@ -59,8 +59,10 @@ async function flush(): Promise<void> {
 }
 
 function buttonLabel(element: HTMLElement): string {
+  // Strip aria-hidden content: shortcut badges and the invisible width-pinning
+  // label are not part of the button's accessible name.
   const clone = element.cloneNode(true) as HTMLElement;
-  clone.querySelectorAll("kbd").forEach((kbd) => kbd.remove());
+  clone.querySelectorAll("[aria-hidden=true]").forEach((node) => node.remove());
   return clone.textContent?.trim() ?? "";
 }
 
