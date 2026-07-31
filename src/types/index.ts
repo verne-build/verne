@@ -49,3 +49,14 @@ export type {
   ReviewContext,
 } from "./shared";
 export { WS_PORT, SC_TAB_ID, COMMITS_TAB_ID, EXPLORER_TAB_ID, NOTES_TAB_ID, SEARCH_TAB_ID, NEW_TAB_ID } from "./shared";
+export type {
+  AgentDiscoveryStatus,
+  AgentInventoryItem,
+  AgentInventoryKey,
+  AgentInventoryProbeItem,
+  AgentInventorySnapshot,
+  AgentUpdateStatus,
+  LatestVersionSource,
+  UpdateGuidance,
+  VersionProbe,
+} from "./agentInventory";
