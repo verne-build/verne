@@ -17,6 +17,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Kbd } from "@/components/ui/kbd";
 
 const props = withDefaults(defineProps<{ busy?: boolean; compact?: boolean; disabled?: boolean }>(), {
   busy: false,
@@ -51,10 +52,9 @@ const selectedModel = computed<ModelDefinition | null>(() => selectedModelId.val
   : null);
 const isTerminal = computed(() => !selectedAgent.value);
 
-const radioOptions = computed(() => [
-  ...agentChoices.value.map((agent) => ({ value: agent.type as AgentType | "terminal", label: agent.label, icon: agent.icon })),
-  { value: "terminal" as AgentType | "terminal", label: "Terminal", icon: undefined },
-]);
+const radioOptions = computed(() => agentChoices.value.length > 0
+  ? agentChoices.value.map((agent) => ({ value: agent.type as AgentType | "terminal", label: agent.label, icon: agent.icon }))
+  : [{ value: "terminal" as AgentType | "terminal", label: "Terminal", icon: undefined }]);
 
 const radioGroup = ref<HTMLElement | null>(null);
 
@@ -163,13 +163,53 @@ async function loadAgentChoices(): Promise<void> {
 }
 
 watch([selectedAgent, selectedModel], compatibleModel);
+watch(radioOptions, (options) => {
+  if (options.length && !options.some((option) => option.value === selectedAgentType.value))
+    selectedAgentType.value = options[0]!.value;
+});
+
+const EDITABLE_TARGET_TAGS = new Set(["INPUT", "TEXTAREA", "SELECT"]);
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return EDITABLE_TARGET_TAGS.has(target.tagName) || target.isContentEditable;
+}
+
+function isMenuOpen(): boolean {
+  return document.querySelector("[data-slot=dropdown-menu-content]") !== null;
+}
+
+function onWindowKeydown(event: KeyboardEvent): void {
+  if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+  if (isEditableTarget(event.target)) return;
+  if (isMenuOpen()) return;
+  if (props.busy) return;
+
+  if (event.key === "Enter") {
+    if (event.target instanceof HTMLButtonElement) return;
+    if (props.disabled) return;
+    event.preventDefault();
+    emit("start", launchSelection());
+    return;
+  }
+
+  const index = Number(event.key);
+  if (!Number.isInteger(index) || index < 1 || index > 9) return;
+  const option = radioOptions.value[index - 1];
+  if (!option) return;
+  event.preventDefault();
+  selectAgent(option.value);
+}
+
 onMounted(() => {
   mounted = true;
   void loadAgentChoices();
+  window.addEventListener("keydown", onWindowKeydown);
 });
 onUnmounted(() => {
   mounted = false;
   requestId += 1;
+  window.removeEventListener("keydown", onWindowKeydown);
 });
 </script>
 
@@ -206,7 +246,10 @@ onUnmounted(() => {
               <Bot v-else aria-hidden="true" class="size-4" />
             </button>
           </TooltipTrigger>
-          <TooltipContent>{{ option.label }}</TooltipContent>
+          <TooltipContent class="flex items-center gap-1">
+            {{ option.label }}
+            <Kbd v-if="index < 9" variant="outline" class="h-4 min-w-0 px-1 text-[10px]">{{ index + 1 }}</Kbd>
+          </TooltipContent>
         </Tooltip>
       </div>
     </TooltipProvider>
@@ -269,6 +312,7 @@ onUnmounted(() => {
     <Button type="button" :class="['h-8 px-4 transition-transform active:scale-[0.96]', compact ? 'w-full' : 'ms-auto']" :disabled="busy || disabled" @click="emit('start', launchSelection())">
       {{ busy ? "Starting" : "Start" }}
       <ArrowRight aria-hidden="true" class="size-4" />
+      <Kbd variant="outline" class="h-4 min-w-0 px-1 text-[10px]">⏎</Kbd>
     </Button>
   </div>
 

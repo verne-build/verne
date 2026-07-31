@@ -29,9 +29,15 @@ function namedButton(name: string): HTMLButtonElement {
   return match;
 }
 
+function buttonLabel(element: HTMLElement): string {
+  const clone = element.cloneNode(true) as HTMLElement;
+  clone.querySelectorAll("kbd").forEach((kbd) => kbd.remove());
+  return clone.textContent?.trim() ?? "";
+}
+
 function button(label: string): HTMLButtonElement {
   const match = Array.from(document.querySelectorAll<HTMLButtonElement>("button"))
-    .find((element) => element.textContent?.trim() === label);
+    .find((element) => buttonLabel(element) === label);
   if (!match) throw new Error(`Missing button: ${label}`);
   return match;
 }
@@ -69,6 +75,10 @@ function checkedRadio(): string {
 async function pickAgent(label: string): Promise<void> {
   radio(label).click();
   await flush();
+}
+
+function pressKey(init: KeyboardEventInit, target: EventTarget = window): void {
+  target.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }));
 }
 
 describe("SessionLaunchControls", () => {
@@ -119,7 +129,15 @@ describe("SessionLaunchControls", () => {
   });
 
   it("emits undefined for Terminal", async () => {
+    app.unmount();
+    host.replaceChildren();
+    resetAgentAvailabilityCacheForTests();
+    rpc.agentBinsAvailable.mockReset();
+    rpc.agentBinsAvailable.mockResolvedValue({ available: [] });
+    mount();
     await flush();
+
+    expect(radios().map((element) => element.getAttribute("aria-label"))).toEqual(["Terminal"]);
     await pickAgent("Terminal");
 
     button("Start").click();
@@ -127,7 +145,7 @@ describe("SessionLaunchControls", () => {
     expect(starts).toEqual([undefined]);
   });
 
-  it("does not replace an explicit Terminal choice when availability resolves late", async () => {
+  it("replaces a stale Terminal choice when availability resolves late", async () => {
     let resolve!: (value: { available: string[] }) => void;
     app.unmount();
     host.replaceChildren();
@@ -136,14 +154,18 @@ describe("SessionLaunchControls", () => {
     rpc.agentBinsAvailable.mockImplementation(() => new Promise((done) => { resolve = done; }));
     mount();
     await nextTick();
+
+    expect(radios().map((element) => element.getAttribute("aria-label"))).toEqual(["Terminal"]);
     await pickAgent("Terminal");
 
     resolve({ available: ["claude"] });
     await flush();
+
+    expect(radios().map((element) => element.getAttribute("aria-label"))).toEqual(["Claude"]);
+    expect(checkedRadio()).toBe("Claude");
     button("Start").click();
 
-    expect(checkedRadio()).toBe("Terminal");
-    expect(starts).toEqual([undefined]);
+    expect(starts).toEqual([{ agentType: "claude", modelId: null, effort: null, fast: null }]);
   });
 
   it("keeps Terminal available and retries a failed availability check", async () => {
@@ -158,11 +180,13 @@ describe("SessionLaunchControls", () => {
     await flush();
 
     expect(document.body.textContent).toContain("Couldn't Load Agents");
+    expect(radios().map((element) => element.getAttribute("aria-label"))).toEqual(["Terminal"]);
     expect(checkedRadio()).toBe("Terminal");
     button("Retry").click();
     await flush();
 
     expect(rpc.agentBinsAvailable).toHaveBeenCalledTimes(2);
+    expect(radios().map((element) => element.getAttribute("aria-label"))).toEqual(["Antigravity"]);
     expect(checkedRadio()).toBe("Antigravity");
   });
 
@@ -170,7 +194,7 @@ describe("SessionLaunchControls", () => {
     await flush();
 
     expect(radios().map((element) => element.getAttribute("aria-label")))
-      .toEqual(["Claude", "Antigravity", "Terminal"]);
+      .toEqual(["Claude", "Antigravity"]);
     expect(checkedRadio()).toBe("Claude");
   });
 
@@ -194,9 +218,9 @@ describe("SessionLaunchControls", () => {
     radio("Antigravity").dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true }));
     await flush();
 
-    expect(checkedRadio()).toBe("Terminal");
+    expect(checkedRadio()).toBe("Antigravity");
 
-    radio("Terminal").dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    radio("Antigravity").dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
     await flush();
 
     expect(checkedRadio()).toBe("Claude");
@@ -205,10 +229,16 @@ describe("SessionLaunchControls", () => {
   it("exposes a single tab stop", async () => {
     await flush();
 
-    expect(radios().map((element) => element.tabIndex)).toEqual([0, -1, -1]);
+    expect(radios().map((element) => element.tabIndex)).toEqual([0, -1]);
   });
 
   it("keeps Model and Effort visible but disabled for Terminal", async () => {
+    app.unmount();
+    host.replaceChildren();
+    resetAgentAvailabilityCacheForTests();
+    rpc.agentBinsAvailable.mockReset();
+    rpc.agentBinsAvailable.mockResolvedValue({ available: [] });
+    mount();
     await flush();
     await pickAgent("Terminal");
 
@@ -230,5 +260,83 @@ describe("SessionLaunchControls", () => {
     await selectFrom("Select Model", "Opus");
 
     expect(namedButton("Select Effort Or Fast Mode").disabled).toBe(false);
+  });
+
+  it("pressing 2 selects the second agent; 9 with only two agents changes nothing", async () => {
+    await flush();
+
+    pressKey({ key: "2" });
+    await flush();
+    expect(checkedRadio()).toBe("Antigravity");
+
+    pressKey({ key: "9" });
+    await flush();
+    expect(checkedRadio()).toBe("Antigravity");
+  });
+
+  it("pressing 1 while an input has focus does not change the selection", async () => {
+    await flush();
+    await pickAgent("Antigravity");
+
+    const input = document.createElement("input");
+    document.body.append(input);
+    input.focus();
+
+    pressKey({ key: "1" }, input);
+    await flush();
+
+    expect(checkedRadio()).toBe("Antigravity");
+    input.remove();
+  });
+
+  it("pressing Enter emits start once with the current selection; Enter while busy emits nothing", async () => {
+    await flush();
+    await pickAgent("Antigravity");
+
+    pressKey({ key: "Enter" });
+    await flush();
+
+    expect(starts).toEqual([{ agentType: "agy", modelId: null, effort: null, fast: null }]);
+
+    app.unmount();
+    host.replaceChildren();
+    starts = [];
+    resetAgentAvailabilityCacheForTests();
+    rpc.agentBinsAvailable.mockReset();
+    rpc.agentBinsAvailable.mockResolvedValue({ available: ["claude", "agy"] });
+    app = createApp({
+      render: () => h(SessionLaunchControls, {
+        busy: true,
+        onStart: (selection: AgentLaunchSelection | undefined) => starts.push(selection),
+      }),
+    });
+    app.mount(host);
+    await flush();
+
+    pressKey({ key: "Enter" });
+    await flush();
+
+    expect(starts).toEqual([]);
+  });
+
+  it("pressing 1 with a modifier held does nothing", async () => {
+    await flush();
+    await pickAgent("Antigravity");
+
+    pressKey({ key: "1", metaKey: true });
+    await flush();
+
+    expect(checkedRadio()).toBe("Antigravity");
+  });
+
+  it("removes the keydown listener on unmount", async () => {
+    await flush();
+    await pickAgent("Claude");
+    app.unmount();
+
+    pressKey({ key: "2" });
+    await flush();
+
+    expect(starts).toEqual([]);
   });
 });

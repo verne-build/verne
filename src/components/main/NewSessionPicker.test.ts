@@ -58,9 +58,15 @@ async function flush(): Promise<void> {
   }
 }
 
+function buttonLabel(element: HTMLElement): string {
+  const clone = element.cloneNode(true) as HTMLElement;
+  clone.querySelectorAll("kbd").forEach((kbd) => kbd.remove());
+  return clone.textContent?.trim() ?? "";
+}
+
 function button(label: string): HTMLButtonElement {
   const match = Array.from(document.querySelectorAll<HTMLButtonElement>("button"))
-    .find((element) => element.textContent?.trim() === label);
+    .find((element) => buttonLabel(element) === label);
   if (!match) throw new Error(`Missing button: ${label}`);
   return match;
 }
@@ -232,7 +238,7 @@ describe("NewSessionPicker", () => {
     expect(rpc.gitListBranches).toHaveBeenCalledTimes(2);
   });
 
-  it("keeps an explicit Terminal selection when availability resolves late", async () => {
+  it("replaces a stale Terminal choice when availability resolves late", async () => {
     let resolveBins!: (value: { available: string[] }) => void;
     app.unmount();
     host.replaceChildren();
@@ -248,14 +254,21 @@ describe("NewSessionPicker", () => {
     resolveBins({ available: ["agy"] });
     await flush();
 
-    expect(checkedRadio()).toBe("Terminal");
+    expect(checkedRadio()).toBe("Antigravity");
   });
 
   it("disables Model and Effort for Terminal", async () => {
+    app.unmount();
+    host.replaceChildren();
+    resetAgentAvailabilityCacheForTests();
+    rpc.agentBinsAvailable.mockReset();
+    rpc.agentBinsAvailable.mockResolvedValue({ available: [] });
+    app = createApp({ render: () => h(NewSessionPicker, { dirId: "dir-1" }) });
+    app.use(createPinia());
+    app.mount(host);
     await flush();
-    radio("Terminal").click();
-    await nextTick();
 
+    expect(radio("Terminal")).toBeTruthy();
     expect(button("Model Default").disabled).toBe(true);
     expect(button("Effort Default").disabled).toBe(true);
   });
