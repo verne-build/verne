@@ -165,6 +165,36 @@ describe("NewSessionPicker", () => {
     expect(radio("Antigravity")).toBeTruthy();
   });
 
+  // No explicit .focus() here: this exercises the real post-mount focus state, where
+  // the picker pane (an ancestor of the launch controls) holds focus.
+  it("applies the digit and Enter shortcuts from the picker's own post-mount focus", async () => {
+    app.unmount();
+    host.replaceChildren();
+    resetAgentAvailabilityCacheForTests();
+    rpc.agentBinsAvailable.mockReset();
+    rpc.agentBinsAvailable.mockResolvedValue({ available: ["claude", "agy"] });
+    app = createApp({ render: () => h(NewSessionPicker, { dirId: "dir-1" }) });
+    app.use(createPinia());
+    app.mount(host);
+    await flush();
+
+    expect(document.activeElement).toBe(host.firstElementChild);
+    expect(checkedRadio()).toBe("Claude");
+
+    document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "2", bubbles: true, cancelable: true }));
+    await flush();
+
+    expect(checkedRadio()).toBe("Antigravity");
+
+    document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    await flush();
+
+    expect(store.startPickerSession).toHaveBeenCalledOnce();
+    expect(store.startPickerSession).toHaveBeenCalledWith(expect.objectContaining({
+      agentLaunch: { agentType: "agy", modelId: null, effort: null, fast: null },
+    }));
+  });
+
   it("renders and selects the registry-first Claude result", async () => {
     app.unmount();
     host.replaceChildren();

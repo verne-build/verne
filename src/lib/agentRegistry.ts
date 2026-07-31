@@ -123,6 +123,35 @@ export function getModelDefinition(
   return definition?.models.find((model) => model.id === modelId);
 }
 
+/** Efforts a model exposes; `[]` for Terminal (no model) or an untunable model. */
+export function effortsFor(model: ModelDefinition | null | undefined): string[] {
+  if (!model) return [];
+  if (model.efforts) return [...model.efforts];
+  return [...new Set(Object.keys(model.cursorVariants ?? {})
+    .map((variant) => variant.split(":")[0]!)
+    .filter((effort) => effort !== "default"))];
+}
+
+export function supportsFastFor(model: ModelDefinition | null | undefined): boolean {
+  return !!model?.fast || Object.keys(model?.cursorVariants ?? {}).some((variant) => variant.endsWith(":on"));
+}
+
+/** Label for the combined Effort / Fast Mode trigger. Effort is shown unless the model is fast-only. */
+export function tuningLabel(input: {
+  efforts: readonly string[];
+  supportsFast: boolean;
+  effort: string | null;
+  fast: boolean;
+}): string {
+  const labels: string[] = [];
+  if (input.efforts.length > 0 || !input.supportsFast)
+    labels.push(input.effort
+      ? `Effort ${input.effort[0]!.toUpperCase()}${input.effort.slice(1)}`
+      : "Effort Default");
+  if (input.supportsFast) labels.push(`Fast Mode ${input.fast ? "On" : "Off"}`);
+  return labels.join(" · ");
+}
+
 export function buildAgentArgv(selection: AgentLaunchSelection): string[] {
   const agent = getAgentDefinition(selection.agentType);
   if (!agent) throw new Error(`Unknown agent type: ${selection.agentType}`);

@@ -311,7 +311,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div ref="root" tabindex="-1" class="flex h-full min-h-0 items-center justify-center p-5 sm:p-8 outline-none" @keydown.esc.stop="onEscape">
+  <div ref="root" data-session-picker tabindex="-1" class="flex h-full min-h-0 items-center justify-center p-5 sm:p-8 outline-none" @keydown.esc.stop="onEscape">
     <div class="w-full max-w-4xl">
       <h2 id="new-session-picker-title" class="mb-3 flex flex-wrap items-center gap-1 text-xl font-semibold tracking-tight text-foreground">
         <span>Start New Session In</span>
@@ -345,7 +345,7 @@ onUnmounted(() => {
         <div class="flex flex-col gap-2 border-t px-5 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
           <DropdownMenu>
             <DropdownMenuTrigger as-child>
-              <Button type="button" variant="ghost" class="h-8 -ms-2 justify-start px-2" :disabled="launching" aria-label="Select Checkout Mode">
+              <Button type="button" variant="ghost" class="h-8 -ms-2 justify-start px-2 has-[>svg]:px-2" :disabled="launching" aria-label="Select Checkout Mode">
                 <GitFork v-if="checkoutMode === 'worktree'" aria-hidden="true" class="size-4 text-muted-foreground" />
                 <FolderGit2 v-else aria-hidden="true" class="size-4 text-muted-foreground" />
                 {{ checkoutModeLabel }}
@@ -367,7 +367,7 @@ onUnmounted(() => {
 
           <DropdownMenu :open="branchMenuOpen" @update:open="setBranchMenuOpen">
             <DropdownMenuTrigger as-child>
-              <Button type="button" variant="ghost" class="h-8 -ms-2 min-w-0 justify-start px-2 sm:-me-2 sm:justify-end" :disabled="launching || loadingBranches || !branches.length" aria-label="Select Branch">
+              <Button type="button" variant="ghost" class="h-8 -ms-2 min-w-0 justify-start px-2 has-[>svg]:px-2 sm:-me-2 sm:justify-end" :disabled="launching || loadingBranches || !branches.length" aria-label="Select Branch">
                 <GitBranchIcon aria-hidden="true" class="size-4 text-muted-foreground" />
                 <span class="text-muted-foreground">{{ branchLabel }}</span>
                 <span class="truncate font-medium">{{ selectedBranch?.name ?? "Loading" }}</span>

@@ -8,6 +8,9 @@ import {
   loadAvailableAgents,
   resetAgentAvailabilityCacheForTests,
   serializeArgv,
+  effortsFor,
+  supportsFastFor,
+  tuningLabel,
 } from "./agentRegistry";
 import { findAgentIconForSurface } from "@/composables/useAgentIcon";
 
@@ -70,6 +73,26 @@ describe("agent registry", () => {
     await loadAvailableAgents(fetcher, 1_000 + 300_001);
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(fetcher).not.toHaveBeenCalledWith(expect.arrayContaining(["copilot"]));
+  });
+
+  it("labels the tuning trigger for every model shape", () => {
+    const label = (model: ReturnType<typeof getModelDefinition> | null, effort: string | null = null, fast = false) =>
+      tuningLabel({ efforts: effortsFor(model), supportsFast: supportsFastFor(model), effort, fast });
+
+    // Terminal: no agent, so no model.
+    expect(label(null)).toBe("Effort Default");
+    // Agent selected, Model Default.
+    expect(label(getModelDefinition("agy", "Gemini 3.1 Pro (High)"))).toBe("Effort Default");
+    // Efforts only.
+    expect(label(getModelDefinition("claude", "sonnet"), "medium")).toBe("Effort Medium");
+    // Both efforts and fast.
+    expect(label(getModelDefinition("claude", "opus"), "high", true)).toBe("Effort High · Fast Mode On");
+    // Fast only — reachable only if Cursor is un-hidden from the picker.
+    const fastOnly = getModelDefinition("cursor", "composer-2.5");
+    expect(effortsFor(fastOnly)).toEqual([]);
+    expect(supportsFastFor(fastOnly)).toBe(true);
+    expect(label(fastOnly)).toBe("Fast Mode Off");
+    expect(label(fastOnly, null, true)).toBe("Fast Mode On");
   });
 
   it("returns no asset for iconless registry types", () => {

@@ -4,7 +4,14 @@ import { ArrowRight, Bot, Check, ChevronDown, CircleAlert, SquareTerminal, Zap }
 import { useRpc } from "@/composables/useRpc";
 import { useTheme } from "@/composables/useTheme";
 import { agentIconSurfaceForTheme, findAgentIconForSurface } from "@/composables/useAgentIcon";
-import { loadAvailableAgents, type AgentDefinition, type ModelDefinition } from "@/lib/agentRegistry";
+import {
+  effortsFor,
+  loadAvailableAgents,
+  supportsFastFor,
+  tuningLabel as tuningLabelFor,
+  type AgentDefinition,
+  type ModelDefinition,
+} from "@/lib/agentRegistry";
 import type { AgentLaunchSelection, AgentType } from "@/types";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -70,6 +77,7 @@ function focusRadio(index: number): void {
 }
 
 function onRadioKeydown(event: KeyboardEvent, index: number): void {
+  if (props.busy) return;
   const last = radioOptions.value.length - 1;
   if (event.key === "ArrowRight" || event.key === "ArrowDown") focusRadio(index + 1);
   else if (event.key === "ArrowLeft" || event.key === "ArrowUp") focusRadio(index - 1);
@@ -79,31 +87,16 @@ function onRadioKeydown(event: KeyboardEvent, index: number): void {
   event.preventDefault();
 }
 
-function effortsFor(model: ModelDefinition | null): string[] {
-  if (!model) return [];
-  if (model.efforts) return [...model.efforts];
-  return [...new Set(Object.keys(model.cursorVariants ?? {})
-    .map((variant) => variant.split(":")[0]!)
-    .filter((effort) => effort !== "default"))];
-}
-
-function supportsFastFor(model: ModelDefinition | null): boolean {
-  return !!model?.fast || Object.keys(model?.cursorVariants ?? {}).some((variant) => variant.endsWith(":on"));
-}
-
 const availableEfforts = computed(() => effortsFor(selectedModel.value));
 const supportsFast = computed(() => supportsFastFor(selectedModel.value));
 const showTuning = computed(() => availableEfforts.value.length > 0 || supportsFast.value);
 const selectedModelLabel = computed(() => selectedModel.value?.label ?? "Model Default");
-const tuningLabel = computed(() => {
-  const labels: string[] = [];
-  if (availableEfforts.value.length > 0 || !showTuning.value)
-    labels.push(selectedEffort.value
-      ? `Effort ${selectedEffort.value[0]!.toUpperCase()}${selectedEffort.value.slice(1)}`
-      : "Effort Default");
-  if (supportsFast.value) labels.push(`Fast Mode ${fast.value ? "On" : "Off"}`);
-  return labels.join(" · ");
-});
+const tuningLabel = computed(() => tuningLabelFor({
+  efforts: availableEfforts.value,
+  supportsFast: supportsFast.value,
+  effort: selectedEffort.value,
+  fast: fast.value,
+}));
 
 function compatibleModel(): void {
   if (!selectedModel.value) {
@@ -118,6 +111,7 @@ function compatibleModel(): void {
 
 function selectAgent(value: AgentType | "terminal"): void {
   agentSelectionTouched.value = true;
+  if (selectedAgentType.value === value) return;
   selectedAgentType.value = value;
   selectedModelId.value = null;
   selectedEffort.value = null;
@@ -163,11 +157,18 @@ async function loadAgentChoices(): Promise<void> {
   }
 }
 
+function onRadioClick(value: AgentType | "terminal"): void {
+  if (props.busy) return;
+  selectAgent(value);
+}
+
 watch([selectedAgent, selectedModel], compatibleModel);
+// Immediate so the first option is checked (and keeps the group's tab stop) while
+// the availability probe is still in flight.
 watch(radioOptions, (options) => {
   if (options.length && !options.some((option) => option.value === selectedAgentType.value))
     selectedAgentType.value = options[0]!.value;
-});
+}, { immediate: true });
 
 const EDITABLE_TARGET_TAGS = new Set(["INPUT", "TEXTAREA", "SELECT"]);
 
@@ -180,17 +181,33 @@ function isMenuOpen(): boolean {
   return document.querySelector("[data-slot=dropdown-menu-content]") !== null;
 }
 
+// The picker pane that owns these controls. Both mount sites focus their own outer
+// element, which is an ancestor of `root` — so scoping containment to `root` alone
+// would never match after mount. Two concurrent pickers still resolve to two
+// different panes, which is what keeps their shortcuts from crossing over.
+function ownerPane(): HTMLElement | null {
+  return root.value?.closest<HTMLElement>("[data-session-picker]") ?? root.value ?? null;
+}
+
+function isOwnRadio(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement
+    && !!radioGroup.value?.contains(target)
+    && !!target.closest("[role=radio]");
+}
+
 function onWindowKeydown(event: KeyboardEvent): void {
-  if (!root.value?.contains(document.activeElement)) return;
+  if (!ownerPane()?.contains(document.activeElement)) return;
   if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
   if (isEditableTarget(event.target)) return;
   if (isMenuOpen()) return;
   if (props.busy) return;
 
   if (event.key === "Enter") {
-    if (event.target instanceof HTMLButtonElement) return;
-    if (props.disabled) return;
+    // Skip only when the browser's synthetic click will do something meaningful.
+    // Re-activating an already-checked radio is not that.
+    if (event.target instanceof HTMLButtonElement && !isOwnRadio(event.target)) return;
     event.preventDefault();
+    if (props.disabled) return;
     emit("start", launchSelection());
     return;
   }
@@ -223,7 +240,7 @@ onUnmounted(() => {
         role="radiogroup"
         aria-label="Agent"
         :aria-disabled="busy || undefined"
-        class="-ms-1.5 inline-flex h-8 shrink-0 items-center gap-1"
+        :class="['inline-flex h-8 shrink-0 items-center gap-1', compact ? '' : '-ms-1.5']"
       >
         <Tooltip v-for="(option, index) in radioOptions" :key="option.value">
           <TooltipTrigger as-child>
@@ -233,14 +250,19 @@ onUnmounted(() => {
               :aria-label="option.label"
               :aria-checked="selectedAgentType === option.value"
               :tabindex="selectedAgentType === option.value ? 0 : -1"
-              :disabled="busy"
+              :aria-disabled="busy || undefined"
               :class="[
-                'inline-flex size-7 items-center justify-center rounded-md outline-none transition-colors disabled:pointer-events-none disabled:opacity-50 focus-visible:ring-[3px] focus-visible:ring-ring/50',
+                'inline-flex size-7 items-center justify-center rounded-md outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50',
                 selectedAgentType === option.value
-                  ? 'border bg-background shadow-xs opacity-100 dark:border-input dark:bg-input/30'
-                  : 'opacity-80 hover:bg-border/25 hover:opacity-100',
+                  ? 'border bg-background shadow-xs dark:border-input dark:bg-input/30'
+                  : '',
+                busy
+                  ? 'cursor-default opacity-50'
+                  : selectedAgentType === option.value
+                    ? 'opacity-100'
+                    : 'opacity-80 hover:bg-border/25 hover:opacity-100',
               ]"
-              @click="selectAgent(option.value)"
+              @click="onRadioClick(option.value)"
               @keydown="onRadioKeydown($event, index)"
             >
               <img v-if="option.icon" :src="option.icon" alt="" class="size-4" />
@@ -250,7 +272,7 @@ onUnmounted(() => {
           </TooltipTrigger>
           <TooltipContent class="flex items-center gap-1">
             {{ option.label }}
-            <Kbd v-if="index < 9" variant="outline" class="h-4 min-w-0 px-1 text-[10px]">{{ index + 1 }}</Kbd>
+            <Kbd v-if="index < 9" aria-hidden="true" variant="outline" class="h-4 min-w-0 px-1 text-[10px]">{{ index + 1 }}</Kbd>
           </TooltipContent>
         </Tooltip>
       </div>
@@ -258,7 +280,7 @@ onUnmounted(() => {
 
     <DropdownMenu>
       <DropdownMenuTrigger as-child>
-        <Button type="button" variant="outline" class="h-8 min-w-0 px-2.5" :disabled="isTerminal || busy" aria-label="Select Model">
+        <Button type="button" variant="outline" class="h-8 min-w-0 px-2.5 has-[>svg]:px-2.5" :disabled="isTerminal || busy" aria-label="Select Model">
           <span class="truncate">{{ selectedModelLabel }}</span>
           <ChevronDown aria-hidden="true" class="size-3.5 text-muted-foreground" />
         </Button>
@@ -278,7 +300,7 @@ onUnmounted(() => {
 
     <DropdownMenu>
       <DropdownMenuTrigger as-child>
-        <Button type="button" variant="outline" class="h-8 min-w-0 px-2.5" :disabled="isTerminal || !showTuning || busy" aria-label="Select Effort Or Fast Mode">
+        <Button type="button" variant="outline" class="h-8 min-w-0 px-2.5 has-[>svg]:px-2.5" :disabled="isTerminal || !showTuning || busy" aria-label="Select Effort Or Fast Mode">
           <span class="truncate">{{ tuningLabel }}</span>
           <ChevronDown aria-hidden="true" class="size-3.5 text-muted-foreground" />
         </Button>
@@ -311,10 +333,10 @@ onUnmounted(() => {
       </DropdownMenuContent>
     </DropdownMenu>
 
-    <Button type="button" :class="['h-8 px-4 transition-transform active:scale-[0.96]', compact ? 'w-full' : 'ms-auto']" :disabled="busy || disabled" @click="emit('start', launchSelection())">
+    <Button type="button" :class="['h-8 px-4 has-[>svg]:px-4 transition-transform active:scale-[0.96]', compact ? 'w-full' : 'ms-auto']" :disabled="busy || disabled" @click="emit('start', launchSelection())">
       {{ busy ? "Starting" : "Start" }}
       <ArrowRight aria-hidden="true" class="size-4" />
-      <Kbd variant="outline" class="h-4 min-w-0 px-1 text-[10px]">⏎</Kbd>
+      <Kbd aria-hidden="true" variant="outline" class="h-4 min-w-0 border-primary-foreground/30 px-1 text-[10px] text-primary-foreground/70">⏎</Kbd>
     </Button>
   </div>
 

@@ -61,7 +61,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <section ref="root" tabindex="-1" class="flex h-full min-h-0 flex-col bg-background outline-none" :aria-labelledby="headingId" @keydown="onKeydown">
+  <section ref="root" data-session-picker tabindex="-1" class="flex h-full min-h-0 flex-col bg-background outline-none" :aria-labelledby="headingId" @keydown="onKeydown">
     <header :class="['drag-region flex h-11.5 shrink-0 items-center gap-1.5 overflow-hidden border-b bg-sidebar text-xs', reserveLeftOverlay ? 'pl-[133px]' : 'pl-4', reserveRightOverlay ? 'pr-14' : 'pr-1']">
       <h2 :id="headingId" class="flex-1 truncate leading-none">New Session</h2>
       <Button
