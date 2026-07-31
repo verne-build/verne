@@ -215,12 +215,14 @@ describe("SessionLaunchControls", () => {
     expect(namedButton("Select Model").disabled).toBe(true);
     expect(namedButton("Select Effort Or Fast Mode").disabled).toBe(true);
     expect(namedButton("Select Model").textContent).toContain("Model Default");
+    expect(namedButton("Select Effort Or Fast Mode").textContent).toContain("Effort Default");
   });
 
   it("renders Effort disabled when the selected model has no tuning", async () => {
     await flush();
 
     expect(namedButton("Select Effort Or Fast Mode").disabled).toBe(true);
+    expect(namedButton("Select Effort Or Fast Mode").textContent).toContain("Effort Default");
   });
 
   it("enables Effort once a tunable model is selected", async () => {
@@ -228,5 +230,21 @@ describe("SessionLaunchControls", () => {
     await selectFrom("Select Model", "Opus");
 
     expect(namedButton("Select Effort Or Fast Mode").disabled).toBe(false);
+  });
+
+  it("shows Fast Mode only, no Effort label, for a fast-only model with zero effort levels", async () => {
+    app.unmount();
+    host.replaceChildren();
+    resetAgentAvailabilityCacheForTests();
+    rpc.agentBinsAvailable.mockReset();
+    rpc.agentBinsAvailable.mockResolvedValue({ available: ["cursor-agent"] });
+    mount();
+    await flush();
+    await selectFrom("Select Model", "Composer 2.5");
+
+    const effortButton = namedButton("Select Effort Or Fast Mode");
+    expect(effortButton.disabled).toBe(false);
+    expect(effortButton.textContent).toContain("Fast Mode");
+    expect(effortButton.textContent).not.toContain("Effort");
   });
 });

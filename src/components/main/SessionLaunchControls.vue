@@ -96,9 +96,10 @@ const showTuning = computed(() => availableEfforts.value.length > 0 || supportsF
 const selectedModelLabel = computed(() => selectedModel.value?.label ?? "Model Default");
 const tuningLabel = computed(() => {
   const labels: string[] = [];
-  labels.push(selectedEffort.value
-    ? `Effort ${selectedEffort.value[0]!.toUpperCase()}${selectedEffort.value.slice(1)}`
-    : "Effort Default");
+  if (availableEfforts.value.length > 0 || !showTuning.value)
+    labels.push(selectedEffort.value
+      ? `Effort ${selectedEffort.value[0]!.toUpperCase()}${selectedEffort.value.slice(1)}`
+      : "Effort Default");
   if (supportsFast.value) labels.push(`Fast Mode ${fast.value ? "On" : "Off"}`);
   return labels.join(" · ");
 });
