@@ -105,4 +105,32 @@ describe("makeForward", () => {
     }));
     expect(getTab(db, "tr")!.lastAgentState).toBeUndefined();
   });
+
+  // /clear mints a new session id in the same tab. Main nulls the frozen titles;
+  // the renderer caches the row, so it needs telling — otherwise the sidebar
+  // shows the finished conversation's name until a reload.
+  it("broadcasts tab-titles-reset when a new session id clears the frozen titles", () => {
+    const db = getDb();
+    insertDirectory(db, { id: "dz", path: "/tmp/dz", name: "dz", createdAt: 0, sortOrder: 0 });
+    insertTab(db, {
+      id: "tz", directoryId: "dz", label: "1", cwd: "/tmp/dz",
+      sortOrder: 0, createdAt: 0, userRenamed: false,
+      lastAgentType: "claude", lastAgentSessionId: "sid-old", generatedTitle: "Old conversation",
+    });
+    const { win, send } = fakeWin({});
+    const fwd = makeForward(() => win, sidecar);
+
+    fwd("tab-updated", {
+      tabId: "tz", agentType: "claude", agentState: "working", lastAgentSessionId: "sid-new",
+    });
+    expect(send).toHaveBeenCalledWith("daemon-event", "tab-titles-reset", { tabId: "tz" });
+    expect(getTab(db, "tz")!.generatedTitle).toBeUndefined();
+
+    // Steady state on the new session: no further resets.
+    send.mockClear();
+    fwd("tab-updated", {
+      tabId: "tz", agentType: "claude", agentState: "idle", lastAgentSessionId: "sid-new",
+    });
+    expect(send).not.toHaveBeenCalledWith("daemon-event", "tab-titles-reset", { tabId: "tz" });
+  });
 });

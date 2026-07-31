@@ -213,6 +213,84 @@ describe("tabs", () => {
     expect(getTab(db, "t1")!.lastAgentSessionId).toBe("claude-id");
   });
 
+  // /clear starts a genuinely new conversation in the same tab. Both frozen
+  // titles outrank the live OSC title, so leaving them latched pinned the
+  // sidebar to the finished conversation's name forever.
+  it("a new sessionId clears both frozen titles and reports the reset", () => {
+    const db = tmpDb();
+    insertTab(db, mkTab({
+      lastAgentType: "claude",
+      lastAgentSessionId: "old",
+      generatedTitle: "View transitions bug diagnosis",
+      displayTitle: "View transitions bug diagnosis",
+    }));
+    const { titlesReset } = updateTabPresentationSnapshot(db, {
+      tabId: "t1", agentType: "claude", agentState: "working", sessionId: "new", displayTitle: null,
+    });
+    const t = getTab(db, "t1")!;
+    expect(titlesReset).toBe(true);
+    expect(t.generatedTitle).toBeUndefined();
+    expect(t.displayTitle).toBeUndefined();
+    expect(t.lastAgentSessionId).toBe("new");
+  });
+
+  it("the same sessionId keeps the frozen titles and reports no reset", () => {
+    const db = tmpDb();
+    insertTab(db, mkTab({
+      lastAgentType: "claude", lastAgentSessionId: "s1", generatedTitle: "Keep me",
+    }));
+    const { titlesReset } = updateTabPresentationSnapshot(db, {
+      tabId: "t1", agentType: "claude", agentState: "idle", sessionId: "s1", displayTitle: null,
+    });
+    expect(titlesReset).toBe(false);
+    expect(getTab(db, "t1")!.generatedTitle).toBe("Keep me");
+  });
+
+  // The daemon nulls the id whenever the agent stops being live, and a hook
+  // payload can omit it — neither is a new conversation.
+  it("a null incoming sessionId never resets the titles", () => {
+    const db = tmpDb();
+    insertTab(db, mkTab({
+      lastAgentType: "claude", lastAgentSessionId: "s1", generatedTitle: "Keep me",
+    }));
+    const { titlesReset } = updateTabPresentationSnapshot(db, {
+      tabId: "t1", agentType: null, agentState: null, sessionId: null, displayTitle: null,
+    });
+    expect(titlesReset).toBe(false);
+    expect(getTab(db, "t1")!.generatedTitle).toBe("Keep me");
+  });
+
+  // An archived row's display_title IS its frozen record (tabs_archive wrote the
+  // resolved name there). A late snapshot must never strip it.
+  it("an ARCHIVED tab keeps its frozen titles even when the session id moves", () => {
+    const db = tmpDb();
+    insertTab(db, mkTab({
+      lastAgentType: "claude",
+      lastAgentSessionId: "old",
+      generatedTitle: "Frozen at archive",
+      displayTitle: "Frozen at archive",
+    }));
+    setTabArchivedAt(db, "t1", 12345);
+    const { titlesReset } = updateTabPresentationSnapshot(db, {
+      tabId: "t1", agentType: "claude", agentState: "working", sessionId: "new", displayTitle: null,
+    });
+    const t = getTab(db, "t1")!;
+    expect(titlesReset).toBe(false);
+    expect(t.generatedTitle).toBe("Frozen at archive");
+    expect(t.displayTitle).toBe("Frozen at archive");
+  });
+
+  it("a changed agentType also un-freezes the generated title", () => {
+    const db = tmpDb();
+    insertTab(db, mkTab({
+      lastAgentType: "claude", lastAgentSessionId: "claude-id", generatedTitle: "Claude's title",
+    }));
+    updateTabPresentationSnapshot(db, {
+      tabId: "t1", agentType: "codex", agentState: "working", sessionId: "codex-id", displayTitle: null,
+    });
+    expect(getTab(db, "t1")!.generatedTitle).toBeUndefined();
+  });
+
   it("latches displayTitle: non-null writes, null keeps", () => {
     const db = tmpDb();
     insertTab(db, mkTab());

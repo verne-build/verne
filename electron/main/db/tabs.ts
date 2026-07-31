@@ -198,7 +198,18 @@ export function clearStaleTabStates(db: DatabaseSync, liveIds: string[]): void {
  *  The identity is latched as a PAIR, atomically: when the incoming type differs
  *  from the stored one the agent genuinely changed, so the id and title are taken
  *  verbatim (including null) instead of coalesced. Independent COALESCEs would
- *  let type=codex keep a claude session id and resume `codex resume <claude-id>`. */
+ *  let type=codex keep a claude session id and resume `codex resume <claude-id>`.
+ *
+ *  A changed SESSION id is the same kind of event: `/clear` (and any other
+ *  conversation reset) starts a genuinely new session inside the SAME tab, so
+ *  both frozen titles describe a conversation that no longer exists. They
+ *  outrank the live OSC title in `sessionTitleFrom`, so leaving them latched
+ *  pins the sidebar to a dead conversation's name forever. Nulling
+ *  `generated_title` also un-freezes generation (session-title.ts treats
+ *  non-null as the freeze flag), so the new session titles itself.
+ *
+ *  Returns whether the titles were reset — the caller broadcasts that so the
+ *  renderer's cached row doesn't keep showing the stale name until reload. */
 export function updateTabPresentationSnapshot(
   db: DatabaseSync,
   snapshot: {
@@ -208,20 +219,36 @@ export function updateTabPresentationSnapshot(
     sessionId: string | null;
     displayTitle: string | null;
   },
-): void {
-  if (!snapshot.tabId) return;
+): { titlesReset: boolean } {
+  if (!snapshot.tabId) return { titlesReset: false };
   const prev = db
-    .prepare("SELECT last_agent_type AS t FROM tabs WHERE id = ?")
-    .get(snapshot.tabId) as { t: string | null } | undefined;
-  if (!prev) return;
+    .prepare(
+      `SELECT last_agent_type AS t, last_agent_session_id AS s, archived_at AS a,
+              generated_title AS g, display_title AS d
+         FROM tabs WHERE id = ?`,
+    )
+    .get(snapshot.tabId) as
+    | { t: string | null; s: string | null; a: number | null; g: string | null; d: string | null }
+    | undefined;
+  if (!prev) return { titlesReset: false };
   const agentChanged =
     snapshot.agentType != null && prev.t != null && snapshot.agentType !== prev.t;
+  // Only a real id→different-id move counts. The daemon nulls the session id the
+  // moment the agent stops being live, and a single hook payload can omit it, so
+  // a null incoming id must never be read as "new conversation".
+  const sessionChanged =
+    snapshot.sessionId != null && prev.s != null && snapshot.sessionId !== prev.s;
+  // An archived row's `display_title` IS its frozen record — tabs_archive wrote
+  // the resolved name there precisely so the dead session keeps it. Never reset
+  // one. (Archived tabs have no live agent, so this only guards a race.)
+  const identityChanged = (agentChanged || sessionChanged) && prev.a == null;
   db.prepare(
-    agentChanged
+    identityChanged
       ? `UPDATE tabs
            SET last_agent_type       = ?,
                last_agent_session_id = ?,
                display_title         = ?,
+               generated_title       = NULL,
                last_agent_state      = ?
            WHERE id = ?`
       : `UPDATE tabs
@@ -237,6 +264,7 @@ export function updateTabPresentationSnapshot(
     snapshot.agentState,
     snapshot.tabId,
   );
+  return { titlesReset: identityChanged && (prev.g != null || prev.d != null) };
 }
 
 export function tabDisplayLabels(

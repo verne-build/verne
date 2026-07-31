@@ -90,10 +90,13 @@ export function makeForward(getWindow: () => BrowserWindow, sidecar: DaemonClien
     // that raw payload into the renderer, which has no listener for it anyway.
     if (name === "agent-title-requested") return;
     let out = payload;
+    // Tabs whose frozen titles the snapshot write just cleared (new agent
+    // session in the same tab); broadcast once the window is known to be alive.
+    const titleResets: string[] = [];
     if (name === "tab-updated") {
       const tabId = typeof update.tabId === "string" ? update.tabId : "";
       try {
-        updateTabPresentationSnapshot(getDb(), {
+        const { titlesReset } = updateTabPresentationSnapshot(getDb(), {
           tabId,
           agentType: typeof update.agentType === "string" ? update.agentType : null,
           agentState: typeof update.agentState === "string" ? update.agentState : null,
@@ -103,6 +106,10 @@ export function makeForward(getWindow: () => BrowserWindow, sidecar: DaemonClien
               : null,
           displayTitle: typeof update.displayTitle === "string" ? update.displayTitle : null,
         });
+        // The renderer caches the tab row (tabs_list), and nothing else patches
+        // the title fields — without this it keeps rendering the previous
+        // conversation's name until a reload.
+        if (titlesReset) titleResets.push(tabId);
       } catch (e) {
         console.error("[agent-status] persist snapshot:", e);
       }
@@ -133,6 +140,11 @@ export function makeForward(getWindow: () => BrowserWindow, sidecar: DaemonClien
     if (name === "tab-updated") {
       try { handleTabUpdate(update, win); }
       catch (e) { console.error("[notifications] handleTabUpdate:", e); }
+    }
+    // Ahead of the tab-updated forward, so the row is already un-titled by the
+    // time anything reacts to the new session id.
+    for (const id of titleResets) {
+      win.webContents.send("daemon-event", "tab-titles-reset", { tabId: id });
     }
     win.webContents.send("daemon-event", name, out);
   };

@@ -1440,6 +1440,26 @@ export const useWorkspaceStore = defineStore("workspace", () => {
     window.removeEventListener("tab-title-generated", handleTabTitleGenerated as EventListener),
   );
 
+  /** Drop the frozen titles for a session that just reset (main's
+   *  `tab-titles-reset`: a new agent session id inside the same tab, e.g.
+   *  `/clear`). Main already nulled both columns; this keeps the cached row in
+   *  step so the name falls through to the live OSC title instead of pinning to
+   *  the finished conversation. */
+  function handleTabTitlesReset(e: Event) {
+    const detail = (e as CustomEvent<{ tabId: string }>).detail;
+    if (!detail?.tabId) return;
+    const dirId = tabDirId(detail.tabId);
+    if (!dirId) return;
+    const existing = (terminalTabsByDirectory.value[dirId] ?? []).find((t) => t.id === detail.tabId);
+    if (!existing) return;
+    const { generatedTitle: _g, displayTitle: _d, ...rest } = existing;
+    replaceTab(rest);
+  }
+  window.addEventListener("tab-titles-reset", handleTabTitlesReset as EventListener);
+  onScopeDispose(() =>
+    window.removeEventListener("tab-titles-reset", handleTabTitlesReset as EventListener),
+  );
+
   /** Apply a tab that just came back from archive (RPC response or the daemon's
    *  `tab-unarchived` broadcast). Idempotent: replaceTab is a keyed swap; mark
    *  the (now-live) session running so TerminalPane attaches to its PTY. */

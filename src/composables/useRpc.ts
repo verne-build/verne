@@ -94,6 +94,9 @@ listen<string>("file-deleted", (e) => {
     listen<{ tabId: string; title: string }>("tab-title-generated", (e) => {
       window.dispatchEvent(new CustomEvent("tab-title-generated", { detail: e.payload }));
     }),
+    listen<{ tabId: string }>("tab-titles-reset", (e) => {
+      window.dispatchEvent(new CustomEvent("tab-titles-reset", { detail: e.payload }));
+    }),
     listen<TabUnarchivedEvent>("tab-unarchived", (e) => {
       window.dispatchEvent(new CustomEvent("tab-unarchived", { detail: e.payload }));
     }),
