@@ -173,9 +173,13 @@ const AVAILABILITY_TTL_MS = 5 * 60 * 1_000;
 let cached: { loadedAt: number; agents: AgentDefinition[] } | null = null;
 let inFlight: Promise<AgentDefinition[]> | null = null;
 
+// Hidden from the new-session picker only. Registry entry stays so existing
+// sessions keep their label, detection, and hooks.
+const PICKER_HIDDEN: ReadonlySet<AgentType> = new Set<AgentType>(["cursor"]);
+
 export function filterAvailableAgents(available: readonly string[]): AgentDefinition[] {
   const bins = new Set(available);
-  return AGENT_REGISTRY.filter((agent) => bins.has(agent.bin));
+  return AGENT_REGISTRY.filter((agent) => bins.has(agent.bin) && !PICKER_HIDDEN.has(agent.type));
 }
 
 export function loadAvailableAgents(

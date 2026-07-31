@@ -194,7 +194,9 @@ onUnmounted(() => {
               :disabled="busy"
               :class="[
                 'inline-flex size-7 items-center justify-center rounded-md outline-none transition-colors disabled:pointer-events-none disabled:opacity-50 focus-visible:ring-[3px] focus-visible:ring-ring/50',
-                selectedAgentType === option.value ? 'bg-secondary opacity-100' : 'opacity-55 hover:opacity-100 hover:bg-border/25',
+                selectedAgentType === option.value
+                  ? 'border bg-background shadow-xs opacity-100 dark:border-input dark:bg-input/30'
+                  : 'opacity-80 hover:bg-border/25 hover:opacity-100',
               ]"
               @click="selectAgent(option.value)"
               @keydown="onRadioKeydown($event, index)"

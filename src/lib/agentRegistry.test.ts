@@ -3,6 +3,7 @@ import {
   AGENT_REGISTRY,
   buildAgentArgv,
   filterAvailableAgents,
+  getAgentDefinition,
   getModelDefinition,
   loadAvailableAgents,
   resetAgentAvailabilityCacheForTests,
@@ -53,8 +54,13 @@ describe("agent registry", () => {
   });
 
   it("filters by binary while retaining registry order", () => {
-    expect(filterAvailableAgents(["cursor-agent", "codex", "missing"]).map((a) => a.type))
-      .toEqual(["codex", "cursor"]);
+    expect(filterAvailableAgents(["agy", "codex", "missing"]).map((a) => a.type))
+      .toEqual(["codex", "agy"]);
+  });
+
+  it("hides Cursor from the picker while keeping its registry entry", () => {
+    expect(filterAvailableAgents(["cursor-agent", "codex"]).map((a) => a.type)).toEqual(["codex"]);
+    expect(getAgentDefinition("cursor")?.label).toBe("Cursor");
   });
 
   it("caches availability for five minutes", async () => {
