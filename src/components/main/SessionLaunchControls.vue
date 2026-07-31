@@ -181,7 +181,7 @@ onUnmounted(() => {
         role="radiogroup"
         aria-label="Agent"
         :aria-disabled="busy || undefined"
-        class="inline-flex h-8 shrink-0 items-center gap-0.5 rounded-md border bg-background p-px dark:bg-input/30 dark:border-input"
+        class="-ms-1.5 inline-flex h-8 shrink-0 items-center gap-1"
       >
         <Tooltip v-for="(option, index) in radioOptions" :key="option.value">
           <TooltipTrigger as-child>
@@ -193,7 +193,7 @@ onUnmounted(() => {
               :tabindex="selectedAgentType === option.value ? 0 : -1"
               :disabled="busy"
               :class="[
-                'inline-flex size-7 items-center justify-center rounded-sm outline-none transition-colors disabled:pointer-events-none disabled:opacity-50 focus-visible:ring-[3px] focus-visible:ring-ring/50',
+                'inline-flex size-7 items-center justify-center rounded-md outline-none transition-colors disabled:pointer-events-none disabled:opacity-50 focus-visible:ring-[3px] focus-visible:ring-ring/50',
                 selectedAgentType === option.value ? 'bg-secondary opacity-100' : 'opacity-55 hover:opacity-100 hover:bg-border/25',
               ]"
               @click="selectAgent(option.value)"
