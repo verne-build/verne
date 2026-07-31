@@ -379,13 +379,13 @@ watch(() => store.directories.map((d) => d.id).join(","), () => {
             />
             <CollapsibleTrigger
               v-else
-              class="flex h-8 w-full items-center gap-1 px-3 text-xs font-medium text-muted-foreground/70"
+              class="group flex h-8 w-full items-center gap-1 px-3 text-xs font-medium text-muted-foreground"
             >
               <span>Archived</span>
               <ChevronRight
                 :stroke-width="2.5"
-                class="ml-auto size-3 shrink-0 transition-transform"
-                :class="{ 'rotate-90': archivedOpen }"
+                class="size-3 shrink-0 transition-all duration-150 group-hover:opacity-100 group-focus-visible:opacity-100"
+                :class="archivedOpen ? 'rotate-90 opacity-0' : 'opacity-100'"
               />
             </CollapsibleTrigger>
           </div>
