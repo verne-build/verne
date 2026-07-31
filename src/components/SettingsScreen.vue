@@ -5,8 +5,10 @@ import { useSettingsNav } from "@/composables/useSettingsNav";
 import { useTheme } from "@/composables/useTheme";
 import { useRpc } from "@/composables/useRpc";
 import { useDirectorySettings } from "@/composables/useDirectorySettings";
+import { useProjectIcons } from "@/composables/useProjectIcons";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { clearCachedPanelSizes } from "@/lib/bootstrapCache";
+import { findFirstProjectToastIcon } from "@/lib/projectToastIcon";
 import { getInstalledIdes, invoke } from "@/platform";
 import { toast } from "vue-sonner";
 import type { LanguageOverrideSettings, McpAgentInfo } from "@/types/shared";
@@ -33,10 +35,12 @@ const ready = ref(false);
 // Fire an OS notification (via the native handler, bypassing the focus gate)
 // plus a sample in-app toast. The toast carries an action button so the stacked
 // layout is visible; the action is a no-op (no real tab to focus).
-function sendTestNotification(): void {
+async function sendTestNotification(): Promise<void> {
   void invoke("notify_test").catch(() => {});
+  const icon = await findFirstProjectToastIcon(store.directories, projectIconSource);
   toast("Verne test notification", {
-    description: "Notifications are working.",
+    description: "This longer sample notification shows how text flows beneath the action area and fades behind the controls when you hover over the toast.",
+    ...(icon ? { icon } : {}),
     closeButton: true,
     action: { label: "View", onClick: () => {} },
   });
@@ -132,6 +136,7 @@ const activeLangOverrides = computed(() =>
 
 // Directories
 const store = useWorkspaceStore();
+const projectIconSource = useProjectIcons();
 const selectedDirIdForSettings = ref<string | null>(null);
 const selectedDirIdRef = computed(() => selectedDirIdForSettings.value);
 const { settings: perDirSettings, update: updatePerDirSettings } =

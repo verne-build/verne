@@ -232,7 +232,11 @@ function onBottomLayout(sizes: number[]) {
   bottomPanelRef.value?.onLayout(sizes);
 }
 
-const { icons: projectIcons, loadIcon: loadProjectIcon } = useProjectIcons();
+const {
+  icons: projectIcons,
+  transparentIcons: transparentProjectIcons,
+  loadIcon: loadProjectIcon,
+} = useProjectIcons();
 
 watch(
   () => store.directories.length,
@@ -907,7 +911,10 @@ onUnmounted(() => {
                   <img
                     v-if="displayedDirectory && projectIcons[displayedDirectory!.id]"
                     :src="projectIcons[displayedDirectory!.id]"
-                    class="size-4 object-contain shrink-0"
+                    :class="[
+                      'size-4 shrink-0 object-contain',
+                      transparentProjectIcons[displayedDirectory!.id] && 'p-0.5',
+                    ]"
                   />
                   <FolderOpen
                     v-else

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from "vue";
 import { useVirtualizer } from "@tanstack/vue-virtual";
-import { Check, ChevronDown, ChevronLeft, FolderOpen, FolderPlus, Search } from "@lucide/vue";
+import { Check, ChevronDown, ChevronRight, FolderOpen, FolderPlus, Search } from "@lucide/vue";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useRpc } from "@/composables/useRpc";
 import { useProjectIcons } from "@/composables/useProjectIcons";
@@ -24,7 +24,7 @@ import type { WorkingDirectory } from "@/types";
 
 const store = useWorkspaceStore();
 const { request } = useRpc();
-const { icons: projectIcons } = useProjectIcons();
+const { icons: projectIcons, transparentIcons: transparentProjectIcons } = useProjectIcons();
 
 const rootDirs = computed(() =>
   store.directories.filter((d) => !d.parentDirectoryId),
@@ -268,7 +268,7 @@ watch(() => store.directories.map((d) => d.id).join(","), () => {
         <DropdownMenuTrigger as-child>
           <Button type="button" variant="outline" size="xs" aria-label="Select Workspace"
             class="min-w-0 flex-1 justify-start gap-1.5">
-            <img v-if="activeChip !== 'all' && projectIcons[activeChip]" :src="projectIcons[activeChip]" class="size-3 rounded-sm" alt="" />
+            <img v-if="activeChip !== 'all' && projectIcons[activeChip]" :src="projectIcons[activeChip]" :class="['size-3 rounded-xs ring-1 ring-black/10 dark:ring-white/10', transparentProjectIcons[activeChip] && 'p-0.5']" alt="" />
             <FolderOpen v-else class="size-3.5 text-muted-foreground" />
             <span class="truncate">{{ activeWorkspaceName ?? "All Workspaces" }}</span>
             <ChevronDown class="ml-auto size-3.5 shrink-0 text-muted-foreground" />
@@ -288,7 +288,7 @@ watch(() => store.directories.map((d) => d.id).join(","), () => {
               <Check :class="['ml-auto size-3.5', activeChip === 'all' ? 'opacity-100' : 'opacity-0']" />
             </DropdownMenuItem>
             <DropdownMenuItem v-for="d in filteredRootDirs" :key="d.id" @select="selectWorkspace(d.id)">
-              <img v-if="projectIcons[d.id]" :src="projectIcons[d.id]" class="size-4 rounded-sm" alt="" />
+              <img v-if="projectIcons[d.id]" :src="projectIcons[d.id]" :class="['size-4 rounded-xs ring-1 ring-black/10 dark:ring-white/10', transparentProjectIcons[d.id] && 'p-0.5']" alt="" />
               <FolderOpen v-else class="size-4" />
               <span class="flex-1 truncate">{{ d.name }}</span>
               <Check :class="['ml-auto size-3.5', activeChip === d.id ? 'opacity-100' : 'opacity-0']" />
@@ -339,10 +339,10 @@ watch(() => store.directories.map((d) => d.id).join(","), () => {
               class="flex h-8 w-full items-center gap-1 px-3 text-xs font-medium text-muted-foreground/70"
             >
               <span>Archived</span>
-              <ChevronLeft
+              <ChevronRight
                 :stroke-width="2.5"
                 class="ml-auto size-3 shrink-0 transition-transform"
-                :class="{ '-rotate-90': archivedOpen }"
+                :class="{ 'rotate-90': archivedOpen }"
               />
             </CollapsibleTrigger>
           </div>

@@ -189,39 +189,168 @@ html[data-scrolling] [data-slot="tooltip-content"] {
   height: 10px;
 }
 
-/* Stack action/cancel buttons on their own row beneath the description, each at
-   its natural (fit-content) width, left-aligned. Switch these toasts to CSS grid
-   (single column): content stretches + wraps, the button sits on the next row
-   via justify-self:start. Grid is used instead of flex-wrap because sonner owns
-   the toast's ::before/::after (swipe + expand hit-areas) and toggles flex/height
-   on hover — a pseudo-spacer or wrap trick collapses when expanded. Scoped with
-   :has([data-button]) so buttonless toasts keep their normal flex row. row-gap +
-   align-content:center keep the gap constant across collapsed/hover states. The
-   absolutely-positioned close button is unaffected. margin:0 clears sonner's
-   default --toast-button-margin-start:auto (the right-align). */
-[data-sonner-toast]:has([data-button]) {
-  display: grid !important;
-  grid-template-columns: 1fr;
-  align-content: center;
-  /* !important: sonner sets `gap: 6px` (shorthand) at equal specificity and
-     injects its CSS after ours, so a plain row-gap gets reset to 6px. */
-  row-gap: 14px !important;
+/* Keep the project/status icon in a fixed left column and let copy use the
+   remaining width. Sonner injects its flex rules after ours, hence !important. */
+[data-sonner-toast][data-styled="true"].toast-interactive-controls {
+  display: flex !important;
+  align-items: flex-start !important;
+  gap: 10px !important;
+  isolation: isolate;
 }
-[data-sonner-toast]:has([data-button]) [data-button] {
-  justify-self: start;
+
+/* A hovered toast and its controls must sit above both the toast stack and the
+   translucent surface. Sonner assigns stack z-indices inline, so override the
+   active toast as well as its overlay controls. */
+[data-sonner-toast].toast-interactive-controls:hover,
+[data-sonner-toast].toast-interactive-controls:focus-within {
+  z-index: 2147483646 !important;
+}
+
+[data-sonner-toast].toast-interactive-controls .toast-overlay-control {
+  z-index: 2147483647 !important;
+}
+
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-close-button].toast-session-active-close {
+  border-color: var(--border) !important;
+  background: var(--toast-control-bg) !important;
+  color: var(--toast-control-fg) !important;
+}
+
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-close-button].toast-session-active-close:hover {
+  background: rgb(62 62 62) !important;
+  color: var(--toast-control-fg) !important;
+}
+
+[data-sonner-toast][data-styled="true"].toast-interactive-controls [data-icon] {
+  width: 20px;
+  height: 20px;
+  align-items: flex-start;
+  z-index: 1;
+}
+
+[data-sonner-toast][data-styled="true"].toast-interactive-controls [data-content] {
+  min-width: 0;
+  flex: 1;
+}
+
+/* Controls overlay long copy only while interacting. Their background-matched
+   radial plates fade text beneath them without intercepting pointer input. */
+[data-sonner-toast].toast-interactive-controls [data-content]::before,
+[data-sonner-toast].toast-interactive-controls [data-content]::after {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  right: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition-property: opacity;
+  transition-duration: 140ms;
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+
+[data-sonner-toast].toast-interactive-controls [data-content]::before {
+  top: 0;
+  width: 72px;
+  height: 56px;
+  border-radius: 0 var(--radius-xl) 0 0;
+  background: radial-gradient(ellipse at top right, var(--toast-control-fade) 12%, transparent 76%);
+}
+
+[data-sonner-toast].toast-interactive-controls [data-content]::after {
+  bottom: 0;
+  width: 160px;
+  height: 76px;
+  border-radius: 0 0 var(--radius-xl) 0;
+  background: radial-gradient(ellipse at bottom right, var(--toast-control-fade) 12%, transparent 78%);
+}
+
+[data-sonner-toast].toast-interactive-controls [data-button] {
+  position: absolute;
+  z-index: 2;
+  right: 12px;
+  bottom: 12px;
   margin: 0 !important;
+  opacity: 0;
+  transform: translateY(2px);
+  pointer-events: none;
+}
+
+[data-sonner-toast].toast-interactive-controls:has([data-action]) [data-cancel] {
+  bottom: calc(12px + 1.75rem + 6px);
+}
+
+[data-sonner-toast].toast-interactive-controls [data-close-button] {
+  opacity: 0;
+  pointer-events: none;
+}
+
+[data-sonner-toast].toast-interactive-controls:hover [data-button],
+[data-sonner-toast].toast-interactive-controls:focus-within [data-button] {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+[data-sonner-toast].toast-interactive-controls:hover [data-close-button],
+[data-sonner-toast].toast-interactive-controls:focus-within [data-close-button] {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+[data-sonner-toast].toast-interactive-controls:hover [data-content]::before,
+[data-sonner-toast].toast-interactive-controls:focus-within [data-content]::before,
+[data-sonner-toast].toast-interactive-controls:hover [data-content]::after,
+[data-sonner-toast].toast-interactive-controls:focus-within [data-content]::after {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  [data-sonner-toast].toast-interactive-controls [data-button],
+  [data-sonner-toast].toast-interactive-controls [data-close-button] {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  [data-sonner-toast].toast-interactive-controls [data-button] {
+    transform: translateY(0);
+  }
+
+  [data-sonner-toast].toast-interactive-controls [data-content]::before,
+  [data-sonner-toast].toast-interactive-controls [data-content]::after {
+    opacity: 1;
+  }
+}
+
+/* Sonner hardcodes these after consumer classes. Match the shadcn outline/xs
+   button material at higher specificity while buttonVariants owns the rest. */
+[data-sonner-toast][data-styled="true"].floating-surface-toast [data-button].toast-outline-button {
+  height: 1.75rem;
+  border: 1px solid var(--color-input);
+  border-radius: var(--radius-md);
+  background: var(--toast-control-bg) !important;
+  color: var(--toast-control-fg) !important;
+  box-shadow: var(--shadow-xs);
+  transition-property: opacity, transform, color, background-color, border-color, box-shadow;
+  transition-duration: 150ms;
+}
+
+[data-sonner-toast][data-styled="true"].floating-surface-toast [data-button].toast-outline-button:hover {
+  background: rgb(62 62 62) !important;
+  color: var(--toast-control-fg) !important;
 }
 
 /* Sonner's styled-toast selector outranks ordinary utility classes. Bridge only
    material properties here; Sonner continues to own layout, motion, and swipe. */
-[data-sonner-toast][data-styled="true"].floating-surface-glass {
+[data-sonner-toast][data-styled="true"].floating-surface-glass.floating-surface-toast {
+  --toast-control-fade: color-mix(in oklab, var(--color-background) 88%, white 12%);
   background: color-mix(in oklab, color-mix(in oklab, var(--color-background) 88%, white 12%) 80%, transparent);
   border-color: color-mix(in oklab, var(--color-border) 60%, transparent);
   color: var(--color-popover-foreground);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45), inset 1px 0 0 rgba(255, 255, 255, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.32), 0 18px 48px rgba(0, 0, 0, 0.58), inset 1px 0 0 rgba(255, 255, 255, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 
 [data-sonner-toast][data-styled="true"].floating-surface-solid {
+  --toast-control-fade: var(--color-popover);
   background: var(--color-popover);
   border-color: var(--color-border);
   color: var(--color-popover-foreground);

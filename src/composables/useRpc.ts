@@ -265,6 +265,8 @@ const request = {
     invoke("unwatch_directory", { path: p.path }),
   findProjectIcon: (p: { dir: string }): Promise<string | null> =>
     invoke("find_project_icon", { dir: p.dir }),
+  projectIconHasTransparentBackground: (p: { path: string }): Promise<boolean> =>
+    invoke("project_icon_has_transparent_background", p),
   listDirectoryPaths: (p: {
     partial: string;
   }): Promise<{ dirs: string[]; resolved: string }> =>

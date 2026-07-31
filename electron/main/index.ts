@@ -21,6 +21,7 @@ import { pushTerminalColorsToDaemon } from "./native/terminal-colors";
 import { registerShortcutsCommands, stopShortcutsWatcher } from "./native/shortcuts-cmds";
 import { registerLspCommands, stopAllLsp, lspInstanceCount, lspPids } from "./native/lsp-cmds";
 import { registerMetricsCommands } from "./native/metrics-cmds";
+import { registerProjectIconCommands } from "./native/project-icon-cmds";
 import { registerSpeechIpc } from "./speech/ipc";
 import { registerDictationHotkey } from "./speech/hotkey";
 import { initAutoUpdater, stopAutoUpdater } from "./native/updater";
@@ -344,6 +345,7 @@ app.whenReady().then(async () => {
   registerReviewCommands();
   registerDbCommands(getWindow, () => sidecar);
   registerLspCommands(join(app.getAppPath(), "resources"));
+  registerProjectIconCommands();
   registerExtraNatives();
 
   // Dev-only main-process startup phase timing. Mirrors the renderer's

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createApp, h, nextTick, ref } from "vue";
+import { computed, createApp, h, nextTick, ref } from "vue";
 import { createPinia } from "pinia";
 
 const store = {
@@ -22,10 +22,26 @@ const store = {
 };
 
 const rpc = { gitBranchName: vi.fn(async () => null), gitWatch: vi.fn(async () => {}) };
+const projectIcons = ref<Record<string, string>>({});
+const transparentProjectIcons = ref<Record<string, boolean>>({});
 
 vi.mock("@/stores/workspace", () => ({ useWorkspaceStore: () => store }));
+vi.mock("@tanstack/vue-virtual", () => ({
+  useVirtualizer: (options: { value: { count: number; getItemKey: (index: number) => string | number } }) => computed(() => ({
+    getTotalSize: () => options.value.count * 40,
+    getVirtualItems: () => Array.from({ length: options.value.count }, (_, index) => ({
+      index,
+      key: options.value.getItemKey(index),
+      size: 40,
+      start: index * 40,
+    })),
+    measureElement: () => {},
+  })),
+}));
 vi.mock("@/composables/useRpc", () => ({ useRpc: () => ({ request: rpc }) }));
-vi.mock("@/composables/useProjectIcons", () => ({ useProjectIcons: () => ({ icons: ref({}) }) }));
+vi.mock("@/composables/useProjectIcons", () => ({
+  useProjectIcons: () => ({ icons: projectIcons, transparentIcons: transparentProjectIcons }),
+}));
 vi.mock("@/composables/useScrollFades", () => ({
   useScrollFades: () => ({ bodyEl: ref(null), atStart: ref(true), atEnd: ref(true), update: () => {} }),
 }));
@@ -64,6 +80,8 @@ describe("SessionsSidebar workspace dropdown", () => {
   let app: ReturnType<typeof createApp>;
 
   beforeEach(() => {
+    projectIcons.value = {};
+    transparentProjectIcons.value = {};
     store.openAndSelectWorkspace.mockClear();
     store.sessionsList.mockClear();
     host = document.createElement("div");
@@ -85,6 +103,36 @@ describe("SessionsSidebar workspace dropdown", () => {
     expect(texts).toContain("All Workspaces");
     expect(texts).toContain("Project Alpha");
     expect(texts).toContain("Beta");
+  });
+
+  it("uses the shared project-icon corners and ring in the trigger and menu", async () => {
+    projectIcons.value = { "dir-1": "/alpha.png", "dir-2": "/beta.png" };
+    transparentProjectIcons.value = { "dir-1": true, "dir-2": false };
+    await flush();
+    await openMenu();
+
+    const menuImages = Array.from(document.querySelectorAll<HTMLImageElement>('[data-slot="dropdown-menu-content"] img'));
+    expect(menuImages).toHaveLength(2);
+    for (const image of menuImages) {
+      expect(image.classList.contains("rounded-xs")).toBe(true);
+      expect(image.classList.contains("rounded-sm")).toBe(false);
+      expect(image.classList.contains("ring-1")).toBe(true);
+      expect(image.classList.contains("ring-black/10")).toBe(true);
+      expect(image.classList.contains("dark:ring-white/10")).toBe(true);
+    }
+    expect(menuImages.find((image) => image.src.endsWith("/alpha.png"))?.classList.contains("p-0.5")).toBe(true);
+    expect(menuImages.find((image) => image.src.endsWith("/beta.png"))?.classList.contains("p-0.5")).toBe(false);
+
+    const alpha = Array.from(document.querySelectorAll<HTMLElement>("[data-slot=dropdown-menu-item]"))
+      .find((item) => item.textContent?.trim() === "Project Alpha");
+    alpha!.click();
+    await flush();
+    const triggerImage = namedButton("Select Workspace").querySelector("img");
+    expect(triggerImage?.classList.contains("rounded-xs")).toBe(true);
+    expect(triggerImage?.classList.contains("ring-1")).toBe(true);
+    expect(triggerImage?.classList.contains("ring-black/10")).toBe(true);
+    expect(triggerImage?.classList.contains("dark:ring-white/10")).toBe(true);
+    expect(triggerImage?.classList.contains("p-0.5")).toBe(true);
   });
 
   it("filters rows by query", async () => {

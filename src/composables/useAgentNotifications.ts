@@ -1,8 +1,10 @@
 import { toast } from "vue-sonner";
 import { useWorkspaceStore } from "@/stores/workspace";
+import { useProjectIcons } from "@/composables/useProjectIcons";
 import { useSettings } from "@/composables/useSettings";
 import { useSettingsScreen } from "@/composables/useSettingsScreen";
 import { agentLabel, notifyKind, notifyMessage, type AgentNotifyKind, type AgentNotifyState } from "@/lib/agentNotifications";
+import { projectToastIcon } from "@/lib/projectToastIcon";
 import type { TabUpdatedEvent } from "@/types";
 
 const lastState = new Map<string, AgentNotifyState>();
@@ -15,14 +17,22 @@ function focusTab(tabId: string): void {
   useWorkspaceStore().selectSession(tabId);
 }
 
-function showToast(kind: AgentNotifyKind, payload: TabUpdatedEvent): void {
+async function showToast(kind: AgentNotifyKind, payload: TabUpdatedEvent): Promise<void> {
   const store = useWorkspaceStore();
   const tabTitle = store.sessionName(payload.tabId);
   const title = tabTitle || agentLabel(payload.agentType!);
   const description = notifyMessage(kind, payload.agentType!);
+  const directory = store.directories.find((candidate) =>
+    store.terminalTabsByDirectory[candidate.id]?.some((tab) => tab.id === payload.tabId),
+  );
+  const { icons, transparentIcons, loadIcon } = useProjectIcons();
+  if (directory) await loadIcon(directory.id, directory.path);
+  const iconSrc = directory ? icons.value[directory.id] : "";
+  const iconIsTransparent = directory ? transparentIcons.value[directory.id] ?? false : false;
 
   toast(title, {
     description,
+    ...(iconSrc ? { icon: projectToastIcon(iconSrc, iconIsTransparent) } : {}),
     duration: kind === "blocked" ? 15000 : 10000,
     closeButton: true,
     action: {
@@ -50,7 +60,7 @@ function handleTabUpdated(e: Event): void {
   const kind = notifyKind(prev, payload.agentState as AgentNotifyState);
   if (!kind) return;
 
-  showToast(kind, payload);
+  void showToast(kind, payload);
 }
 
 let wired = false;

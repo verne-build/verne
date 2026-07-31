@@ -20,6 +20,7 @@ const store = {
   unarchiveSession: vi.fn(async () => {}),
   markSessionUnread: vi.fn(),
 };
+const transparentProjectIcons = ref<Record<string, boolean>>({ "root-1": true });
 
 vi.mock("@/stores/workspace", () => ({ useWorkspaceStore: () => store }));
 vi.mock("@/composables/useRpc", () => ({
@@ -29,7 +30,10 @@ vi.mock("@/composables/useRpc", () => ({
   } }),
 }));
 vi.mock("@/composables/useProjectIcons", () => ({
-  useProjectIcons: () => ({ icons: ref({ "root-1": "/project.png" }) }),
+  useProjectIcons: () => ({
+    icons: ref({ "root-1": "/project.png" }),
+    transparentIcons: transparentProjectIcons,
+  }),
 }));
 vi.mock("@/composables/useAgentIcon", () => ({ getAgentIcon: () => "/agent.svg" }));
 vi.mock("@/platform", () => ({ ask: vi.fn(async () => true) }));
@@ -85,6 +89,7 @@ describe("SessionCard layout", () => {
   }
 
   beforeEach(() => {
+    transparentProjectIcons.value = { "root-1": true };
     store.archiveSession.mockClear();
     store.unarchiveSession.mockClear();
     store.markSessionUnread.mockClear();
@@ -139,6 +144,33 @@ describe("SessionCard layout", () => {
     expect(host.textContent).not.toContain("feature/sidebar");
     expect(host.textContent).not.toContain("Archived");
     expect(host.querySelector('[aria-label="Archive Session"]')).toBeNull();
+  });
+
+  it("uses the hover-card ring on live and archived project icons", async () => {
+    for (const archived of [false, true]) {
+      await mount(archived);
+      const image = host.querySelector('img[src="/project.png"]');
+      expect(image?.classList.contains("ring-1")).toBe(true);
+      expect(image?.classList.contains("ring-black/10")).toBe(true);
+      expect(image?.classList.contains("dark:ring-white/10")).toBe(true);
+      expect(image?.classList.contains("rounded-xs")).toBe(true);
+      expect(image?.classList.contains("rounded-sm")).toBe(false);
+      app?.unmount();
+      app = null;
+      host.remove();
+    }
+  });
+
+  it("pads only project icons with transparent backgrounds", async () => {
+    await mount();
+    expect(host.querySelector('img[src="/project.png"]')?.classList.contains("p-0.5")).toBe(true);
+
+    app?.unmount();
+    app = null;
+    host.remove();
+    transparentProjectIcons.value = { "root-1": false };
+    await mount();
+    expect(host.querySelector('img[src="/project.png"]')?.classList.contains("p-0.5")).toBe(false);
   });
 
   it("reveals a right-aligned compact Resume action and truncates the title on hover", async () => {

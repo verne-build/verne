@@ -56,7 +56,7 @@ const props = defineProps<{
 
 const store = useWorkspaceStore();
 const rpc = useRpc();
-const { icons: projectIcons } = useProjectIcons();
+const { icons: projectIcons, transparentIcons: transparentProjectIcons } = useProjectIcons();
 // Focusing a session reveals its terminal, so drop out of the maximized file panel.
 const fileMaximized = inject<Ref<boolean>>("fileMaximized");
 
@@ -101,6 +101,7 @@ const agentLabel = computed(() => {
     ?? titleCase(props.row.agentType);
 });
 const projectIcon = computed(() => projectIcons.value[props.rootDirId] || "");
+const projectIconIsTransparent = computed(() => transparentProjectIcons.value[props.rootDirId] ?? false);
 // Live runtime first (agent may have started a new session since the row was
 // written), then the latched row value.
 const agentSessionId = computed(
@@ -324,7 +325,7 @@ async function unarchive(resume: boolean) {
           @dblclick="startRename()"
         >
           <template v-if="archived">
-            <img v-if="projectIcon" :src="projectIcon" class="size-3.5 rounded-sm shrink-0" alt="" />
+            <img v-if="projectIcon" :src="projectIcon" :class="['size-3.5 shrink-0 rounded-xs ring-1 ring-black/10 dark:ring-white/10', projectIconIsTransparent && 'p-0.5']" alt="" />
             <Folder v-else class="size-3.5 shrink-0 text-muted-foreground" />
             <input
               v-if="renaming"
@@ -369,7 +370,7 @@ async function unarchive(resume: boolean) {
           </template>
           <template v-else>
             <div class="flex items-center gap-1.5 min-w-0">
-              <img v-if="projectIcon" :src="projectIcon" class="size-3.5 rounded-sm shrink-0" alt="" />
+              <img v-if="projectIcon" :src="projectIcon" :class="['size-3.5 shrink-0 rounded-xs ring-1 ring-black/10 dark:ring-white/10', projectIconIsTransparent && 'p-0.5']" alt="" />
               <Folder v-else class="size-3.5 shrink-0 text-muted-foreground" />
               <span class="truncate text-xs font-medium text-muted-foreground">{{ rootName }}</span>
               <GitBranch v-if="isWorktree" class="size-3 shrink-0 text-muted-foreground/70" />
@@ -488,7 +489,7 @@ async function unarchive(resume: boolean) {
           <img
             v-if="projectIcon"
             :src="projectIcon"
-            class="size-4 shrink-0 rounded-sm ring-1 ring-black/10 dark:ring-white/10"
+            :class="['size-4 shrink-0 rounded-xs ring-1 ring-black/10 dark:ring-white/10', projectIconIsTransparent && 'p-0.5']"
             alt=""
           />
           <Folder v-else class="size-4 shrink-0" />
