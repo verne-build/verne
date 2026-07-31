@@ -26,9 +26,10 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Kbd } from "@/components/ui/kbd";
 
-const props = withDefaults(defineProps<{ busy?: boolean; compact?: boolean; disabled?: boolean }>(), {
+// Layout is container-driven (`@container` on the root), not prop-driven: the row
+// collapses on its own width, so a narrow split pane stacks even when the window is wide.
+const props = withDefaults(defineProps<{ busy?: boolean; disabled?: boolean }>(), {
   busy: false,
-  compact: false,
   disabled: false,
 });
 const emit = defineEmits<{ start: [selection: AgentLaunchSelection | undefined] }>();
@@ -235,112 +236,117 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div ref="root" :class="['flex gap-2', compact ? 'flex-col items-stretch' : 'flex-wrap items-center']" :aria-busy="loading || busy">
-    <TooltipProvider :delay-duration="300">
-      <div
-        ref="radioGroup"
-        role="radiogroup"
-        aria-label="Agent"
-        :aria-disabled="busy || undefined"
-        :class="['inline-flex h-8 shrink-0 items-center gap-1', compact ? '' : '-ms-1.5']"
-      >
-        <Tooltip v-for="(option, index) in radioOptions" :key="option.value">
-          <TooltipTrigger as-child>
-            <button
-              type="button"
-              role="radio"
-              :aria-label="option.label"
-              :aria-checked="selectedAgentType === option.value"
-              :tabindex="selectedAgentType === option.value ? 0 : -1"
-              :aria-disabled="busy || undefined"
-              :class="[
-                'inline-flex size-7 items-center justify-center rounded-md outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50',
-                selectedAgentType === option.value
-                  ? 'border bg-background shadow-xs dark:border-input dark:bg-input/30'
-                  : '',
-                busy
-                  ? 'cursor-default opacity-50'
-                  : selectedAgentType === option.value
-                    ? 'opacity-100'
-                    : 'opacity-80 hover:bg-border/25 hover:opacity-100',
-              ]"
-              @click="onRadioClick(option.value)"
-              @keydown="onRadioKeydown($event, index)"
-            >
-              <img v-if="option.icon" :src="option.icon" alt="" class="size-4" />
-              <SquareTerminal v-else-if="option.value === 'terminal'" aria-hidden="true" class="size-4" />
-              <Bot v-else aria-hidden="true" class="size-4" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent class="flex items-center gap-1">
-            {{ option.label }}
-            <Kbd v-if="index < 9" aria-hidden="true" variant="outline" class="h-4 min-w-0 px-1 text-[10px]">{{ index + 1 }}</Kbd>
-          </TooltipContent>
-        </Tooltip>
-      </div>
-    </TooltipProvider>
+  <div ref="root" class="@container">
+    <div
+      class="flex gap-2 @max-md:flex-col @max-md:items-stretch @md:flex-wrap @md:items-center"
+      :aria-busy="loading || busy"
+    >
+      <TooltipProvider :delay-duration="300">
+        <div
+          ref="radioGroup"
+          role="radiogroup"
+          aria-label="Agent"
+          :aria-disabled="busy || undefined"
+          class="inline-flex h-8 shrink-0 items-center gap-1 @md:-ms-1.5"
+        >
+          <Tooltip v-for="(option, index) in radioOptions" :key="option.value">
+            <TooltipTrigger as-child>
+              <button
+                type="button"
+                role="radio"
+                :aria-label="option.label"
+                :aria-checked="selectedAgentType === option.value"
+                :tabindex="selectedAgentType === option.value ? 0 : -1"
+                :aria-disabled="busy || undefined"
+                :class="[
+                  'inline-flex size-7 items-center justify-center rounded-md outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50',
+                  selectedAgentType === option.value
+                    ? 'border bg-background shadow-xs dark:border-input dark:bg-input/30'
+                    : '',
+                  busy
+                    ? 'cursor-default opacity-50'
+                    : selectedAgentType === option.value
+                      ? 'opacity-100'
+                      : 'opacity-80 hover:bg-border/25 hover:opacity-100',
+                ]"
+                @click="onRadioClick(option.value)"
+                @keydown="onRadioKeydown($event, index)"
+              >
+                <img v-if="option.icon" :src="option.icon" alt="" class="size-4" />
+                <SquareTerminal v-else-if="option.value === 'terminal'" aria-hidden="true" class="size-4" />
+                <Bot v-else aria-hidden="true" class="size-4" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent class="flex items-center gap-1">
+              {{ option.label }}
+              <Kbd v-if="index < 9" aria-hidden="true" variant="outline" class="h-4 min-w-0 px-1 text-[10px]">{{ index + 1 }}</Kbd>
+            </TooltipContent>
+          </Tooltip>
+        </div>
+      </TooltipProvider>
 
-    <DropdownMenu>
-      <DropdownMenuTrigger as-child>
-        <Button type="button" variant="outline" class="h-8 min-w-0 px-2.5 has-[>svg]:px-2.5" :disabled="isTerminal || busy" aria-label="Select Model">
-          <span class="truncate">{{ selectedModelLabel }}</span>
-          <ChevronDown aria-hidden="true" class="size-3.5 text-muted-foreground" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" class="w-[var(--reka-dropdown-menu-trigger-width)]">
-        <DropdownMenuLabel class="text-xs font-normal text-muted-foreground">Model</DropdownMenuLabel>
-        <DropdownMenuItem @select="selectModel('default')">
-          Default
-          <Check :class="['ml-auto size-3.5', selectedModelId === null ? 'opacity-100' : 'opacity-0']" />
-        </DropdownMenuItem>
-        <DropdownMenuItem v-for="model in selectedAgent?.models ?? []" :key="model.id" @select="selectModel(model.id)">
-          {{ model.label }}
-          <Check :class="['ml-auto size-3.5', selectedModelId === model.id ? 'opacity-100' : 'opacity-0']" />
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-
-    <DropdownMenu>
-      <DropdownMenuTrigger as-child>
-        <Button type="button" variant="outline" class="h-8 min-w-0 px-2.5 has-[>svg]:px-2.5" :disabled="isTerminal || !showTuning || busy" aria-label="Select Effort Or Fast Mode">
-          <span class="truncate">{{ tuningLabel }}</span>
-          <ChevronDown aria-hidden="true" class="size-3.5 text-muted-foreground" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" class="w-[var(--reka-dropdown-menu-trigger-width)]">
-        <template v-if="availableEfforts.length">
-          <DropdownMenuLabel class="text-xs font-normal text-muted-foreground">Effort</DropdownMenuLabel>
-          <DropdownMenuItem @select="selectedEffort = null">
+      <DropdownMenu>
+        <DropdownMenuTrigger as-child>
+          <Button type="button" variant="outline" class="h-8 min-w-0 px-2.5 has-[>svg]:px-2.5" :disabled="isTerminal || busy" aria-label="Select Model">
+            <span class="truncate">{{ selectedModelLabel }}</span>
+            <ChevronDown aria-hidden="true" class="size-3.5 text-muted-foreground" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" class="w-[var(--reka-dropdown-menu-trigger-width)]">
+          <DropdownMenuLabel class="text-xs font-normal text-muted-foreground">Model</DropdownMenuLabel>
+          <DropdownMenuItem @select="selectModel('default')">
             Default
-            <Check :class="['ml-auto size-3.5', selectedEffort === null ? 'opacity-100' : 'opacity-0']" />
+            <Check :class="['ml-auto size-3.5', selectedModelId === null ? 'opacity-100' : 'opacity-0']" />
           </DropdownMenuItem>
-          <DropdownMenuItem v-for="effort in availableEfforts" :key="effort" @select="selectedEffort = effort">
-            {{ effort[0]?.toUpperCase() }}{{ effort.slice(1) }}
-            <Check :class="['ml-auto size-3.5', selectedEffort === effort ? 'opacity-100' : 'opacity-0']" />
+          <DropdownMenuItem v-for="model in selectedAgent?.models ?? []" :key="model.id" @select="selectModel(model.id)">
+            {{ model.label }}
+            <Check :class="['ml-auto size-3.5', selectedModelId === model.id ? 'opacity-100' : 'opacity-0']" />
           </DropdownMenuItem>
-        </template>
-        <DropdownMenuSeparator v-if="availableEfforts.length && supportsFast" />
-        <template v-if="supportsFast">
-          <DropdownMenuLabel class="text-xs font-normal text-muted-foreground">Fast Mode</DropdownMenuLabel>
-          <DropdownMenuItem @select="fast = true">
-            <Zap aria-hidden="true" class="size-4" />
-            On
-            <Check :class="['ml-auto size-3.5', fast ? 'opacity-100' : 'opacity-0']" />
-          </DropdownMenuItem>
-          <DropdownMenuItem @select="fast = false">
-            Off
-            <Check :class="['ml-auto size-3.5', !fast ? 'opacity-100' : 'opacity-0']" />
-          </DropdownMenuItem>
-        </template>
-      </DropdownMenuContent>
-    </DropdownMenu>
+        </DropdownMenuContent>
+      </DropdownMenu>
 
-    <Button type="button" variant="outline" :class="['h-8 px-3 transition-transform active:scale-[0.96]', compact ? 'w-full' : 'ms-auto']" :disabled="busy || disabled" @click="emit('start', launchSelection())">
-      <!-- Label stays "Start" while busy; the disabled state carries the feedback,
-           so the button can't change width mid-launch. -->
-      Start
-      <Kbd aria-hidden="true" variant="outline" class="h-4 min-w-0 px-1 text-[10px]">⏎</Kbd>
-    </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger as-child>
+          <Button type="button" variant="outline" class="h-8 min-w-0 px-2.5 has-[>svg]:px-2.5" :disabled="isTerminal || !showTuning || busy" aria-label="Select Effort Or Fast Mode">
+            <span class="truncate">{{ tuningLabel }}</span>
+            <ChevronDown aria-hidden="true" class="size-3.5 text-muted-foreground" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" class="w-[var(--reka-dropdown-menu-trigger-width)]">
+          <template v-if="availableEfforts.length">
+            <DropdownMenuLabel class="text-xs font-normal text-muted-foreground">Effort</DropdownMenuLabel>
+            <DropdownMenuItem @select="selectedEffort = null">
+              Default
+              <Check :class="['ml-auto size-3.5', selectedEffort === null ? 'opacity-100' : 'opacity-0']" />
+            </DropdownMenuItem>
+            <DropdownMenuItem v-for="effort in availableEfforts" :key="effort" @select="selectedEffort = effort">
+              {{ effort[0]?.toUpperCase() }}{{ effort.slice(1) }}
+              <Check :class="['ml-auto size-3.5', selectedEffort === effort ? 'opacity-100' : 'opacity-0']" />
+            </DropdownMenuItem>
+          </template>
+          <DropdownMenuSeparator v-if="availableEfforts.length && supportsFast" />
+          <template v-if="supportsFast">
+            <DropdownMenuLabel class="text-xs font-normal text-muted-foreground">Fast Mode</DropdownMenuLabel>
+            <DropdownMenuItem @select="fast = true">
+              <Zap aria-hidden="true" class="size-4" />
+              On
+              <Check :class="['ml-auto size-3.5', fast ? 'opacity-100' : 'opacity-0']" />
+            </DropdownMenuItem>
+            <DropdownMenuItem @select="fast = false">
+              Off
+              <Check :class="['ml-auto size-3.5', !fast ? 'opacity-100' : 'opacity-0']" />
+            </DropdownMenuItem>
+          </template>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      <Button type="button" variant="outline" class="h-8 px-3 transition-transform active:scale-[0.96] @max-md:w-full @md:ms-auto" :disabled="busy || disabled" @click="emit('start', launchSelection())">
+        <!-- Label stays "Start" while busy; the disabled state carries the feedback,
+             so the button can't change width mid-launch. -->
+        Start
+        <Kbd aria-hidden="true" variant="outline" class="h-4 min-w-0 px-1 text-[10px]">⏎</Kbd>
+      </Button>
+    </div>
   </div>
 
   <Alert v-if="error" variant="destructive" aria-atomic="true" class="mt-3">
