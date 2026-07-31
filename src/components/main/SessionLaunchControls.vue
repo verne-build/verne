@@ -93,14 +93,12 @@ function supportsFastFor(model: ModelDefinition | null): boolean {
 const availableEfforts = computed(() => effortsFor(selectedModel.value));
 const supportsFast = computed(() => supportsFastFor(selectedModel.value));
 const showTuning = computed(() => availableEfforts.value.length > 0 || supportsFast.value);
-const selectedAgentLabel = computed(() => selectedAgent.value?.label ?? "Terminal");
 const selectedModelLabel = computed(() => selectedModel.value?.label ?? "Model Default");
 const tuningLabel = computed(() => {
   const labels: string[] = [];
-  if (isTerminal.value || availableEfforts.value.length)
-    labels.push(selectedEffort.value
-      ? `Effort ${selectedEffort.value[0]!.toUpperCase()}${selectedEffort.value.slice(1)}`
-      : "Effort Default");
+  labels.push(selectedEffort.value
+    ? `Effort ${selectedEffort.value[0]!.toUpperCase()}${selectedEffort.value.slice(1)}`
+    : "Effort Default");
   if (supportsFast.value) labels.push(`Fast Mode ${fast.value ? "On" : "Off"}`);
   return labels.join(" · ");
 });
@@ -175,7 +173,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div :class="['grid gap-3', compact ? 'grid-cols-1' : 'sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]']" :aria-busy="loading || busy">
+  <div :class="['flex gap-2', compact ? 'flex-col items-stretch' : 'flex-wrap items-center']" :aria-busy="loading || busy">
     <TooltipProvider :delay-duration="300">
       <div
         ref="radioGroup"
@@ -212,9 +210,9 @@ onUnmounted(() => {
 
     <DropdownMenu>
       <DropdownMenuTrigger as-child>
-        <Button type="button" variant="outline" class="min-h-10 w-full justify-between px-3" :disabled="isTerminal || busy" aria-label="Select Model">
+        <Button type="button" variant="outline" class="h-8 min-w-0 px-2.5" :disabled="isTerminal || busy" aria-label="Select Model">
           <span class="truncate">{{ selectedModelLabel }}</span>
-          <ChevronDown aria-hidden="true" class="size-4 text-muted-foreground" />
+          <ChevronDown aria-hidden="true" class="size-3.5 text-muted-foreground" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" class="w-[var(--reka-dropdown-menu-trigger-width)]">
@@ -230,11 +228,11 @@ onUnmounted(() => {
       </DropdownMenuContent>
     </DropdownMenu>
 
-    <DropdownMenu v-if="showTuning || isTerminal">
+    <DropdownMenu>
       <DropdownMenuTrigger as-child>
-        <Button type="button" variant="outline" class="min-h-10 w-full justify-between px-3" :disabled="isTerminal || busy" aria-label="Select Effort Or Fast Mode">
+        <Button type="button" variant="outline" class="h-8 min-w-0 px-2.5" :disabled="isTerminal || !showTuning || busy" aria-label="Select Effort Or Fast Mode">
           <span class="truncate">{{ tuningLabel }}</span>
-          <ChevronDown aria-hidden="true" class="size-4 text-muted-foreground" />
+          <ChevronDown aria-hidden="true" class="size-3.5 text-muted-foreground" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" class="w-[var(--reka-dropdown-menu-trigger-width)]">
@@ -264,9 +262,8 @@ onUnmounted(() => {
         </template>
       </DropdownMenuContent>
     </DropdownMenu>
-    <div v-else-if="!compact" class="hidden sm:block" aria-hidden="true" />
 
-    <Button type="button" class="min-h-10 px-5 transition-transform active:scale-[0.96]" :disabled="busy || disabled" @click="emit('start', launchSelection())">
+    <Button type="button" :class="['h-8 px-4 transition-transform active:scale-[0.96]', compact ? 'w-full' : 'ms-auto']" :disabled="busy || disabled" @click="emit('start', launchSelection())">
       {{ busy ? "Starting" : "Start" }}
       <ArrowRight aria-hidden="true" class="size-4" />
     </Button>

@@ -207,4 +207,26 @@ describe("SessionLaunchControls", () => {
 
     expect(radios().map((element) => element.tabIndex)).toEqual([0, -1, -1]);
   });
+
+  it("keeps Model and Effort visible but disabled for Terminal", async () => {
+    await flush();
+    await pickAgent("Terminal");
+
+    expect(namedButton("Select Model").disabled).toBe(true);
+    expect(namedButton("Select Effort Or Fast Mode").disabled).toBe(true);
+    expect(namedButton("Select Model").textContent).toContain("Model Default");
+  });
+
+  it("renders Effort disabled when the selected model has no tuning", async () => {
+    await flush();
+
+    expect(namedButton("Select Effort Or Fast Mode").disabled).toBe(true);
+  });
+
+  it("enables Effort once a tunable model is selected", async () => {
+    await flush();
+    await selectFrom("Select Model", "Opus");
+
+    expect(namedButton("Select Effort Or Fast Mode").disabled).toBe(false);
+  });
 });
