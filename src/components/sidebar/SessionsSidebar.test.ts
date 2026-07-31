@@ -180,4 +180,29 @@ describe("SessionsSidebar workspace dropdown", () => {
     expect(trigger?.querySelector(".lucide-chevron-right")).not.toBeNull();
     expect(trigger?.textContent?.trim()).toBe("Archived");
   });
+
+  it("gives every rendered row a unique view-transition name", async () => {
+    app.unmount();
+    store.sessionsList.mockReturnValue([
+      { tab: { id: "live-1" }, directory: store.directories[0], agentType: null },
+      { tab: { id: "live-2" }, directory: store.directories[0], agentType: null },
+      { tab: { id: "archived-1", archivedAt: 1 }, directory: store.directories[0], agentType: null },
+    ]);
+    app = createApp({ render: () => h(SessionsSidebar) });
+    app.use(createPinia());
+    app.mount(host);
+    await flush();
+
+    const names = Array.from(host.querySelectorAll<HTMLElement>("[data-vt-name]"))
+      .map((el) => el.dataset.vtName ?? "");
+    expect(names.length).toBeGreaterThan(0);
+    expect(new Set(names).size).toBe(names.length);
+    expect(names).toContain("session-live-1");
+    expect(names).toContain("session-archive-header");
+  });
+
+  it("no longer renders the hand-rolled archive height transition", async () => {
+    await flush();
+    expect(host.innerHTML).not.toContain("transition-[height]");
+  });
 });

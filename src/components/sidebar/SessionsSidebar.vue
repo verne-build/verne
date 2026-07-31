@@ -6,7 +6,13 @@ import { useWorkspaceStore } from "@/stores/workspace";
 import { useRpc } from "@/composables/useRpc";
 import { useProjectIcons } from "@/composables/useProjectIcons";
 import { listen, type UnlistenFn } from "@/platform";
-import { partitionSessions, type SessionRow as SessionRowModel } from "@/lib/sessionsView";
+import {
+  classifyListChange,
+  partitionSessions,
+  type ListSnapshotEntry,
+  type SessionRow as SessionRowModel,
+} from "@/lib/sessionsView";
+import { useSessionListTransition } from "@/composables/useSessionListTransition";
 import { sortSessionCards, type CardSortInputs } from "@/lib/sessionSort";
 import SessionCard from "./SessionCard.vue";
 import { Button } from "@/components/ui/button";
@@ -79,12 +85,22 @@ const sortInputs = computed<CardSortInputs>(() => ({
 const liveCards = shallowRef<SessionRowModel[]>([]);
 const archivedCards = shallowRef<SessionRowModel[]>([]);
 const archivedOpen = ref(false);
-const archiveHeightAnimating = ref(false);
-let archiveHeightTimer: ReturnType<typeof setTimeout> | undefined;
 const sessionsScrollRef = ref<HTMLElement | null>(null);
 type SessionListItem =
   | { kind: "session"; key: string; row: SessionRowModel }
   | { kind: "archive-header"; key: "archive-header" };
+
+const { commit } = useSessionListTransition(sessionsScrollRef);
+
+function setArchivedOpen(open: boolean): void {
+  commit("toggle", () => { archivedOpen.value = open; });
+}
+
+/** Stable per-tab name so the live→archived shape change is captured as one
+ *  morphing element rather than a remove plus an insert. */
+function vtName(item: SessionListItem): string {
+  return item.kind === "archive-header" ? "session-archive-header" : `session-${item.row.tab.id}`;
+}
 
 const sessionListItems = computed<SessionListItem[]>(() => {
   const items: SessionListItem[] = liveCards.value.map((row) => ({
@@ -134,28 +150,58 @@ function measureSessionRow(element: unknown): void {
   if (element instanceof Element) sessionVirtualizer.value.measureElement(element);
 }
 
-watch(archivedOpen, () => {
-  archiveHeightAnimating.value = true;
-  if (archiveHeightTimer) clearTimeout(archiveHeightTimer);
-  archiveHeightTimer = setTimeout(() => {
-    archiveHeightAnimating.value = false;
-    archiveHeightTimer = undefined;
-  }, 200);
-});
+// Duplicate view-transition-names abort the whole transition silently.
+// partitionSessions makes that impossible today; this surfaces a future
+// regression as a warning rather than as mysteriously dead animation.
+if (import.meta.env.DEV) {
+  watch(virtualSessionRows, (entries) => {
+    const names = entries.map((entry) => vtName(entry.item));
+    if (new Set(names).size !== names.length)
+      console.warn("[SessionsSidebar] duplicate view-transition-name, animation will abort", names);
+  });
+}
 
-function recomputeCards() {
+function nextCards(): { live: SessionRowModel[]; archived: SessionRowModel[] } {
   let rows = store.sessionsList("all");
   if (activeChip.value !== "all")
     rows = rows.filter((r) => rootOf(r.directory).id === activeChip.value);
   const { live, archived } = partitionSessions(rows);
-  liveCards.value = sortSessionCards(live, sortInputs.value);
-  archivedCards.value = archived
-    .map((row, index) => ({ row, index }))
-    .sort((a, b) => {
-      const archivedAtDiff = (b.row.tab.archivedAt ?? 0) - (a.row.tab.archivedAt ?? 0);
-      return archivedAtDiff || a.index - b.index;
-    })
-    .map(({ row }) => row);
+  return {
+    live: sortSessionCards(live, sortInputs.value),
+    archived: archived
+      .map((row, index) => ({ row, index }))
+      .sort((a, b) => {
+        const archivedAtDiff = (b.row.tab.archivedAt ?? 0) - (a.row.tab.archivedAt ?? 0);
+        return archivedAtDiff || a.index - b.index;
+      })
+      .map(({ row }) => row),
+  };
+}
+
+function snapshotOf(
+  live: readonly SessionRowModel[],
+  archived: readonly SessionRowModel[],
+): ListSnapshotEntry[] {
+  return [
+    ...live.map((r) => ({ key: `session:${r.tab.id}`, archived: false })),
+    ...archived.map((r) => ({ key: `session:${r.tab.id}`, archived: true })),
+  ];
+}
+
+/** `animate: false` for workspace-filter changes — swapping nearly the whole
+ *  list reads as a page flash and adds latency to a frequent action. */
+function recomputeCards(animate = true) {
+  const next = nextCards();
+  const kind = animate
+    ? classifyListChange(
+        snapshotOf(liveCards.value, archivedCards.value),
+        snapshotOf(next.live, next.archived),
+      )
+    : null;
+  commit(kind, () => {
+    liveCards.value = next.live;
+    archivedCards.value = next.archived;
+  });
 }
 
 watch(
@@ -163,11 +209,11 @@ watch(
     () => store.activityVersion,
     () => store.directories,
     () => store.terminalTabsByDirectory,
-    activeChip,
   ],
-  recomputeCards,
+  () => recomputeCards(),
   { immediate: true },
 );
+watch(activeChip, () => recomputeCards(false));
 
 // 30s relative-time tick, paused while the document is hidden (perf guardrail).
 const now = ref(Date.now());
@@ -232,7 +278,6 @@ onMounted(async () => {
   });
 });
 onUnmounted(() => {
-  if (archiveHeightTimer) clearTimeout(archiveHeightTimer);
   stopNowTimer();
   document.removeEventListener("visibilitychange", onVisibility);
   unlistenGit?.();
@@ -304,17 +349,14 @@ watch(() => store.directories.map((d) => d.id).join(","), () => {
     </ButtonGroup>
 
     <!-- Unified virtual session list -->
-    <Collapsible v-model:open="archivedOpen" class="contents">
-      <div ref="sessionsScrollRef" class="min-h-0 flex-1 overflow-y-auto pb-3 pt-1 [scrollbar-gutter:stable]">
+    <Collapsible :open="archivedOpen" class="contents" @update:open="setArchivedOpen">
+      <div ref="sessionsScrollRef" class="min-h-0 flex-1 overflow-y-auto pb-3 pt-1 [scrollbar-gutter:stable] [view-transition-scope:all]">
         <div v-if="sessionListItems.length === 0 && rootDirs.length" class="flex h-24 items-center justify-center px-4 text-center text-xs text-muted-foreground">
           No sessions — press ⌘T
         </div>
         <div
           v-else
-          class="relative w-full overflow-hidden motion-reduce:transition-none"
-          :class="archiveHeightAnimating
-            ? 'transition-[height] duration-200 ease-[cubic-bezier(0.2,0,0,1)]'
-            : ''"
+          class="relative w-full overflow-hidden"
           :style="{ height: `${sessionVirtualizer.getTotalSize()}px` }"
         >
           <div
@@ -322,8 +364,12 @@ watch(() => store.directories.map((d) => d.id).join(","), () => {
             :key="entry.item.key"
             :ref="measureSessionRow"
             :data-index="entry.virtualRow.index"
+            :data-vt-name="vtName(entry.item)"
             class="absolute left-0 top-0 flow-root w-full"
-            :style="{ transform: `translateY(${entry.virtualRow.start}px)` }"
+            :style="{
+              transform: `translateY(${entry.virtualRow.start}px)`,
+              'view-transition-name': vtName(entry.item),
+            }"
           >
             <SessionCard
               v-if="entry.item.kind === 'session'"
