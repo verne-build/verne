@@ -92,26 +92,39 @@ type SessionListItem =
 
 const { commit } = useSessionListAnimation(sessionsScrollRef);
 
-function setArchivedOpen(open: boolean): void {
-  commit("toggle", () => { archivedOpen.value = open; });
-}
-
-const sessionListItems = computed<SessionListItem[]>(() => {
-  const items: SessionListItem[] = liveCards.value.map((row) => ({
+/** Shared by the render computed and by `commit`, which needs the *next*
+ *  rendered keys to work out which rows are about to leave. */
+function buildSessionListItems(
+  live: readonly SessionRowModel[],
+  archived: readonly SessionRowModel[],
+  open: boolean,
+): SessionListItem[] {
+  const items: SessionListItem[] = live.map((row) => ({
     kind: "session",
     key: `session:${row.tab.id}`,
     row,
   }));
-  if (!archivedCards.value.length) return items;
+  if (!archived.length) return items;
   items.push({ kind: "archive-header", key: "archive-header" });
-  if (archivedOpen.value) {
-    items.push(...archivedCards.value.map((row) => ({
+  if (open) {
+    items.push(...archived.map((row) => ({
       kind: "session" as const,
       key: `session:${row.tab.id}`,
       row,
     })));
   }
   return items;
+}
+
+const keysOf = (items: readonly SessionListItem[]) => new Set(items.map((i) => i.key));
+
+function setArchivedOpen(open: boolean): void {
+  const surviving = keysOf(buildSessionListItems(liveCards.value, archivedCards.value, open));
+  commit("toggle", () => { archivedOpen.value = open; }, surviving);
+}
+
+const sessionListItems = computed<SessionListItem[]>(() => {
+  return buildSessionListItems(liveCards.value, archivedCards.value, archivedOpen.value);
 });
 
 const LIVE_ROW_ESTIMATE = 68;
@@ -181,10 +194,13 @@ function recomputeCards(animate = true) {
         snapshotOf(next.live, next.archived),
       )
     : null;
+  const surviving = keysOf(
+    buildSessionListItems(next.live, next.archived, archivedOpen.value),
+  );
   commit(kind, () => {
     liveCards.value = next.live;
     archivedCards.value = next.archived;
-  });
+  }, surviving);
 }
 
 watch(
@@ -348,7 +364,7 @@ watch(() => store.directories.map((d) => d.id).join(","), () => {
             :key="entry.item.key"
             :ref="measureSessionRow"
             :data-index="entry.virtualRow.index"
-            data-session-row
+            :data-session-row="entry.item.key"
             class="absolute left-0 top-0 flow-root w-full"
             :style="{ transform: `translateY(${entry.virtualRow.start}px)` }"
           >
