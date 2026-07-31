@@ -10,6 +10,7 @@ import { checkDaemonStale } from "./native/daemon-version";
 import { registerAssetSchemePrivilege, handleAssetProtocol } from "./asset-protocol";
 import { registerWindowCommands } from "./native/window-cmds";
 import { registerDialogCommands } from "./native/dialog-cmds";
+import { dialogIcon, preloadDialogIcon } from "./native/dialog-icon";
 import { registerShellCommands } from "./native/shell-cmds";
 import { registerMenuCommands } from "./native/menu-cmds";
 import { registerBrowserCommands } from "./native/browser";
@@ -116,6 +117,7 @@ async function confirmAndRestartDaemon(): Promise<void> {
   if (!daemon || !win) return;
   const { response } = await dialog.showMessageBox(win, {
     type: "warning",
+    icon: dialogIcon(), // preloaded — stops the icon fading in a beat late
     buttons: ["Cancel", "Restart"],
     defaultId: 1,
     cancelId: 0,
@@ -347,6 +349,7 @@ function registerTabOrchestration(d: DaemonClient, s: DaemonClient): void {
 
 app.whenReady().then(async () => {
   handleAssetProtocol();
+  preloadDialogIcon(); // before any dialog can be shown — see dialog-icon.ts
 
   // Register all native command handlers before the router can route an invoke.
   registerWindowCommands();
