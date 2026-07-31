@@ -312,7 +312,9 @@ onUnmounted(() => {
 
 <template>
   <div ref="root" data-session-picker tabindex="-1" class="@container flex h-full min-h-0 items-center justify-center outline-none" @keydown.esc.stop="onEscape">
-    <div class="w-full max-w-4xl p-5 @2xl:p-8">
+    <!-- Padding stays fixed: a stepped inset on a query container makes the card's
+         width jump *up* as the pane narrows, so downstream thresholds flip twice. -->
+    <div class="w-full max-w-4xl p-5">
       <h2 id="new-session-picker-title" class="mb-3 flex flex-wrap items-center gap-1 text-xl font-semibold tracking-tight text-foreground">
         <span>Start New Session In</span>
         <DropdownMenu>

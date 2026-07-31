@@ -78,8 +78,8 @@ onMounted(() => {
       </Button>
     </header>
 
-    <div class="@container min-h-0 flex-1 overflow-y-auto">
-      <div class="mx-auto flex min-h-full w-full max-w-sm items-center p-4 @sm:p-5">
+    <div class="min-h-0 flex-1 overflow-y-auto">
+      <div class="mx-auto flex min-h-full w-full max-w-sm items-center p-4">
         <div class="w-full">
           <SessionLaunchControls :busy="launching" @start="launch" />
           <Alert v-if="launchError" variant="destructive" aria-atomic="true" class="mt-3">
