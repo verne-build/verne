@@ -5,7 +5,9 @@ import {
   ChevronDown,
   CircleAlert,
   Cloud,
+  FolderGit2,
   GitBranch as GitBranchIcon,
+  GitFork,
   Search,
 } from "@lucide/vue";
 import { useWorkspaceStore } from "@/stores/workspace";
@@ -330,7 +332,7 @@ onUnmounted(() => {
         </DropdownMenu>
       </h2>
       <section aria-labelledby="new-session-picker-title" :aria-busy="busy" class="w-full max-w-4xl rounded-xl border bg-card shadow-sm">
-        <div class="p-5">
+        <div class="px-5 py-4">
           <SessionLaunchControls
             :busy="launching"
             :disabled="!canStart"
@@ -338,13 +340,14 @@ onUnmounted(() => {
           />
         </div>
 
-        <div class="flex flex-col gap-2 border-t px-5 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+        <div class="flex flex-col gap-2 border-t px-5 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
           <DropdownMenu>
             <DropdownMenuTrigger as-child>
-              <Button type="button" variant="ghost" class="min-h-10 justify-start px-2" :disabled="launching" aria-label="Select Checkout Mode">
-                <GitBranchIcon aria-hidden="true" class="size-4 text-muted-foreground" />
+              <Button type="button" variant="ghost" class="h-8 -ms-2 justify-start px-2" :disabled="launching" aria-label="Select Checkout Mode">
+                <GitFork v-if="checkoutMode === 'worktree'" aria-hidden="true" class="size-4 text-muted-foreground" />
+                <FolderGit2 v-else aria-hidden="true" class="size-4 text-muted-foreground" />
                 {{ checkoutModeLabel }}
-                <ChevronDown aria-hidden="true" class="size-4 text-muted-foreground" />
+                <ChevronDown aria-hidden="true" class="size-3.5 text-muted-foreground" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start">
@@ -362,11 +365,11 @@ onUnmounted(() => {
 
           <DropdownMenu :open="branchMenuOpen" @update:open="setBranchMenuOpen">
             <DropdownMenuTrigger as-child>
-              <Button type="button" variant="ghost" class="min-h-10 min-w-0 justify-start px-2 sm:justify-end" :disabled="launching || loadingBranches || !branches.length" aria-label="Select Branch">
+              <Button type="button" variant="ghost" class="h-8 -me-2 min-w-0 justify-start px-2 sm:justify-end" :disabled="launching || loadingBranches || !branches.length" aria-label="Select Branch">
                 <GitBranchIcon aria-hidden="true" class="size-4 text-muted-foreground" />
                 <span class="text-muted-foreground">{{ branchLabel }}</span>
                 <span class="truncate font-medium">{{ selectedBranch?.name ?? "Loading" }}</span>
-                <ChevronDown aria-hidden="true" class="size-4 text-muted-foreground" />
+                <ChevronDown aria-hidden="true" class="size-3.5 text-muted-foreground" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" class="min-w-56 p-0">
