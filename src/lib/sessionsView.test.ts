@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildSessionsList, partitionSessions, type SessionRow } from "./sessionsView";
+import { buildSessionsList, classifyListChange, partitionSessions, type SessionRow } from "./sessionsView";
 import type { Tab, TabUpdatedEvent, WorkingDirectory } from "@/types";
 
 const dir = (id: string): WorkingDirectory => ({ id, path: `/p/${id}`, name: id }) as WorkingDirectory;
@@ -51,5 +51,48 @@ describe("partitionSessions", () => {
 
   it("empty input yields empty buckets", () => {
     expect(partitionSessions([])).toEqual({ live: [], archived: [] });
+  });
+});
+
+describe("classifyListChange", () => {
+  const live = (key: string) => ({ key, archived: false });
+  const gone = (key: string) => ({ key, archived: true });
+
+  it("returns null when nothing changed", () => {
+    expect(classifyListChange([live("a"), live("b")], [live("a"), live("b")])).toBeNull();
+  });
+
+  it("returns null for a re-order only", () => {
+    expect(classifyListChange([live("a"), live("b")], [live("b"), live("a")])).toBeNull();
+  });
+
+  it("returns archive when a key flips to archived", () => {
+    expect(classifyListChange([live("a"), live("b")], [live("b"), gone("a")])).toBe("archive");
+  });
+
+  it("returns unarchive when a key flips back to live", () => {
+    expect(classifyListChange([gone("a"), live("b")], [live("a"), live("b")])).toBe("unarchive");
+  });
+
+  it("returns enter when a key is added", () => {
+    expect(classifyListChange([live("a")], [live("a"), live("b")])).toBe("enter");
+  });
+
+  it("returns exit when a key is removed", () => {
+    expect(classifyListChange([live("a"), live("b")], [live("a")])).toBe("exit");
+  });
+
+  it("prefers archive over unarchive, enter and exit in a mixed batch", () => {
+    const before = [live("a"), gone("b"), live("c")];
+    const after = [gone("a"), live("b"), live("d")];
+    expect(classifyListChange(before, after)).toBe("archive");
+  });
+
+  it("prefers enter over exit when both happen", () => {
+    expect(classifyListChange([live("a")], [live("b")])).toBe("enter");
+  });
+
+  it("treats empty→empty as null", () => {
+    expect(classifyListChange([], [])).toBeNull();
   });
 });

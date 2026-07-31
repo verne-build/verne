@@ -22,6 +22,42 @@ export function partitionSessions(
   return { live, archived };
 }
 
+export type ListChangeKind = "archive" | "unarchive" | "enter" | "exit" | null;
+
+export interface ListSnapshotEntry {
+  key: string;
+  archived: boolean;
+}
+
+/** Classify a session-list recompute so the sidebar knows whether it is worth
+ *  opening a view transition, and which motion to use. Re-orders return null:
+ *  `activityVersion` ticks constantly, and snapshotting on every tick would be
+ *  a severe perf regression. Precedence when several apply in one batch:
+ *  archive > unarchive > enter > exit. */
+export function classifyListChange(
+  before: readonly ListSnapshotEntry[],
+  after: readonly ListSnapshotEntry[],
+): ListChangeKind {
+  const beforeMap = new Map(before.map((e) => [e.key, e.archived]));
+  const afterMap = new Map(after.map((e) => [e.key, e.archived]));
+  let archived = false;
+  let unarchived = false;
+  let exited = false;
+  for (const [key, wasArchived] of beforeMap) {
+    const isArchived = afterMap.get(key);
+    if (isArchived === undefined) exited = true;
+    else if (!wasArchived && isArchived) archived = true;
+    else if (wasArchived && !isArchived) unarchived = true;
+  }
+  let entered = false;
+  for (const key of afterMap.keys()) if (!beforeMap.has(key)) entered = true;
+  if (archived) return "archive";
+  if (unarchived) return "unarchive";
+  if (entered) return "enter";
+  if (exited) return "exit";
+  return null;
+}
+
 export function buildSessionsList(
   directories: readonly WorkingDirectory[],
   tabsByDirectory: Record<string, Tab[]>,
