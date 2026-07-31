@@ -119,8 +119,8 @@ async function confirmAndRestartDaemon(): Promise<void> {
     buttons: ["Cancel", "Restart"],
     defaultId: 1,
     cancelId: 0,
-    message: "Restart Daemon?",
-    detail: "Running terminal sessions will end.",
+    message: "Restart Verne's background service?",
+    detail: "Your open terminals will close.",
   });
   if (response !== 1) return;
   // Cover the window immediately: the daemon is gone for a few seconds, so

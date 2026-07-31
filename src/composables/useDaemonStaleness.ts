@@ -7,14 +7,15 @@ const TOAST_ID = "daemon-stale";
 
 export function staleToast(): { title: string; opts: Record<string, unknown> } {
   return {
-    title: "Daemon update pending",
+    // No "daemon" in user-facing copy — most users never learn Verne runs one.
+    title: "Finish updating Verne",
     opts: {
       id: TOAST_ID,
-      description: "Restart to pick up the new background service. Terminal sessions will end.",
+      description: "Part of the last update needs a quick restart. Your open terminals will close.",
       duration: Infinity,
       closeButton: true,
       action: {
-        label: "Restart Daemon",
+        label: "Restart Now",
         onClick: () => void invoke("daemon_restart_confirm"),
       },
     },

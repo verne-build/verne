@@ -5,7 +5,7 @@ describe("staleToast", () => {
   it("names the restart action", () => {
     const { opts } = staleToast();
     const action = opts.action as { label: string };
-    expect(action.label).toBe("Restart Daemon");
+    expect(action.label).toBe("Restart Now");
   });
 
   it("persists until acted on and stays dismissible", () => {
@@ -18,7 +18,13 @@ describe("staleToast", () => {
     expect(staleToast().opts.id).toBe(staleToast().opts.id);
   });
 
-  it("warns that sessions will end", () => {
-    expect(String(staleToast().opts.description)).toMatch(/sessions will end/i);
+  it("warns that open terminals close", () => {
+    expect(String(staleToast().opts.description)).toMatch(/terminals will close/i);
+  });
+
+  // The whole point of the rewrite — internal vocabulary must not leak here.
+  it("keeps daemon jargon out of user-facing copy", () => {
+    const { title, opts } = staleToast();
+    expect(`${title} ${opts.description}`).not.toMatch(/daemon/i);
   });
 });
