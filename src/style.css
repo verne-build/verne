@@ -50,21 +50,8 @@ button, a, input, select, textarea,
   }
 }
 
-.app-window-surface,
-.macos-vibrancy-sidebar {
+.app-window-surface {
   background: var(--sidebar);
-}
-
-@media (prefers-reduced-transparency: no-preference) {
-  html.macos-vibrancy,
-  html.macos-vibrancy body,
-  html.macos-vibrancy .app-window-surface {
-    background: transparent;
-  }
-
-  html.macos-vibrancy .macos-vibrancy-sidebar {
-    background: color-mix(in srgb, var(--sidebar) 70%, transparent);
-  }
 }
 
 /* Instantly hide tooltips during scroll */

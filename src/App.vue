@@ -846,7 +846,7 @@ onUnmounted(() => {
           :min-size="LEFT_PANEL_MIN_PX"
           :max-size="LEFT_PANEL_MAX_PX"
           size-unit="px"
-          class="macos-vibrancy-sidebar"
+          class="bg-sidebar"
         >
           <div class="h-full flex flex-col">
             <!-- Traffic light spacer + drag region + New Session.
