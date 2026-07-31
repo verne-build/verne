@@ -98,6 +98,9 @@ let daemon: DaemonClient | null = null;
 let sidecar: DaemonClient | null = null;
 // notify.sh path written on startup; used to uninstall hooks on before-quit.
 let notifyScriptPath: string | null = null;
+// Pull-path mirror of menu.ts's badge state — renderer may mount after the
+// startup daemon-stale check already fired, so it needs to ask on mount too.
+let daemonStale = false;
 // CDP browser-automation bridge: registry of attached tab sessions + the TCP
 // control server the `verne mcp` process talks to.
 const browserRegistry = new BrowserRegistry();
@@ -127,6 +130,9 @@ async function confirmAndRestartDaemon(): Promise<void> {
   }
   try {
     await restartDaemon(daemon);
+    // Fresh daemon is current — clear stale flag/badge before reload.
+    daemonStale = false;
+    setDaemonStale(false);
     // Reload the renderer so it reconnects to the fresh daemon (new ws bridge,
     // empty session set) — without this the window stays bound to the old daemon's
     // now-dead connections and shows stale/disconnected terminals. The reload also
@@ -148,6 +154,9 @@ function registerExtraNatives(): void {
   // The toast's "Restart Daemon" action needs a renderer-reachable path to the
   // same confirm flow the menu item uses.
   registerNative("daemon_restart_confirm", () => confirmAndRestartDaemon());
+  // Pull path for the toast: renderer asks on mount in case the startup push
+  // (daemon-event "daemon-stale") fired before it was listening.
+  registerNative("daemon_stale_state", () => daemonStale);
   registerNative("get_resource_path", (p: { name?: string }) => {
     const name = p.name ?? "";
     if (!/^[\w.-]+$/.test(name)) throw new Error("invalid_resource_name");
@@ -399,6 +408,7 @@ app.whenReady().then(async () => {
   void checkDaemonStale(d0)
     .then((verdict) => {
       if (verdict !== "stale") return;
+      daemonStale = true;
       setDaemonStale(true);
       if (win && !win.isDestroyed()) {
         win.webContents.send("daemon-event", "daemon-stale", {});
