@@ -28,12 +28,10 @@ mod tests {
     use crate::services::agent_status::HookAuthority;
 
     #[test]
-    fn copilot_is_full_lifecycle() {
-        assert_eq!(hook_authority("copilot"), HookAuthority::FullLifecycle);
-    }
-
-    #[test]
-    fn cursor_is_identity_only() {
+    fn hook_authority_follows_active_registry() {
+        for key in ["claude", "codex", "antigravity", "opencode", "pi"] {
+            assert_eq!(hook_authority(key), HookAuthority::FullLifecycle, "{key}");
+        }
         assert_eq!(hook_authority("cursor"), HookAuthority::IdentityOnly);
     }
 

@@ -389,16 +389,6 @@ fn clean_tab_title(raw: &str) -> Option<String> {
     }
 }
 
-/// Detect Copilot CLI permission prompt in PTY output.
-/// All Copilot approval prompts render a footer with "to navigate" + "to select".
-fn is_permission_prompt(data: &[u8]) -> bool {
-    if let Ok(text) = std::str::from_utf8(data) {
-        text.contains("to navigate") && text.contains("to select")
-    } else {
-        false
-    }
-}
-
 #[allow(dead_code)]
 pub struct Session {
     pub id: String,
@@ -923,7 +913,7 @@ pub fn create_session(
     on_osc_notification: impl Fn(String) + Send + 'static,
     on_title: impl Fn(String) + Send + 'static,
     on_working: impl Fn(bool) + Send + 'static,
-    on_attention: impl Fn() + Send + 'static,
+    _on_attention: impl Fn() + Send + 'static,
     on_resume_working: Arc<dyn Fn() + Send + Sync>,
     on_exit: impl Fn() + Send + 'static,
 ) -> Result<(String, Session), String> {
@@ -1037,11 +1027,8 @@ pub fn create_session(
 
     let damage = Arc::new(DamageSignal::new());
     spawn_grid_coalescer(&emulator, grid_tx, damage.clone());
-    // OSC 0 / permission-prompt detection runs unconditionally now: tabs
-    // always spawn the user's shell, but a `claude`/`codex`/`copilot` run inside
-    // that shell still emits the same OSC 0 title or permission prompt. Cheap
-    // substring scans; only Claude's ✳ title and Copilot's `to navigate`/`to
-    // select` footer match.
+    // OSC 0 title detection runs unconditionally: tabs always spawn the user's
+    // shell, but agents launched inside it still emit title changes.
 
     // Reader thread — forward PTY output to broadcast + scrollback buffer.
     // Batching happens on the frontend (useTerminal.ts) to coalesce xterm renders.
@@ -1087,9 +1074,6 @@ pub fn create_session(
                                 on_title(name);
                             }
                         }
-                    } else if is_permission_prompt(&data) {
-                        // Copilot permission prompt — attention signal
-                        on_attention();
                     } else if data.len() > 20 {
                         saw_activity = true;
                     }

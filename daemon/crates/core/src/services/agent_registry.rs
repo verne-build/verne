@@ -20,109 +20,23 @@ pub struct AgentDefinition {
     pub hooks: HookIntegration,
 }
 
+const fn agent(
+    key: &'static str,
+    binary_names: &'static [&'static str],
+    screen_markers: &'static [&'static str],
+    hooks: HookIntegration,
+) -> AgentDefinition {
+    AgentDefinition { key, binary_names, screen_markers, hooks }
+}
+
 pub const AGENTS: &[AgentDefinition] = &[
-    AgentDefinition {
-        key: "claude",
-        binary_names: &["claude", "claude-code"],
-        screen_markers: &["claude code", "claude max"],
-        hooks: HookIntegration::FullLifecycle,
-    },
-    AgentDefinition {
-        key: "codex",
-        binary_names: &["codex", "codex-rs", "codex-tui", "codex-cli"],
-        screen_markers: &["openai codex", "codex cli", ">_ codex", "openai/codex"],
-        hooks: HookIntegration::FullLifecycle,
-    },
-    AgentDefinition {
-        key: "copilot",
-        binary_names: &["copilot", "github-copilot"],
-        screen_markers: &["github copilot"],
-        hooks: HookIntegration::FullLifecycle,
-    },
-    AgentDefinition {
-        key: "antigravity",
-        binary_names: &["agy", "antigravity", "antigravity-cli"],
-        screen_markers: &["antigravity"],
-        hooks: HookIntegration::FullLifecycle,
-    },
-    AgentDefinition {
-        key: "amp",
-        binary_names: &["amp", "amp-local"],
-        screen_markers: &[],
-        hooks: HookIntegration::None,
-    },
-    AgentDefinition {
-        key: "cline",
-        binary_names: &["cline"],
-        screen_markers: &["[act mode]", "[plan mode]"],
-        hooks: HookIntegration::None,
-    },
-    AgentDefinition {
-        key: "cursor",
-        binary_names: &["cursor", "cursor-agent", "agent"],
-        screen_markers: &["cursor agent", "cursor-agent"],
-        hooks: HookIntegration::Identity,
-    },
-    AgentDefinition {
-        key: "droid",
-        binary_names: &["droid"],
-        screen_markers: &[],
-        hooks: HookIntegration::None,
-    },
-    AgentDefinition {
-        key: "gemini",
-        binary_names: &["gemini"],
-        screen_markers: &["gemini cli"],
-        hooks: HookIntegration::None,
-    },
-    AgentDefinition {
-        key: "grok",
-        binary_names: &["grok", "grok-build"],
-        screen_markers: &["grok build", "grok cli"],
-        hooks: HookIntegration::None,
-    },
-    AgentDefinition {
-        key: "hermes",
-        binary_names: &["hermes", "hermes-agent"],
-        screen_markers: &["hermes agent"],
-        hooks: HookIntegration::None,
-    },
-    AgentDefinition {
-        key: "kilo",
-        binary_names: &["kilo", "kilo-code"],
-        screen_markers: &["kilo code"],
-        hooks: HookIntegration::None,
-    },
-    AgentDefinition {
-        key: "kimi",
-        binary_names: &["kimi", "kimi-code"],
-        screen_markers: &["kimi code"],
-        hooks: HookIntegration::None,
-    },
-    AgentDefinition {
-        key: "kiro",
-        binary_names: &["kiro", "kiro-cli"],
-        screen_markers: &["kiro cli", "kiro is working"],
-        hooks: HookIntegration::None,
-    },
-    AgentDefinition {
-        key: "opencode",
-        binary_names: &["opencode", "open-code"],
-        screen_markers: &["opencode"],
-        hooks: HookIntegration::FullLifecycle,
-    },
-    AgentDefinition {
-        key: "pi",
-        binary_names: &["pi"],
-        screen_markers: &[],
-        hooks: HookIntegration::FullLifecycle,
-    },
-    AgentDefinition {
-        key: "qodercli",
-        binary_names: &["qodercli", "qoderclicn", "qoder", "qodercn"],
-        screen_markers: &["qoder cli", "qodercli"],
-        hooks: HookIntegration::None,
-    },
+    agent("claude", &["claude", "claude-code"], &["claude code", "claude max"], HookIntegration::FullLifecycle),
+    agent("codex", &["codex", "codex-rs", "codex-tui", "codex-cli"], &["openai codex", "codex cli", ">_ codex", "openai/codex"], HookIntegration::FullLifecycle),
+    agent("antigravity", &["agy", "antigravity", "antigravity-cli"], &["antigravity"], HookIntegration::FullLifecycle),
+    agent("cursor", &["cursor", "cursor-agent", "agent"], &["cursor agent", "cursor-agent"], HookIntegration::Identity),
+    agent("grok", &["grok", "grok-build"], &["grok build", "grok cli"], HookIntegration::None),
+    agent("opencode", &["opencode", "open-code"], &["opencode"], HookIntegration::FullLifecycle),
+    agent("pi", &["pi"], &[], HookIntegration::FullLifecycle),
 ];
 
 pub fn get(key: &str) -> Option<&'static AgentDefinition> {
@@ -173,6 +87,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn active_registry_is_the_approved_seven_in_order() {
+        assert_eq!(
+            AGENTS.iter().map(|agent| agent.key).collect::<Vec<_>>(),
+            ["claude", "codex", "antigravity", "cursor", "grok", "opencode", "pi"]
+        );
+    }
+
+    #[test]
+    fn removed_agents_do_not_resolve() {
+        for key in [
+            "amp", "cline", "copilot", "droid", "gemini", "hermes", "kilo", "kimi", "kiro",
+            "qodercli",
+        ] {
+            assert!(get(key).is_none(), "{key}");
+            assert!(identify_token(key).is_none(), "{key}");
+        }
+    }
+
+    #[test]
     fn keys_and_binary_aliases_are_unique() {
         let mut keys = HashSet::new();
         let mut binaries = HashSet::new();
@@ -195,17 +128,12 @@ mod tests {
             assert_eq!(get(key).map(|a| a.hooks), Some(want), "{key}");
         };
         // FullLifecycle: reliable start+stop lifecycle hooks/plugins installed.
-        for k in ["claude", "codex", "copilot", "antigravity", "opencode", "pi"] {
+        for k in ["claude", "codex", "antigravity", "opencode", "pi"] {
             expect(k, FullLifecycle);
         }
         // Identity: hooks installed but partial lifecycle (cursor: shell-exec only).
         expect("cursor", Identity);
-        // None: no hook/plugin integration.
-        for k in [
-            "amp", "cline", "droid", "gemini", "grok", "hermes", "kilo", "kimi", "kiro", "qodercli",
-        ] {
-            expect(k, None);
-        }
+        expect("grok", None);
     }
 
     #[test]
@@ -218,7 +146,7 @@ mod tests {
         installed.sort_unstable();
         assert_eq!(
             installed,
-            ["antigravity", "claude", "codex", "copilot", "cursor", "opencode", "pi"]
+            ["antigravity", "claude", "codex", "cursor", "opencode", "pi"]
         );
     }
 
@@ -226,7 +154,7 @@ mod tests {
     fn detect_is_uniform_via_manifest() {
         use crate::services::detect::AgentState;
         assert_eq!(
-            detect("droid", "EXECUTE\n> Yes, allow\nEnter to select").state,
+            detect("antigravity", "Requesting permission for: read file\nDo you want to proceed?\n> Yes\n> No").state,
             AgentState::Blocked
         );
         assert_eq!(detect("totally-unknown", "$ ").state, AgentState::Idle);
@@ -234,12 +162,11 @@ mod tests {
 
     #[test]
     fn detection_does_not_depend_on_provider() {
-        // claude and gemini both detect a blocked generic prompt purely from
-        // their manifests, proving the detection path is uniform across agents.
+        // Independent agent manifests detect their own blocked prompts.
         use crate::services::detect::AgentState;
         let blocked = "─────\nDo you want to proceed?\n❯ 1. Yes\n  2. No\nesc to cancel";
         assert_eq!(detect("claude", blocked).state, AgentState::Blocked);
-        assert_eq!(detect("gemini", "│ Apply this change\n❯ Yes\nEsc to cancel").state, AgentState::Blocked);
+        assert_eq!(detect("opencode", "△ Permission required\nfor bash").state, AgentState::Blocked);
     }
 
     #[test]
@@ -247,10 +174,8 @@ mod tests {
         let id = |s| identify_screen(s).map(|a| a.key);
         assert_eq!(id("welcome to Claude Code v2"), Some("claude"));
         assert_eq!(id(">_ codex resume"), Some("codex"));
-        assert_eq!(id("GitHub Copilot CLI"), Some("copilot"));
-        assert_eq!(id("Gemini CLI ready"), Some("gemini"));
-        assert_eq!(id("[ACT MODE] cline"), Some("cline"));
         assert_eq!(id("cursor-agent v0.1"), Some("cursor"));
+        assert_eq!(id("grok build ready"), Some("grok"));
         assert_eq!(id("just a plain shell prompt $"), None);
     }
 

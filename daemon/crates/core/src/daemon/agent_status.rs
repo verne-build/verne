@@ -256,12 +256,11 @@ mod tests {
     }
 
     #[test]
-    fn identifies_extended_provider_registry() {
+    fn identifies_approved_provider_registry() {
         assert_eq!(identify_token("/usr/local/bin/opencode"), Some("opencode"));
         assert_eq!(identify_token("cursor-agent"), Some("cursor"));
         assert_eq!(identify_token("agy"), Some("antigravity"));
-        assert_eq!(identify_token("kimi-code"), Some("kimi"));
-        assert_eq!(identify_token("hermes-agent"), Some("hermes"));
-        assert_eq!(identify_token("qoderclicn"), Some("qodercli"));
+        assert_eq!(identify_token("codex-cli"), Some("codex"));
+        assert_eq!(identify_token("grok-build"), Some("grok"));
     }
 }

@@ -13,7 +13,6 @@ pub fn extract_file_ops(
 ) -> Vec<FileOperation> {
     match agent_type {
         "codex" => codex(tool_name, tool_input),
-        "copilot" => copilot(tool_name, tool_input),
         _ => claude(tool_name, tool_input),
     }
 }
@@ -28,27 +27,6 @@ fn claude(tool_name: &str, tool_input: &serde_json::Value) -> Vec<FileOperation>
     };
     let file_path = tool_input
         .get("file_path")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    if file_path.is_empty() {
-        vec![]
-    } else {
-        vec![FileOperation { op, file_path }]
-    }
-}
-
-/// Copilot: lowercase tool names; path under `file_path` or `path`.
-fn copilot(tool_name: &str, tool_input: &serde_json::Value) -> Vec<FileOperation> {
-    let op = match tool_name {
-        "read" | "view" => FileOpType::Read,
-        "write" | "create" => FileOpType::Write,
-        "edit" => FileOpType::Edit,
-        _ => return vec![],
-    };
-    let file_path = tool_input
-        .get("file_path")
-        .or_else(|| tool_input.get("path"))
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
@@ -114,21 +92,6 @@ mod tests {
         let ops = extract_file_ops("opencode", "Read", &serde_json::json!({ "file_path": "/a" }));
         assert_eq!(ops.len(), 1);
         assert_eq!(ops[0].op, FileOpType::Read);
-    }
-
-    // --- copilot ---
-    #[test]
-    fn copilot_read_via_file_path_write_via_path_edit() {
-        assert_eq!(extract_file_ops("copilot", "read", &serde_json::json!({ "file_path": "/abs/x" }))[0].op, FileOpType::Read);
-        let w = extract_file_ops("copilot", "write", &serde_json::json!({ "path": "/abs/y" }));
-        assert_eq!(w[0].op, FileOpType::Write);
-        assert_eq!(w[0].file_path, "/abs/y");
-        assert_eq!(extract_file_ops("copilot", "edit", &serde_json::json!({ "file_path": "/abs/e" }))[0].op, FileOpType::Edit);
-    }
-
-    #[test]
-    fn copilot_ignores_unknown_tool() {
-        assert!(extract_file_ops("copilot", "foo", &serde_json::json!({ "file_path": "/abs/z" })).is_empty());
     }
 
     // --- codex ---

@@ -692,7 +692,7 @@ mod tests {
     #[test]
     fn agents_without_a_subagent_convention_are_never_filtered() {
         let payload = serde_json::json!({ "agent_id": "whatever" });
-        assert_eq!(hook_subagent_id("copilot", &payload), None);
+        assert_eq!(hook_subagent_id("grok", &payload), None);
     }
 
     #[test]
