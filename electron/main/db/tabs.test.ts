@@ -14,7 +14,6 @@ import {
   recordTabSession,
   clearStaleTabStates,
   updateTabPresentationSnapshot,
-  agentCount,
   tabDisplayLabels,
   defaultLabel,
   moveTabToDirectory,
@@ -225,16 +224,6 @@ describe("tabs", () => {
       tabId: "t1", agentType: "claude", agentState: "idle", sessionId: "s", displayTitle: null,
     });
     expect(getTab(db, "t1")!.displayTitle).toBe("Fix the uploader");
-  });
-
-  it("agentCount counts live agents, not every tab that ever ran one", () => {
-    const db = tmpDb();
-    insertTab(db, mkTab({ id: "live", lastAgentType: "claude", lastAgentState: "working" }));
-    // Exited: identity latched, state cleared. Must not inflate the metric.
-    insertTab(db, mkTab({ id: "exited", lastAgentType: "codex", lastAgentState: undefined }));
-    insertTab(db, mkTab({ id: "arch", lastAgentType: "codex", lastAgentState: "working" }));
-    setTabArchivedAt(db, "arch", 1);
-    expect(agentCount(db)).toBe(1);
   });
 
   it("recordTabSession inserts then ON CONFLICT updates last_seen_at", () => {

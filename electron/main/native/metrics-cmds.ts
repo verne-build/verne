@@ -6,15 +6,12 @@ import { promisify } from "node:util";
 import pidusage from "pidusage";
 import { registerNative } from "../ipc-router";
 import type { DaemonClient } from "../daemon-client";
-import { getDb } from "../db/connection";
-import { agentCount } from "../db/tabs";
 
 export interface AppMetric { cpu: number; memoryMB: number; }
 export interface PidStat { cpu: number; memoryMB: number; }
 export interface DaemonDiagnostics {
   daemonPid: number;
   tabChildPids: { tabId: string; label: string; pid: number }[];
-  agentCount: number;
   activeSessions: number; fileWatchers: number; directoryWatchers: number;
   gitWatchers: number; cachedFileIndexes: number; cachedFilePaths: number;
   sourceControlVisible: boolean;
@@ -26,11 +23,11 @@ interface RawDaemonDiag {
   activeSessions: number;
 }
 interface SidecarDiag {
-  sidecarPid: number; agentCount: number;
+  sidecarPid: number;
   fileWatchers: number; directoryWatchers: number; gitWatchers: number;
   cachedFileIndexes: number; cachedFilePaths: number; sourceControlVisible: boolean;
 }
-export interface ResourceUsage { cpu: number; ram: number; agentCount: number; tabCount: number; lspCount: number; }
+export interface ResourceUsage { cpu: number; ram: number; tabCount: number; lspCount: number; }
 
 /** Pure: combine Electron app-process metrics + externally-measured pid-tree
  *  stats into the renderer's ResourceUsage shape. CPU normalized by cores. */
@@ -44,7 +41,6 @@ export function aggregateUsage(o: {
   return {
     cpu: cpu / Math.max(1, o.numCores),
     ram,
-    agentCount: o.diag.agentCount,
     tabCount: o.diag.tabChildPids.length,
     lspCount: o.lspCount,
   };
@@ -175,8 +171,6 @@ async function fetchDiag(daemon: DaemonClient, sidecar: DaemonClient): Promise<D
     tabChildPids: d.tabChildPids,
     activeSessions: d.activeSessions,
     sidecarPid: s.sidecarPid,
-    // Electron owns the tabs DB now; the sidecar reports 0 — count here.
-    agentCount: agentCount(getDb()),
     fileWatchers: s.fileWatchers,
     directoryWatchers: s.directoryWatchers,
     gitWatchers: s.gitWatchers,

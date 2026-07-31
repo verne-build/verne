@@ -252,17 +252,3 @@ export function tabDisplayLabels(
 export function defaultLabel(existingCount: number): string {
   return String(existingCount + 1);
 }
-
-/** Count tabs with a LIVE agent. Resource monitor metric; Electron owns the tabs
- *  DB so it computes this (the sidecar no longer can). Keyed on
- *  `last_agent_state` rather than `last_agent_type`, because the type is now
- *  latched and would otherwise count every tab that ever ran an agent.
- *  Archived tabs keep their state column but have no running process. */
-export function agentCount(db: DatabaseSync): number {
-  const row = db
-    .prepare(
-      "SELECT COUNT(*) AS n FROM tabs WHERE last_agent_state IS NOT NULL AND archived_at IS NULL"
-    )
-    .get() as { n: number };
-  return row.n;
-}

@@ -239,7 +239,6 @@ export interface TreeEntry {
 export interface ResourceUsage {
   cpu: number;
   ram: number;
-  agentCount: number;
   tabCount: number;
   lspCount: number;
 }

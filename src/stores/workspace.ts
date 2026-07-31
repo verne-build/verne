@@ -1648,9 +1648,8 @@ export const useWorkspaceStore = defineStore("workspace", () => {
   }
 
   function agentsList(scope: "all" | "current"): { tab: Tab; directory: WorkingDirectory }[] {
-    // A LIVE agent has a live state, not merely a latched type (same re-keying as
-    // agentCount in db/tabs.ts) — otherwise every session that ever ran an agent
-    // shows up in the palette.
+    // A LIVE agent has a live state, not merely a latched type — otherwise every
+    // session that ever ran an agent shows up in the palette.
     return sessionsList(scope)
       .filter((r) =>
         r.tab.archivedAt == null

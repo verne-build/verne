@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { aggregateUsage, footprintToMB, agentPids, type AppMetric, type DaemonDiagnostics, type PidStat } from "./metrics-cmds";
 
 const diag: DaemonDiagnostics = {
-  daemonPid: 100, tabChildPids: [{ tabId: "t1", label: "zsh", pid: 200 }], agentCount: 2,
+  daemonPid: 100, tabChildPids: [{ tabId: "t1", label: "zsh", pid: 200 }],
   activeSessions: 1, fileWatchers: 2, directoryWatchers: 1, gitWatchers: 0,
   cachedFileIndexes: 1, cachedFilePaths: 50, sourceControlVisible: true,
 };
@@ -18,7 +18,6 @@ describe("aggregateUsage", () => {
     expect(usage.cpu).toBeCloseTo(10);   // (20+10+5+15)/5
     expect(usage.ram).toBeCloseTo(220);  // 100+50+30+40
     expect(usage.tabCount).toBe(1);
-    expect(usage.agentCount).toBe(2);
     expect(usage.lspCount).toBe(3);
   });
 });

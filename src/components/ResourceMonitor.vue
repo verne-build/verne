@@ -24,13 +24,26 @@ import { Button } from "./ui/button";
 import { Popover, PopoverTrigger, PopoverContent } from "./ui/popover";
 
 const store = useWorkspaceStore();
-const { fileTabs } = useFilePanelTabs(() => store.activeRoot);
-const editorTabCount = computed(() => fileTabs.value.length);
+const { allTabs } = useFilePanelTabs(() => store.activeRoot);
 
-// Sessions = terminal tabs (one per PTY). Groups are no longer counted.
-const tabCount = computed(() =>
-  Object.values(store.terminalTabsByDirectory).reduce((n, ts) => n + ts.length, 0),
+// Tabs = the file panel's file + browser tabs. The fixed rows (source control,
+// search, notes, …) are chrome, not open documents.
+const panelTabCount = computed(
+  () => allTabs.value.filter((t) => t.kind === "file" || t.kind === "browser").length,
 );
+
+// Sessions = live center sessions (what the sessions sidebar lists). Agents are
+// not a separate population — every agent runs in a session.
+const sessionCount = computed(
+  () => store.sessionsList("all").filter((r) => r.tab.archivedAt == null).length,
+);
+
+// Terminals = tabs living in a bottom panel surface, i.e. every terminal tab
+// that isn't a center session (sessionsList already drops bottom surfaces).
+const terminalCount = computed(() => {
+  const total = Object.values(store.terminalTabsByDirectory).reduce((n, ts) => n + ts.length, 0);
+  return Math.max(0, total - store.sessionsList("all").length);
+});
 
 const usage = ref<ResourceUsage | null>(null);
 const webglContexts = ref(0);
@@ -41,9 +54,11 @@ const mountedTerminalViews = ref(0);
 const terminalResizeObservers = ref(0);
 const isDev = import.meta.env.DEV;
 
-// Core rows (App/Daemon/LSP) carry no tabId; pane rows do.
+// Core rows (App/Daemon/LSP) carry no tabId; pane rows do. Heaviest first.
 const coreProcesses = computed(() =>
-  debugMetrics.value?.processBreakdown.filter((p) => !p.tabId) ?? []
+  (debugMetrics.value?.processBreakdown.filter((p) => !p.tabId) ?? [])
+    .slice()
+    .sort((a, b) => b.ram - a.ram)
 );
 
 interface PaneProcRow { label: string; ram: number; cpu: number }
@@ -74,7 +89,8 @@ const tabProcessGroups = computed<TabProcGroup[]>(() => {
     entry.cpu += p.cpu;
     entry.panes.push({ label: paneProcLabel(p), ram: p.ram, cpu: p.cpu });
   }
-  return order.map((k) => map.get(k)!);
+  for (const g of map.values()) g.panes.sort((a, b) => b.ram - a.ram);
+  return order.map((k) => map.get(k)!).sort((a, b) => b.ram - a.ram);
 });
 
 // Process rows we can predict from the store alone (no backend latency), used to
@@ -180,16 +196,21 @@ onUnmounted(() => {
         </div>
         <div class="flex items-center justify-between gap-2">
           <span class="text-muted-foreground flex items-center gap-1">
-            <Bot class="size-3" />Agents
+            <Bot class="size-3" />Sessions
           </span>
-          <span v-if="usage" class="tabular-nums">{{ usage.agentCount }}</span>
-          <span v-else class="block h-3 w-6 animate-pulse rounded bg-muted-foreground/20" />
+          <span class="tabular-nums">{{ sessionCount }}</span>
         </div>
         <div class="flex items-center justify-between gap-2">
           <span class="text-muted-foreground flex items-center gap-1">
-            <SquareTerminal class="size-3" />Tabs
+            <SquareTerminal class="size-3" />Terminals
           </span>
-          <span class="tabular-nums">{{ tabCount }}</span>
+          <span class="tabular-nums">{{ terminalCount }}</span>
+        </div>
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-muted-foreground flex items-center gap-1">
+            <FileText class="size-3" />Tabs
+          </span>
+          <span class="tabular-nums">{{ panelTabCount }}</span>
         </div>
         <div class="flex items-center justify-between gap-2">
           <span class="text-muted-foreground flex items-center gap-1">
@@ -197,12 +218,6 @@ onUnmounted(() => {
           </span>
           <span v-if="usage" class="tabular-nums">{{ usage.lspCount }}</span>
           <span v-else class="block h-3 w-6 animate-pulse rounded bg-muted-foreground/20" />
-        </div>
-        <div class="flex items-center justify-between gap-2">
-          <span class="text-muted-foreground flex items-center gap-1">
-            <FileText class="size-3" />Editors
-          </span>
-          <span class="tabular-nums">{{ editorTabCount }}</span>
         </div>
         <div class="flex items-center justify-between gap-2">
           <span class="text-muted-foreground flex items-center gap-1">
