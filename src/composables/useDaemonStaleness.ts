@@ -15,8 +15,14 @@ export function staleToast(): { title: string; opts: Record<string, unknown> } {
       duration: Infinity,
       closeButton: true,
       action: {
+        // preventDefault stops sonner auto-dismissing on click: the confirm
+        // dialog can still be cancelled, and a cancelled restart must leave the
+        // prompt standing. On confirm the renderer reloads, taking it with it.
         label: "Restart Now",
-        onClick: () => void invoke("daemon_restart_confirm"),
+        onClick: (e: Event) => {
+          e.preventDefault();
+          void invoke("daemon_restart_confirm");
+        },
       },
     },
   };
