@@ -63,7 +63,7 @@ import {
   writeNotifyScript,
   removeHooksForClaude,
   removeHooksForCodex,
-  removeHooksForCopilot,
+  removeOwnedCopilotHook,
   removeHooksForAntigravity,
   removeHooksForCursor,
 } from "./native/hook-writer";
@@ -71,6 +71,16 @@ import { removePluginForOpencode, removePluginForPi } from "./native/agent-plugi
 import { HOOK_INSTALLERS } from "./native/hook-install-registry";
 import { internalDataDir } from "./paths";
 import type { DaemonClient } from "./daemon-client";
+import type { AgentInventoryProbeItem } from "../../src/types/agentInventory";
+import { AgentInventoryService } from "./agent-inventory/service";
+import { readSnapshot, writeSnapshot } from "./agent-inventory/store";
+import { probeInstalledVersion, NODE_VERSION_DEPS } from "./agent-inventory/version";
+import { resolveLatestVersion, NODE_LATEST_DEPS } from "./agent-inventory/latest";
+import {
+  refreshInventoryAfterDaemonRestart,
+  registerAgentInventoryCommands,
+  startAgentInventoryAfterWindow,
+} from "./native/agent-inventory-cmds";
 
 // Privileged scheme registration MUST happen before app is ready.
 registerAssetSchemePrivilege();
@@ -96,6 +106,7 @@ if (!app.requestSingleInstanceLock()) app.quit();
 let win: BrowserWindow | null = null;
 let daemon: DaemonClient | null = null;
 let sidecar: DaemonClient | null = null;
+let agentInventory: AgentInventoryService | null = null;
 // notify.sh path written on startup; used to uninstall hooks on before-quit.
 let notifyScriptPath: string | null = null;
 // Pull-path mirror of menu.ts's badge state — renderer may mount after the
@@ -132,6 +143,7 @@ async function confirmAndRestartDaemon(): Promise<void> {
   }
   try {
     await restartDaemon(daemon);
+    refreshInventoryAfterDaemonRestart(agentInventory);
     // Fresh daemon is current — clear stale flag/badge before reload.
     daemonStale = false;
     setDaemonStale(false);
@@ -379,6 +391,21 @@ app.whenReady().then(async () => {
   daemon = await timed("ensureDaemon", () => ensureDaemon());
   sidecar = await timed("ensureSidecar", () => ensureSidecar());
   const d0 = daemon, s0 = sidecar;
+  const inventoryPath = join(internalDataDir, "agent-inventory.json");
+  agentInventory = new AgentInventoryService({
+    probe: () => d0.request<AgentInventoryProbeItem[]>("agent_inventory_probe", null),
+    probeVersion: (item) => probeInstalledVersion(item, NODE_VERSION_DEPS),
+    resolveLatest: (item) => resolveLatestVersion(item, NODE_LATEST_DEPS),
+    read: () => readSnapshot(inventoryPath, Date.now()),
+    write: (snapshot) => writeSnapshot(inventoryPath, snapshot),
+    emit: (snapshot) => {
+      if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+        win.webContents.send("daemon-event", "agent-inventory-changed", snapshot);
+      }
+    },
+    now: Date.now,
+  });
+  registerAgentInventoryCommands(agentInventory);
   // Sidecar events: best-effort (it's app-lifecycle, freshly spawned above).
   await timed("subscribeEvents:sidecar", () =>
     s0.subscribeEvents().catch((e) => console.error("[startup] sidecar event subscription failed:", e)),
@@ -488,7 +515,10 @@ app.whenReady().then(async () => {
   // Event forwarding is safe because win is assigned on the next line before any
   // async event can fire.
   installRouter(daemon, sidecar, getWindow);
-  win = createWindow(startupSettings.appearance);
+  win = startAgentInventoryAfterWindow(
+    () => createWindow(startupSettings.appearance),
+    agentInventory,
+  );
   console.log(`[main-startup] window created @+${since()}ms`);
 
   // Voice dictation: native sherpa-onnx STT + global-ish hotkey on the window.
@@ -530,6 +560,9 @@ app.whenReady().then(async () => {
   // ---- Deferred startup: nothing here gates first render. Runs AFTER the window
   // is up so its daemon/sidecar round-trips + git work don't delay first paint.
   void (async () => {
+    try { removeOwnedCopilotHook(); }
+    catch (e) { console.error("[hooks] remove owned copilot hook:", e); }
+
     // Reconcile persisted tab state against live PTYs: tabs the (persistent)
     // daemon still has running keep their agent state; the rest are cleared.
     try {
@@ -613,7 +646,6 @@ app.on("before-quit", () => {
   if (notifyScriptPath) {
     try { removeHooksForClaude(notifyScriptPath); } catch (e) { console.error("[hooks] remove claude:", e); }
     try { removeHooksForCodex(notifyScriptPath); } catch (e) { console.error("[hooks] remove codex:", e); }
-    try { removeHooksForCopilot(notifyScriptPath); } catch (e) { console.error("[hooks] remove copilot:", e); }
     try { removeHooksForAntigravity(notifyScriptPath); } catch (e) { console.error("[hooks] remove antigravity:", e); }
     try { removeHooksForCursor(notifyScriptPath); } catch (e) { console.error("[hooks] remove cursor:", e); }
     try { removePluginForOpencode(); } catch (e) { console.error("[hooks] remove opencode plugin:", e); }

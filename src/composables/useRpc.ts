@@ -23,6 +23,7 @@ import type {
   CreateTabOpts,
   TabGroup,
   ReviewComment,
+  AgentInventorySnapshot,
 } from "@/types";
 
 export interface ContentSearchMatch {
@@ -149,6 +150,10 @@ const request = {
     invoke("kill_terminal", { sessionId: p.sessionId }),
   agentBinsAvailable: (p: { bins: string[] }): Promise<{ available: string[] }> =>
     invoke("agent_bins_available", p),
+  agentInventoryGet: (): Promise<AgentInventorySnapshot | null> =>
+    invoke("agent_inventory_get"),
+  agentInventoryRefresh: (): Promise<AgentInventorySnapshot> =>
+    invoke("agent_inventory_refresh"),
   // Resize a backgrounded tab's PTY (tabId == agent id) so its size tracks the
   // viewport while its grid WS is closed — avoids a SIGWINCH jump on reactivation.
   tabResize: (p: { tabId: string; cols: number; rows: number }): Promise<boolean> =>

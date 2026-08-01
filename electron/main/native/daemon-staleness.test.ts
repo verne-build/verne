@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { daemonVerdict, isUnknownMethodError, parseStamp } from "./daemon-staleness";
+import { refreshInventoryAfterDaemonRestart } from "./agent-inventory-cmds";
 
 describe("parseStamp", () => {
   it("reads src from --version output", () => {
@@ -44,5 +45,15 @@ describe("daemonVerdict", () => {
   it("stays silent when either stamp is unknown", () => {
     expect(daemonVerdict("unknown", "a1b2c3d")).toBe("silent");
     expect(daemonVerdict("a1b2c3d", "unknown")).toBe("silent");
+  });
+});
+
+describe("refreshInventoryAfterDaemonRestart", () => {
+  it("forces inventory refresh after a daemon restart", () => {
+    const service = { refresh: vi.fn(async () => ({}) as never) };
+
+    refreshInventoryAfterDaemonRestart(service);
+
+    expect(service.refresh).toHaveBeenCalledTimes(1);
   });
 });

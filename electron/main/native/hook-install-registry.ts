@@ -1,7 +1,6 @@
 import {
   ensureHooksForClaude,
   ensureHooksForCodex,
-  ensureHooksForCopilot,
   ensureHooksForAntigravity,
   ensureHooksForCursor,
 } from "./hook-writer";
@@ -16,12 +15,11 @@ export interface HookInstallCtx {
 export type HookInstaller = (ctx: HookInstallCtx) => void;
 
 /** agent key → installer. Config-hook agents use notifyScript; plugin agents
- *  bake in port+secret. Keys MUST match the daemon registry's integration set
- *  (agent_registry.rs). The coverage is asserted in hook-install-registry.test.ts. */
+ *  bake in port+secret. Copilot is intentionally absent: startup only removes
+ *  the hook file written by earlier Verne versions. */
 export const HOOK_INSTALLERS: Record<string, HookInstaller> = {
   claude: ({ notifyScript }) => ensureHooksForClaude(notifyScript),
   codex: ({ notifyScript }) => ensureHooksForCodex(notifyScript),
-  copilot: ({ notifyScript }) => ensureHooksForCopilot(notifyScript),
   antigravity: ({ notifyScript }) => ensureHooksForAntigravity(notifyScript),
   cursor: ({ notifyScript }) => ensureHooksForCursor(notifyScript),
   opencode: ({ port, secret }) => ensurePluginForOpencode(port, secret),

@@ -8,6 +8,7 @@ import {
   removeHooksForClaude,
   ensureHooksForCodex,
   removeHooksForCodex,
+  removeOwnedCopilotHook,
 } from "./hook-writer";
 
 // Override homedir for tests via monkey-patching the module (vitest auto-mock).
@@ -114,5 +115,20 @@ describe("ensureHooksForClaude / removeHooksForClaude", () => {
     for (const arr of Object.values(hooks)) {
       expect(arr.length).toBe(0);
     }
+  });
+});
+
+describe("removeOwnedCopilotHook", () => {
+  it("removes only Verne's owned Copilot hook file", () => {
+    const home = mkdtempSync(join(tmpdir(), "verne-copilot-"));
+    const hooksDir = join(home, ".copilot", "hooks");
+    mkdirSync(hooksDir, { recursive: true });
+    writeFileSync(join(hooksDir, "verne.json"), "{}");
+    writeFileSync(join(hooksDir, "other.json"), "{}");
+
+    removeOwnedCopilotHook(home);
+
+    expect(existsSync(join(hooksDir, "verne.json"))).toBe(false);
+    expect(existsSync(join(hooksDir, "other.json"))).toBe(true);
   });
 });

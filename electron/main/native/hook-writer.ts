@@ -20,7 +20,7 @@ export function writeNotifyScript(internalDataDir: string, port: number, secret:
 [ -z "$VERNE_TAB_ID" ] && exit 0
 STDIN_DATA=$(cat 2>/dev/null)
 
-# Agent type comes from the hook entry's 2nd arg (claude/codex/copilot — baked
+# Agent type comes from the hook entry's 2nd arg (claude/codex — baked
 # in per ~/.claude or ~/.codex config file). Env var is the legacy fallback
 # for auto-launched providers; manually-launched agents inherit only
 # VERNE_TAB_ID and need the positional arg.
@@ -209,29 +209,10 @@ export function removeHooksForCodex(notifyScript: string): void {
   writeJson(hooksPath, settings);
 }
 
-// ── Copilot ───────────────────────────────────────────────────────────────────
-
-/** Write full ~/.copilot/hooks/verne.json. Idempotent. */
-export function ensureHooksForCopilot(notifyScript: string): void {
-  const hooksDir = join(homedir(), ".copilot", "hooks");
-  mkdirSync(hooksDir, { recursive: true });
-  const config = {
-    version: 1,
-    hooks: {
-      sessionStart: [{ type: "command", bash: `'${notifyScript}' sessionStart copilot`, timeoutSec: 5 }],
-      userPromptSubmitted: [{ type: "command", bash: `'${notifyScript}' userPromptSubmitted copilot`, timeoutSec: 5 }],
-      preToolUse: [{ type: "command", bash: `'${notifyScript}' preToolUse copilot`, timeoutSec: 5 }],
-      postToolUse: [{ type: "command", bash: `'${notifyScript}' postToolUse copilot`, timeoutSec: 5 }],
-      sessionEnd: [{ type: "command", bash: `'${notifyScript}' sessionEnd copilot`, timeoutSec: 5 }],
-    },
-  };
-  writeJson(join(hooksDir, "verne.json"), config);
-}
-
-/** Remove ~/.copilot/hooks/verne.json if present. */
-export function removeHooksForCopilot(_notifyScript: string): void {
-  const path = join(homedir(), ".copilot", "hooks", "verne.json");
-  if (existsSync(path)) rmSync(path);
+/** Remove the Copilot hook file owned by previous Verne versions. */
+export function removeOwnedCopilotHook(home = homedir()): void {
+  const owned = join(home, ".copilot", "hooks", "verne.json");
+  if (existsSync(owned)) rmSync(owned);
 }
 
 // ── Antigravity CLI (`agy`) ───────────────────────────────────────────────────
