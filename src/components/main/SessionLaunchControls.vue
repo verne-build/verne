@@ -166,8 +166,8 @@ async function retryInventory(): Promise<void> {
   }
 }
 
-watch(() => inventory.snapshot.value?.refreshError, (refreshError) => {
-  if (refreshError === null) refreshFailed.value = false;
+watch(() => inventory.snapshot.value, (snapshot) => {
+  if (snapshot?.refreshError === null) refreshFailed.value = false;
 });
 watch([selectedAgent, selectedModel], compatibleModel);
 // Immediate so the first option is checked (and keeps the group's tab stop) while

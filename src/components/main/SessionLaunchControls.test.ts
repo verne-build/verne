@@ -56,6 +56,16 @@ function setInventory(keys: readonly AgentInventoryKey[], refreshError: string |
   inventoryLoading.value = false;
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((done, fail) => {
+    resolve = done;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+}
+
 async function flush(): Promise<void> {
   for (let index = 0; index < 4; index += 1) {
     await Promise.resolve();
@@ -253,17 +263,19 @@ describe("SessionLaunchControls", () => {
     }]);
   });
 
-  it("clears retry transport failure when a pushed inventory snapshot succeeds", async () => {
+  it("clears retry transport failure when a later pushed successful snapshot replaces another", async () => {
     app.unmount();
     host.replaceChildren();
     setInventory(["claude"], "discovery");
-    refreshInventory.mockRejectedValueOnce(new Error("offline"));
+    const retry = deferred<AgentInventorySnapshot>();
+    refreshInventory.mockReturnValueOnce(retry.promise);
     mount();
     await flush();
 
     button("Retry").click();
     await flush();
-    setInventory(["claude"], "discovery");
+    setInventory(["claude"]);
+    retry.reject(new Error("offline"));
     await flush();
 
     expect(document.body.textContent).toContain("Couldn't Load Agents");
