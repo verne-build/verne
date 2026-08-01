@@ -1,4 +1,4 @@
-import type { AgentLaunchSelection, AgentType } from "../types";
+import type { AgentInventoryKey, AgentLaunchSelection, AgentType } from "../types";
 
 export interface ModelDefinition {
   id: string;
@@ -11,6 +11,7 @@ export interface ModelDefinition {
 
 export interface AgentDefinition {
   type: AgentType;
+  inventoryKey: AgentInventoryKey;
   label: string;
   bin: string;
   models: readonly ModelDefinition[];
@@ -104,11 +105,11 @@ const cursorModels = Object.entries(CURSOR_VARIANTS).map(([id, cursorVariants]) 
 }));
 
 export const AGENT_REGISTRY: readonly AgentDefinition[] = [
-  { type: "claude", label: "Claude", bin: "claude", models: claudeModels },
-  { type: "codex", label: "Codex", bin: "codex", models: codexModels },
-  { type: "opencode", label: "OpenCode", bin: "opencode", models: modelsFor(MODEL_VALUES.opencode) },
-  { type: "agy", label: "Antigravity", bin: "agy", models: AGY_MODELS.map((id) => ({ id, label: id, cliValue: id })) },
-  { type: "cursor", label: "Cursor", bin: "cursor-agent", models: cursorModels },
+  { type: "claude", inventoryKey: "claude", label: "Claude", bin: "claude", models: claudeModels },
+  { type: "codex", inventoryKey: "codex", label: "Codex", bin: "codex", models: codexModels },
+  { type: "opencode", inventoryKey: "opencode", label: "OpenCode", bin: "opencode", models: modelsFor(MODEL_VALUES.opencode) },
+  { type: "agy", inventoryKey: "antigravity", label: "Antigravity", bin: "agy", models: AGY_MODELS.map((id) => ({ id, label: id, cliValue: id })) },
+  { type: "cursor", inventoryKey: "cursor", label: "Cursor", bin: "cursor-agent", models: cursorModels },
 ];
 
 export function getAgentDefinition(type: AgentType): AgentDefinition | undefined {
@@ -198,37 +199,12 @@ export function serializeArgv(argv: readonly string[]): string {
   return argv.map(quotePosixArg).join(" ");
 }
 
-const AVAILABILITY_TTL_MS = 5 * 60 * 1_000;
-let cached: { loadedAt: number; agents: AgentDefinition[] } | null = null;
-let inFlight: Promise<AgentDefinition[]> | null = null;
-
 // Hidden from the new-session picker only. Registry entry stays so existing
 // sessions keep their label, detection, and hooks.
 const PICKER_HIDDEN: ReadonlySet<AgentType> = new Set<AgentType>(["cursor"]);
 
-export function filterAvailableAgents(available: readonly string[]): AgentDefinition[] {
-  const bins = new Set(available);
-  return AGENT_REGISTRY.filter((agent) => bins.has(agent.bin) && !PICKER_HIDDEN.has(agent.type));
-}
-
-export function loadAvailableAgents(
-  fetcher: (bins: string[]) => Promise<{ available: string[] }>,
-  now = Date.now(),
-): Promise<AgentDefinition[]> {
-  if (cached && now - cached.loadedAt <= AVAILABILITY_TTL_MS)
-    return Promise.resolve(cached.agents);
-  if (inFlight) return inFlight;
-  inFlight = fetcher(AGENT_REGISTRY.map((agent) => agent.bin))
-    .then(({ available }) => {
-      const agents = filterAvailableAgents(available);
-      cached = { loadedAt: now, agents };
-      return agents;
-    })
-    .finally(() => { inFlight = null; });
-  return inFlight;
-}
-
-export function resetAgentAvailabilityCacheForTests(): void {
-  cached = null;
-  inFlight = null;
+export function filterLaunchAgents(installed: ReadonlySet<AgentInventoryKey>): AgentDefinition[] {
+  return AGENT_REGISTRY.filter((agent) =>
+    installed.has(agent.inventoryKey) && !PICKER_HIDDEN.has(agent.type),
+  );
 }

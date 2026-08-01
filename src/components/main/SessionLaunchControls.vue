@@ -1,15 +1,14 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { Bot, Check, ChevronDown, CircleAlert, SquareTerminal, Zap } from "@lucide/vue";
-import { useRpc } from "@/composables/useRpc";
+import { useAgentInventory } from "@/composables/useAgentInventory";
 import { useTheme } from "@/composables/useTheme";
 import { agentIconSurfaceForTheme, findAgentIconForSurface } from "@/composables/useAgentIcon";
 import {
   effortsFor,
-  loadAvailableAgents,
+  filterLaunchAgents,
   supportsFastFor,
   tuningLabel as tuningLabelFor,
-  type AgentDefinition,
   type ModelDefinition,
 } from "@/lib/agentRegistry";
 import type { AgentLaunchSelection, AgentType } from "@/types";
@@ -33,19 +32,19 @@ const props = withDefaults(defineProps<{ busy?: boolean; disabled?: boolean }>()
   disabled: false,
 });
 const emit = defineEmits<{ start: [selection: AgentLaunchSelection | undefined] }>();
-const rpc = useRpc();
 const { getActiveThemeSpec } = useTheme();
+const inventory = useAgentInventory();
 
-const agents = ref<AgentDefinition[]>([]);
+const agents = computed(() => filterLaunchAgents(inventory.installedKeys.value));
 const selectedAgentType = ref<AgentType | "terminal" | null>(null);
 const agentSelectionTouched = ref(false);
 const selectedModelId = ref<string | null>(null);
 const selectedEffort = ref<string | null>(null);
 const fast = ref(false);
-const loading = ref(false);
-const error = ref(false);
-let mounted = false;
-let requestId = 0;
+const loading = computed(() => inventory.loading.value);
+const error = computed(() =>
+  !inventory.loading.value && inventory.snapshot.value?.refreshError === "discovery",
+);
 
 const surface = computed(() => agentIconSurfaceForTheme(getActiveThemeSpec().type));
 const agentChoices = computed(() => agents.value.map((agent) => ({
@@ -139,25 +138,6 @@ function launchSelection(): AgentLaunchSelection | undefined {
   };
 }
 
-async function loadAgentChoices(): Promise<void> {
-  const currentRequest = ++requestId;
-  loading.value = true;
-  try {
-    const available = await loadAvailableAgents((bins) => rpc.request.agentBinsAvailable({ bins }));
-    if (!mounted || currentRequest !== requestId) return;
-    agents.value = available;
-    if (!agentSelectionTouched.value) selectedAgentType.value = available[0]?.type ?? "terminal";
-    error.value = false;
-  } catch {
-    if (!mounted || currentRequest !== requestId) return;
-    agents.value = [];
-    if (!agentSelectionTouched.value) selectedAgentType.value = "terminal";
-    error.value = true;
-  } finally {
-    if (mounted && currentRequest === requestId) loading.value = false;
-  }
-}
-
 function onRadioClick(value: AgentType | "terminal"): void {
   if (props.busy) return;
   selectAgent(value);
@@ -224,13 +204,9 @@ function onWindowKeydown(event: KeyboardEvent): void {
 }
 
 onMounted(() => {
-  mounted = true;
-  void loadAgentChoices();
   window.addEventListener("keydown", onWindowKeydown);
 });
 onUnmounted(() => {
-  mounted = false;
-  requestId += 1;
   window.removeEventListener("keydown", onWindowKeydown);
 });
 </script>
@@ -360,7 +336,7 @@ onUnmounted(() => {
     <AlertTitle>Couldn't Load Agents</AlertTitle>
     <AlertDescription class="flex items-center justify-between gap-3 text-pretty">
       <span>Verne couldn't check installed agents. Terminal is still available.</span>
-      <Button type="button" variant="outline" class="min-h-10 shrink-0" :disabled="busy || loading" @click="loadAgentChoices">Retry</Button>
+      <Button type="button" variant="outline" class="min-h-10 shrink-0" :disabled="busy || loading" @click="inventory.refresh">Retry</Button>
     </AlertDescription>
   </Alert>
 </template>

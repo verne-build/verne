@@ -1,12 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   AGENT_REGISTRY,
   buildAgentArgv,
-  filterAvailableAgents,
+  filterLaunchAgents,
   getAgentDefinition,
   getModelDefinition,
-  loadAvailableAgents,
-  resetAgentAvailabilityCacheForTests,
   serializeArgv,
   effortsFor,
   supportsFastFor,
@@ -15,12 +13,10 @@ import {
 import { findAgentIconForSurface } from "@/composables/useAgentIcon";
 
 describe("agent registry", () => {
-  beforeEach(() => resetAgentAvailabilityCacheForTests());
-
-  it("uses the approved launch agents and excludes Copilot", () => {
-    expect(AGENT_REGISTRY.map(({ type, bin }) => [type, bin])).toEqual([
+  it("maps launch definitions to stable inventory keys", () => {
+    expect(AGENT_REGISTRY.map(({ type, inventoryKey }) => [type, inventoryKey])).toEqual([
       ["claude", "claude"], ["codex", "codex"], ["opencode", "opencode"],
-      ["agy", "agy"], ["cursor", "cursor-agent"],
+      ["agy", "antigravity"], ["cursor", "cursor"],
     ]);
   });
 
@@ -56,23 +52,14 @@ describe("agent registry", () => {
     expect(getModelDefinition("claude", "opus")?.fast).toBe("claude-settings");
   });
 
-  it("filters by binary while retaining registry order", () => {
-    expect(filterAvailableAgents(["agy", "codex", "missing"]).map((a) => a.type))
+  it("filters by installed inventory keys while retaining registry order", () => {
+    expect(filterLaunchAgents(new Set(["antigravity", "codex"])).map((a) => a.type))
       .toEqual(["codex", "agy"]);
   });
 
-  it("hides Cursor from the picker while keeping its registry entry", () => {
-    expect(filterAvailableAgents(["cursor-agent", "codex"]).map((a) => a.type)).toEqual(["codex"]);
+  it("keeps Cursor behind the product gate", () => {
+    expect(filterLaunchAgents(new Set(["claude", "cursor"])).map((agent) => agent.type)).toEqual(["claude"]);
     expect(getAgentDefinition("cursor")?.label).toBe("Cursor");
-  });
-
-  it("caches availability for five minutes", async () => {
-    const fetcher = vi.fn(async () => ({ available: ["codex"] }));
-    await loadAvailableAgents(fetcher, 1_000);
-    await loadAvailableAgents(fetcher, 1_000 + 299_999);
-    await loadAvailableAgents(fetcher, 1_000 + 300_001);
-    expect(fetcher).toHaveBeenCalledTimes(2);
-    expect(fetcher).not.toHaveBeenCalledWith(expect.arrayContaining(["copilot"]));
   });
 
   it("labels the tuning trigger for every model shape", () => {

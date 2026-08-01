@@ -1,13 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createApp, h, nextTick } from "vue";
-import { resetAgentAvailabilityCacheForTests } from "@/lib/agentRegistry";
-import type { AgentLaunchSelection } from "@/types";
+import { computed, createApp, h, nextTick, ref } from "vue";
+import type { AgentInventoryKey, AgentInventorySnapshot, AgentLaunchSelection } from "@/types";
 
-const rpc = vi.hoisted(() => ({ agentBinsAvailable: vi.fn() }));
+const useAgentInventory = vi.hoisted(() => vi.fn());
 
-vi.mock("@/composables/useRpc", () => ({
-  useRpc: () => ({ request: rpc }),
+vi.mock("@/composables/useAgentInventory", () => ({
+  useAgentInventory,
 }));
 
 vi.mock("@/composables/useTheme", () => ({
@@ -15,6 +14,47 @@ vi.mock("@/composables/useTheme", () => ({
 }));
 
 import SessionLaunchControls from "./SessionLaunchControls.vue";
+
+const inventorySnapshot = ref<AgentInventorySnapshot | null>(null);
+const inventoryLoading = ref(false);
+const refreshInventory = vi.fn();
+const inventory = {
+  snapshot: inventorySnapshot,
+  loading: inventoryLoading,
+  installedKeys: computed(() => new Set(
+    inventorySnapshot.value?.agents
+      .filter((agent) => agent.discoveryStatus === "installed")
+      .map((agent) => agent.key) ?? [],
+  )),
+  refresh: refreshInventory,
+};
+
+function snapshot(keys: readonly AgentInventoryKey[], refreshError: string | null = null): AgentInventorySnapshot {
+  return {
+    schemaVersion: 1,
+    agents: keys.map((key) => ({
+      key,
+      displayName: key,
+      discoveryStatus: "installed",
+      resolvedBinary: `/usr/local/bin/${key}`,
+      resolvedAlias: null,
+      currentVersion: "1.0.0",
+      latestVersion: "1.0.0",
+      updateStatus: "current",
+      updateCommand: null,
+      updateUrl: null,
+      errorCode: null,
+    })),
+    checkedAt: "2026-07-31T00:00:00.000Z",
+    expiresAt: "2026-08-01T00:00:00.000Z",
+    refreshError,
+  };
+}
+
+function setInventory(keys: readonly AgentInventoryKey[], refreshError: string | null = null): void {
+  inventorySnapshot.value = snapshot(keys, refreshError);
+  inventoryLoading.value = false;
+}
 
 async function flush(): Promise<void> {
   for (let index = 0; index < 4; index += 1) {
@@ -107,9 +147,9 @@ describe("SessionLaunchControls", () => {
   }
 
   beforeEach(() => {
-    resetAgentAvailabilityCacheForTests();
-    rpc.agentBinsAvailable.mockReset();
-    rpc.agentBinsAvailable.mockResolvedValue({ available: ["claude", "agy"] });
+    setInventory(["claude", "antigravity"]);
+    refreshInventory.mockReset();
+    useAgentInventory.mockReturnValue(inventory);
     starts = [];
     host = document.createElement("div");
     document.body.append(host);
@@ -130,7 +170,7 @@ describe("SessionLaunchControls", () => {
 
     button("Start").click();
 
-    expect(rpc.agentBinsAvailable).toHaveBeenCalledOnce();
+    expect(radio("Claude")).toBeTruthy();
     expect(starts).toEqual([{
       agentType: "claude",
       modelId: "opus",
@@ -142,9 +182,7 @@ describe("SessionLaunchControls", () => {
   it("emits undefined for Terminal", async () => {
     app.unmount();
     host.replaceChildren();
-    resetAgentAvailabilityCacheForTests();
-    rpc.agentBinsAvailable.mockReset();
-    rpc.agentBinsAvailable.mockResolvedValue({ available: [] });
+    setInventory([]);
     mount();
     await flush();
 
@@ -157,19 +195,17 @@ describe("SessionLaunchControls", () => {
   });
 
   it("replaces a stale Terminal choice when availability resolves late", async () => {
-    let resolve!: (value: { available: string[] }) => void;
     app.unmount();
     host.replaceChildren();
-    resetAgentAvailabilityCacheForTests();
-    rpc.agentBinsAvailable.mockReset();
-    rpc.agentBinsAvailable.mockImplementation(() => new Promise((done) => { resolve = done; }));
+    inventorySnapshot.value = null;
+    inventoryLoading.value = true;
     mount();
     await nextTick();
 
     expect(radios().map((element) => element.getAttribute("aria-label"))).toEqual(["Terminal"]);
     await pickAgent("Terminal");
 
-    resolve({ available: ["claude"] });
+    setInventory(["claude"]);
     await flush();
 
     expect(radios().map((element) => element.getAttribute("aria-label"))).toEqual(["Claude"]);
@@ -179,14 +215,10 @@ describe("SessionLaunchControls", () => {
     expect(starts).toEqual([{ agentType: "claude", modelId: null, effort: null, fast: null }]);
   });
 
-  it("keeps Terminal available and retries a failed availability check", async () => {
+  it("keeps Terminal available and refreshes a failed inventory", async () => {
     app.unmount();
     host.replaceChildren();
-    resetAgentAvailabilityCacheForTests();
-    rpc.agentBinsAvailable.mockReset();
-    rpc.agentBinsAvailable
-      .mockRejectedValueOnce(new Error("offline"))
-      .mockResolvedValueOnce({ available: ["agy"] });
+    setInventory([], "discovery");
     mount();
     await flush();
 
@@ -196,7 +228,9 @@ describe("SessionLaunchControls", () => {
     button("Retry").click();
     await flush();
 
-    expect(rpc.agentBinsAvailable).toHaveBeenCalledTimes(2);
+    expect(refreshInventory).toHaveBeenCalledOnce();
+    setInventory(["antigravity"]);
+    await flush();
     expect(radios().map((element) => element.getAttribute("aria-label"))).toEqual(["Antigravity"]);
     expect(checkedRadio()).toBe("Antigravity");
   });
@@ -246,9 +280,7 @@ describe("SessionLaunchControls", () => {
   it("keeps Model and Effort visible but disabled for Terminal", async () => {
     app.unmount();
     host.replaceChildren();
-    resetAgentAvailabilityCacheForTests();
-    rpc.agentBinsAvailable.mockReset();
-    rpc.agentBinsAvailable.mockResolvedValue({ available: [] });
+    setInventory([]);
     mount();
     await flush();
     await pickAgent("Terminal");
@@ -339,9 +371,7 @@ describe("SessionLaunchControls", () => {
     app.unmount();
     host.replaceChildren();
     starts = [];
-    resetAgentAvailabilityCacheForTests();
-    rpc.agentBinsAvailable.mockReset();
-    rpc.agentBinsAvailable.mockResolvedValue({ available: ["claude", "agy"] });
+    setInventory(["claude", "antigravity"]);
     app = createApp({
       render: () => h(SessionLaunchControls, {
         busy: true,
@@ -396,9 +426,7 @@ describe("SessionLaunchControls", () => {
   it("keeps the radios focusable and tooltip-capable while starting", async () => {
     app.unmount();
     host.replaceChildren();
-    resetAgentAvailabilityCacheForTests();
-    rpc.agentBinsAvailable.mockReset();
-    rpc.agentBinsAvailable.mockResolvedValue({ available: ["claude", "agy"] });
+    setInventory(["claude", "antigravity"]);
     app = createApp({
       render: () => h(SessionLaunchControls, {
         busy: true,
@@ -421,9 +449,8 @@ describe("SessionLaunchControls", () => {
   it("checks the first option and keeps a tab stop while the probe is in flight", async () => {
     app.unmount();
     host.replaceChildren();
-    resetAgentAvailabilityCacheForTests();
-    rpc.agentBinsAvailable.mockReset();
-    rpc.agentBinsAvailable.mockImplementation(() => new Promise(() => {}));
+    inventorySnapshot.value = null;
+    inventoryLoading.value = true;
     mount();
     await nextTick();
 

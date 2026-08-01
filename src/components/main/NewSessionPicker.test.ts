@@ -1,17 +1,17 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createApp, h, nextTick } from "vue";
+import { computed, createApp, h, nextTick, ref } from "vue";
 import { createPinia } from "pinia";
-import { resetAgentAvailabilityCacheForTests } from "@/lib/agentRegistry";
-import type { WorkingDirectory } from "@/types";
+import type { AgentInventoryKey, AgentInventorySnapshot, WorkingDirectory } from "@/types";
 
 const rpc = vi.hoisted(() => ({
-  agentBinsAvailable: vi.fn(),
   getDirectorySettings: vi.fn(),
   gitListBranches: vi.fn(),
   gitStatus: vi.fn(),
   gitCheckoutBranch: vi.fn(),
 }));
+
+const useAgentInventory = vi.hoisted(() => vi.fn());
 
 const store = vi.hoisted(() => ({
   directories: [{
@@ -41,6 +41,10 @@ vi.mock("@/composables/useRpc", () => ({
   useRpc: () => ({ request: rpc }),
 }));
 
+vi.mock("@/composables/useAgentInventory", () => ({
+  useAgentInventory,
+}));
+
 vi.mock("@/stores/workspace", () => ({
   useWorkspaceStore: () => store,
 }));
@@ -50,6 +54,47 @@ vi.mock("@/composables/useTheme", () => ({
 }));
 
 import NewSessionPicker from "./NewSessionPicker.vue";
+
+const inventorySnapshot = ref<AgentInventorySnapshot | null>(null);
+const inventoryLoading = ref(false);
+const refreshInventory = vi.fn();
+const inventory = {
+  snapshot: inventorySnapshot,
+  loading: inventoryLoading,
+  installedKeys: computed(() => new Set(
+    inventorySnapshot.value?.agents
+      .filter((agent) => agent.discoveryStatus === "installed")
+      .map((agent) => agent.key) ?? [],
+  )),
+  refresh: refreshInventory,
+};
+
+function snapshot(keys: readonly AgentInventoryKey[], refreshError: string | null = null): AgentInventorySnapshot {
+  return {
+    schemaVersion: 1,
+    agents: keys.map((key) => ({
+      key,
+      displayName: key,
+      discoveryStatus: "installed",
+      resolvedBinary: `/usr/local/bin/${key}`,
+      resolvedAlias: null,
+      currentVersion: "1.0.0",
+      latestVersion: "1.0.0",
+      updateStatus: "current",
+      updateCommand: null,
+      updateUrl: null,
+      errorCode: null,
+    })),
+    checkedAt: "2026-07-31T00:00:00.000Z",
+    expiresAt: "2026-08-01T00:00:00.000Z",
+    refreshError,
+  };
+}
+
+function setInventory(keys: readonly AgentInventoryKey[], refreshError: string | null = null): void {
+  inventorySnapshot.value = snapshot(keys, refreshError);
+  inventoryLoading.value = false;
+}
 
 async function flush(): Promise<void> {
   for (let index = 0; index < 4; index += 1) {
@@ -119,12 +164,12 @@ describe("NewSessionPicker", () => {
   let app: ReturnType<typeof createApp>;
 
   beforeEach(() => {
-    resetAgentAvailabilityCacheForTests();
-    rpc.agentBinsAvailable.mockReset();
+    setInventory(["antigravity"]);
+    refreshInventory.mockReset();
+    useAgentInventory.mockReturnValue(inventory);
     rpc.getDirectorySettings.mockReset();
     rpc.gitListBranches.mockReset();
     rpc.gitStatus.mockReset();
-    rpc.agentBinsAvailable.mockResolvedValue({ available: ["agy"] });
     rpc.getDirectorySettings.mockResolvedValue({});
     rpc.gitListBranches.mockResolvedValue([
       { name: "main", fullRef: "refs/heads/main", isRemote: false, isHead: true },
@@ -160,10 +205,9 @@ describe("NewSessionPicker", () => {
     document.body.replaceChildren();
   });
 
-  it("loads Antigravity after mount even when the shadcn Button focus target is unavailable", async () => {
+  it("shows Antigravity from the shared inventory after mount", async () => {
     await flush();
 
-    expect(rpc.agentBinsAvailable).toHaveBeenCalledOnce();
     expect(radio("Antigravity")).toBeTruthy();
   });
 
@@ -172,9 +216,7 @@ describe("NewSessionPicker", () => {
   it("applies the digit and Enter shortcuts from the picker's own post-mount focus", async () => {
     app.unmount();
     host.replaceChildren();
-    resetAgentAvailabilityCacheForTests();
-    rpc.agentBinsAvailable.mockReset();
-    rpc.agentBinsAvailable.mockResolvedValue({ available: ["claude", "agy"] });
+    setInventory(["claude", "antigravity"]);
     app = createApp({ render: () => h(NewSessionPicker, { dirId: "dir-1" }) });
     app.use(createPinia());
     app.mount(host);
@@ -200,9 +242,7 @@ describe("NewSessionPicker", () => {
   it("renders and selects the registry-first Claude result", async () => {
     app.unmount();
     host.replaceChildren();
-    resetAgentAvailabilityCacheForTests();
-    rpc.agentBinsAvailable.mockReset();
-    rpc.agentBinsAvailable.mockResolvedValue({ available: ["claude", "agy"] });
+    setInventory(["claude", "antigravity"]);
     app = createApp({ render: () => h(NewSessionPicker, { dirId: "dir-1" }) });
     app.use(createPinia());
     app.mount(host);
@@ -242,14 +282,10 @@ describe("NewSessionPicker", () => {
     expect(store.pendingPicker).toEqual({ dirId: "dir-2" });
   });
 
-  it("keeps a branch failure retryable when agent availability resolves later", async () => {
-    let resolveAgents!: (value: { available: string[] }) => void;
+  it("keeps a branch failure retryable when inventory state changes", async () => {
     app.unmount();
     host.replaceChildren();
-    resetAgentAvailabilityCacheForTests();
-    rpc.agentBinsAvailable.mockReset();
     rpc.gitListBranches.mockReset();
-    rpc.agentBinsAvailable.mockImplementationOnce(() => new Promise((resolve) => { resolveAgents = resolve; }));
     rpc.gitListBranches.mockRejectedValueOnce(new Error("branches unavailable"));
     app = createApp({ render: () => h(NewSessionPicker, { dirId: "dir-1" }) });
     app.use(createPinia());
@@ -257,7 +293,7 @@ describe("NewSessionPicker", () => {
     await flush();
 
     expect(document.body.textContent).toContain("Couldn't Load Branches");
-    resolveAgents({ available: ["agy"] });
+    setInventory(["claude", "antigravity"]);
     await flush();
 
     expect(document.body.textContent).toContain("Couldn't Load Branches");
@@ -271,19 +307,17 @@ describe("NewSessionPicker", () => {
   });
 
   it("replaces a stale Terminal choice when availability resolves late", async () => {
-    let resolveBins!: (value: { available: string[] }) => void;
     app.unmount();
     host.replaceChildren();
-    resetAgentAvailabilityCacheForTests();
-    rpc.agentBinsAvailable.mockReset();
-    rpc.agentBinsAvailable.mockImplementationOnce(() => new Promise((resolve) => { resolveBins = resolve; }));
+    inventorySnapshot.value = null;
+    inventoryLoading.value = true;
     app = createApp({ render: () => h(NewSessionPicker, { dirId: "dir-1" }) });
     app.use(createPinia());
     app.mount(host);
     await nextTick();
 
     radio("Terminal").click();
-    resolveBins({ available: ["agy"] });
+    setInventory(["antigravity"]);
     await flush();
 
     expect(checkedRadio()).toBe("Antigravity");
@@ -292,9 +326,7 @@ describe("NewSessionPicker", () => {
   it("disables Model and Effort for Terminal", async () => {
     app.unmount();
     host.replaceChildren();
-    resetAgentAvailabilityCacheForTests();
-    rpc.agentBinsAvailable.mockReset();
-    rpc.agentBinsAvailable.mockResolvedValue({ available: [] });
+    setInventory([]);
     app = createApp({ render: () => h(NewSessionPicker, { dirId: "dir-1" }) });
     app.use(createPinia());
     app.mount(host);
@@ -308,9 +340,7 @@ describe("NewSessionPicker", () => {
   it("preserves compatible effort and shows the selected Fast Mode", async () => {
     app.unmount();
     host.replaceChildren();
-    resetAgentAvailabilityCacheForTests();
-    rpc.agentBinsAvailable.mockReset();
-    rpc.agentBinsAvailable.mockResolvedValue({ available: ["claude"] });
+    setInventory(["claude"]);
     app = createApp({ render: () => h(NewSessionPicker, { dirId: "dir-1" }) });
     app.use(createPinia());
     app.mount(host);

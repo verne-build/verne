@@ -148,8 +148,6 @@ const request = {
     invoke("create_terminal", { workingDir: p.workingDir, cols: p.cols ?? null, rows: p.rows ?? null }),
   killTerminal: (p: { sessionId: string }): Promise<boolean> =>
     invoke("kill_terminal", { sessionId: p.sessionId }),
-  agentBinsAvailable: (p: { bins: string[] }): Promise<{ available: string[] }> =>
-    invoke("agent_bins_available", p),
   agentInventoryGet: (): Promise<AgentInventorySnapshot | null> =>
     invoke("agent_inventory_get"),
   agentInventoryRefresh: (): Promise<AgentInventorySnapshot> =>
