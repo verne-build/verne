@@ -7,6 +7,7 @@ const HTTP_TIMEOUT_MS = 4_000;
 const CLI_TIMEOUT_MS = 5_000;
 const SEMVER_SOURCE = "(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?";
 const SEMVER = new RegExp(`^${SEMVER_SOURCE}$`);
+const PI_PACKAGE_NAME = /^@earendil-works\/[a-z0-9][a-z0-9._-]*$/;
 
 const SOURCE_URLS = {
   "npm-json": new Set([
@@ -105,7 +106,7 @@ async function fetchText(url: string, deps: LatestDeps): Promise<string | null> 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), deps.httpTimeoutMs);
   try {
-    const response = await deps.fetch(url, { signal: controller.signal });
+    const response = await deps.fetch(url, { signal: controller.signal, redirect: "error" });
     if (!response.ok) return null;
     return await readBody(response, deps.maxResponseBytes);
   } catch {
@@ -160,7 +161,7 @@ function npmResult(value: unknown): LatestVersionResult {
 
 function piResult(value: unknown): LatestVersionResult {
   if (!isRecord(value) || value.ok !== true || !validSemver(value.version)) return unknown();
-  if (typeof value.packageName !== "string" || !value.packageName.startsWith("@earendil-works/")) return unknown();
+  if (typeof value.packageName !== "string" || !PI_PACKAGE_NAME.test(value.packageName)) return unknown();
   return { version: value.version, packageName: value.packageName };
 }
 

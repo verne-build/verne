@@ -100,6 +100,17 @@ describe("latest agent versions", () => {
     expect(fetched).toBe(false);
   });
 
+  it("refuses redirecting registry requests", async () => {
+    let options: RequestInit | undefined;
+    const deps = depsFor(async (_url, init) => {
+      options = init;
+      throw new TypeError("redirect refused");
+    });
+
+    await expect(resolveLatestVersion(claudeProbe, deps)).resolves.toEqual({ version: null, packageName: null });
+    expect(options).toMatchObject({ redirect: "error" });
+  });
+
   it("requires matching Antigravity release metadata and artifact versions", () => {
     expect(parseAntigravityInstaller(antigravityFixture)).toBe("1.8.0");
     expect(parseAntigravityInstaller(
@@ -126,6 +137,18 @@ describe("latest agent versions", () => {
       ok: true,
       version: "0.83.0",
       packageName: "unscoped",
+    }))).resolves.toEqual({ version: null, packageName: null });
+  });
+
+  it.each([
+    "@earendil-works/",
+    "@earendil-works/foo bar",
+    "@earendil-works/../../other",
+  ])("rejects malformed vendor-scoped Pi package names: %s", async (packageName) => {
+    await expect(resolveLatestVersion(piProbe, depsWithResponse({
+      ok: true,
+      version: "0.83.0",
+      packageName,
     }))).resolves.toEqual({ version: null, packageName: null });
   });
 
