@@ -112,6 +112,24 @@ describe("agent inventory service", () => {
     await expect(refresh).resolves.toEqual(snapshotAt(NOW));
   });
 
+  it("owns cached state independently of read and get callers", async () => {
+    const cached = snapshotAt(NOW);
+    const expected = snapshotAt(NOW);
+    const { service, deps } = createService({ cached });
+
+    cached.checkedAt = new Date(NOW - INVENTORY_TTL_MS).toISOString();
+    cached.agents[0].displayName = "mutated read";
+    const visible = service.get()!;
+    expect(visible).toEqual(expected);
+
+    visible.checkedAt = new Date(NOW - INVENTORY_TTL_MS).toISOString();
+    visible.agents[0].displayName = "mutated get";
+    await service.refreshIfStale();
+
+    expect(deps.probe).not.toHaveBeenCalled();
+    expect(service.get()).toEqual(expected);
+  });
+
   it.each([
     [3_599_999, 0],
     [3_600_000, 1],
@@ -242,5 +260,63 @@ describe("agent inventory service", () => {
     expect(order).toEqual(["write", "emit"]);
     expect(deps.emit).toHaveBeenCalledWith(next);
     expect(service.get()).toEqual(next);
+  });
+
+  it("isolates write and emit recipients from retained and returned refresh state", async () => {
+    let emittedCheckedAt = "";
+    let emittedDisplayName = "";
+    const expected = snapshotAt(NOW);
+    const { service } = createService({
+      write: vi.fn((snapshot) => {
+        snapshot.checkedAt = new Date(NOW - INVENTORY_TTL_MS).toISOString();
+        snapshot.agents[0].displayName = "mutated write";
+      }),
+      emit: vi.fn((snapshot) => {
+        emittedCheckedAt = snapshot.checkedAt;
+        emittedDisplayName = snapshot.agents[0].displayName;
+        snapshot.expiresAt = new Date(NOW + 2 * INVENTORY_TTL_MS).toISOString();
+        snapshot.agents[0].displayName = "mutated emit";
+      }),
+    });
+
+    const refreshed = await service.refresh();
+
+    expect(emittedCheckedAt).toBe(expected.checkedAt);
+    expect(emittedDisplayName).toBe(expected.agents[0].displayName);
+    expect(refreshed).toEqual(expected);
+    refreshed.agents[0].displayName = "mutated refresh";
+    expect(service.get()).toEqual(expected);
+  });
+
+  it("returns independent snapshots to concurrent refresh callers", async () => {
+    const { service } = createService();
+
+    const [first, second] = await Promise.all([service.refresh(), service.refresh()]);
+    first.agents[0].displayName = "mutated first caller";
+
+    expect(second).toEqual(snapshotAt(NOW));
+    expect(service.get()).toEqual(snapshotAt(NOW));
+  });
+
+  it("keeps failure replacements isolated from cached and persisted rows", async () => {
+    const cached = snapshotAt(NOW - INVENTORY_TTL_MS);
+    const expected: AgentInventorySnapshot = {
+      ...snapshotAt(NOW),
+      refreshError: "discovery",
+    };
+    const { service } = createService({
+      cached,
+      probe: vi.fn().mockRejectedValue(new Error("discovery")),
+      write: vi.fn((snapshot) => {
+        snapshot.agents[0].displayName = "mutated persisted failure";
+      }),
+    });
+    cached.agents[0].displayName = "mutated cached rows";
+
+    const refreshed = await service.refresh();
+
+    expect(refreshed).toEqual(expected);
+    refreshed.agents[0].displayName = "mutated returned failure";
+    expect(service.get()).toEqual(expected);
   });
 });

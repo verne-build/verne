@@ -36,27 +36,29 @@ export class AgentInventoryService {
   private inFlight: Promise<AgentInventorySnapshot> | null = null;
 
   constructor(private readonly deps: AgentInventoryServiceDeps) {
-    this.snapshot = deps.read();
+    const cached = deps.read();
+    this.snapshot = cached ? copySnapshot(cached) : null;
   }
 
   get(): AgentInventorySnapshot | null {
-    return this.snapshot;
+    return this.snapshot ? copySnapshot(this.snapshot) : null;
   }
 
   refresh(): Promise<AgentInventorySnapshot> {
-    if (this.inFlight) return this.inFlight;
-    const pending = this.runRefresh();
-    this.inFlight = pending;
-    pending.then(
-      () => { if (this.inFlight === pending) this.inFlight = null; },
-      () => { if (this.inFlight === pending) this.inFlight = null; },
-    );
-    return pending;
+    if (!this.inFlight) {
+      const pending = this.runRefresh();
+      this.inFlight = pending;
+      pending.then(
+        () => { if (this.inFlight === pending) this.inFlight = null; },
+        () => { if (this.inFlight === pending) this.inFlight = null; },
+      );
+    }
+    return this.inFlight.then(copySnapshot);
   }
 
   refreshIfStale(): Promise<AgentInventorySnapshot> {
     if (this.snapshot && this.deps.now() - Date.parse(this.snapshot.checkedAt) < INVENTORY_TTL_MS) {
-      return Promise.resolve(this.snapshot);
+      return Promise.resolve(copySnapshot(this.snapshot));
     }
     return this.refresh();
   }
@@ -76,7 +78,7 @@ export class AgentInventoryService {
     } catch {
       next = {
         schemaVersion: 1,
-        agents: this.snapshot?.agents ?? AGENT_INVENTORY_KEYS.map(unknownAgent),
+        agents: this.snapshot?.agents.map(copyAgent) ?? AGENT_INVENTORY_KEYS.map(unknownAgent),
         checkedAt: new Date(checkedAtMs).toISOString(),
         expiresAt: new Date(checkedAtMs + INVENTORY_TTL_MS).toISOString(),
         refreshError: "discovery",
@@ -84,10 +86,10 @@ export class AgentInventoryService {
     }
 
     const changed = !samePublishedContent(this.snapshot, next);
-    this.deps.write(next);
-    this.snapshot = next;
-    if (changed) this.deps.emit(next);
-    return next;
+    this.deps.write(copySnapshot(next));
+    this.snapshot = copySnapshot(next);
+    if (changed) this.deps.emit(copySnapshot(next));
+    return this.snapshot;
   }
 
   private async resolveAgents(rows: AgentInventoryProbeItem[]): Promise<AgentInventoryItem[]> {
@@ -192,4 +194,12 @@ function samePublishedContent(previous: AgentInventorySnapshot | null, next: Age
   return previous !== null
     && previous.refreshError === next.refreshError
     && isDeepStrictEqual(previous.agents, next.agents);
+}
+
+function copySnapshot(snapshot: AgentInventorySnapshot): AgentInventorySnapshot {
+  return { ...snapshot, agents: snapshot.agents.map(copyAgent) };
+}
+
+function copyAgent(agent: AgentInventoryItem): AgentInventoryItem {
+  return { ...agent };
 }
