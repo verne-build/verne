@@ -32,6 +32,7 @@ const expanded = ref(new Set<AgentInventoryKey>());
 const busyCounts = ref<Partial<Record<AgentInventoryKey, number>>>({});
 const refreshing = ref(false);
 const operationOwners = new Map<AgentInventoryKey, number>();
+const activeMutations = new Set<AgentInventoryKey>();
 let nextOperationId = 0;
 let disposed = false;
 
@@ -142,7 +143,9 @@ async function refreshMcp(agents: readonly AgentInventoryItem[]): Promise<void> 
   const installed = agents.filter((agent) =>
     MCP_KEYS.has(agent.key) && agent.discoveryStatus === "installed",
   );
-  const operation = beginOperation(supported.map((agent) => agent.key));
+  const operation = beginOperation(
+    supported.filter((agent) => !activeMutations.has(agent.key)).map((agent) => agent.key),
+  );
   const installedKeys = new Set(installed.map((agent) => agent.key));
   mcpStatuses.value = Object.fromEntries(
     Object.entries(mcpStatuses.value).filter(([key]) => installedKeys.has(key as AgentInventoryKey)),
@@ -203,6 +206,7 @@ async function checkMcp(agent: AgentInventoryItem): Promise<void> {
 async function installMcp(agent: AgentInventoryItem): Promise<void> {
   if (refreshing.value || busy.value.has(agent.key) || agent.discoveryStatus !== "installed") return;
   const operation = beginOperation([agent.key]);
+  activeMutations.add(agent.key);
   try {
     await request.mcpInstall({ agent: agent.key });
     if (!owns(operation, agent.key)) return;
@@ -214,6 +218,7 @@ async function installMcp(agent: AgentInventoryItem): Promise<void> {
     if (owns(operation, agent.key))
       toast.error("Install Failed", { description: error instanceof Error ? error.message : String(error) });
   } finally {
+    activeMutations.delete(agent.key);
     finishOperation(operation);
   }
 }
@@ -221,6 +226,7 @@ async function installMcp(agent: AgentInventoryItem): Promise<void> {
 async function removeMcp(agent: AgentInventoryItem): Promise<void> {
   if (refreshing.value || busy.value.has(agent.key)) return;
   const operation = beginOperation([agent.key]);
+  activeMutations.add(agent.key);
   try {
     await request.mcpUninstall({ agent: agent.key });
     if (!owns(operation, agent.key)) return;
@@ -230,6 +236,7 @@ async function removeMcp(agent: AgentInventoryItem): Promise<void> {
     if (owns(operation, agent.key))
       toast.error("Remove Failed", { description: error instanceof Error ? error.message : String(error) });
   } finally {
+    activeMutations.delete(agent.key);
     finishOperation(operation);
   }
 }
@@ -291,6 +298,7 @@ onBeforeUnmount(() => {
   disposed = true;
   nextOperationId += 1;
   operationOwners.clear();
+  activeMutations.clear();
 });
 </script>
 

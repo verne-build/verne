@@ -365,16 +365,19 @@ describe("SettingsAgents", () => {
     expect(button(row("claude"), "Check MCP Status").disabled).toBe(false);
   });
 
-  it("keeps bulk refresh mutually exclusive and suppresses a superseded install toast", async () => {
+  it("reconciles an install after a pushed refresh returns the pre-install state", async () => {
     mocks.mcpAgentStatus.mockImplementation(async ({ agent: key }: { agent: string }) =>
       mcpStatus(key, "detected"),
     );
     await mount(snapshotWithInstalled("codex"));
     const install = deferred<void>();
     const bulk = deferred<McpAgentStatus>();
+    const postInstall = deferred<McpAgentStatus>();
     mocks.mcpInstall.mockImplementationOnce(() => install.promise);
     mocks.mcpAgentStatus.mockReset();
-    mocks.mcpAgentStatus.mockImplementationOnce(() => bulk.promise);
+    mocks.mcpAgentStatus
+      .mockImplementationOnce(() => bulk.promise)
+      .mockImplementationOnce(() => postInstall.promise);
     refreshInventory.mockClear();
 
     button(row("codex"), "Install MCP").click();
@@ -385,19 +388,60 @@ describe("SettingsAgents", () => {
 
     inventorySnapshot.value = snapshotWithInstalled("codex");
     await flush();
-    bulk.resolve(mcpStatus("codex", "registered"));
+    bulk.resolve(mcpStatus("codex", "detected"));
     await flush();
 
     expect(button(row("codex"), "Check MCP Status").disabled).toBe(true);
-    expect(button(row("codex"), "Remove MCP").disabled).toBe(true);
+    expect(button(row("codex"), "Install MCP").disabled).toBe(true);
 
     install.resolve();
+    await flush();
+    expect(mocks.mcpAgentStatus).toHaveBeenCalledTimes(2);
+    expect(button(row("codex"), "Check MCP Status").disabled).toBe(true);
+
+    postInstall.resolve(mcpStatus("codex", "registered"));
     await flush();
 
     expect(row("codex").textContent).toContain("MCP Installed");
     expect(button(row("codex"), "Check MCP Status").disabled).toBe(false);
-    expect(mocks.mcpAgentStatus).toHaveBeenCalledTimes(1);
-    expect(mocks.toastSuccess).not.toHaveBeenCalled();
+    expect(mocks.toastSuccess).toHaveBeenCalledWith("Installed Verne MCP");
+  });
+
+  it("reconciles a remove after a pushed refresh returns the pre-remove state", async () => {
+    mocks.mcpAgentStatus.mockImplementation(async ({ agent: key }: { agent: string }) =>
+      mcpStatus(key, "registered"),
+    );
+    await mount(snapshotWithInstalled("claude"));
+    const remove = deferred<void>();
+    const bulk = deferred<McpAgentStatus>();
+    const postRemove = deferred<McpAgentStatus>();
+    mocks.mcpUninstall.mockImplementationOnce(() => remove.promise);
+    mocks.mcpAgentStatus.mockReset();
+    mocks.mcpAgentStatus
+      .mockImplementationOnce(() => bulk.promise)
+      .mockImplementationOnce(() => postRemove.promise);
+
+    button(row("claude"), "Remove MCP").click();
+    await flush();
+    inventorySnapshot.value = snapshotWithInstalled("claude");
+    await flush();
+    bulk.resolve(mcpStatus("claude", "registered"));
+    await flush();
+
+    expect(button(row("claude"), "Check MCP Status").disabled).toBe(true);
+    expect(button(row("claude"), "Remove MCP").disabled).toBe(true);
+
+    remove.resolve();
+    await flush();
+    expect(mocks.mcpAgentStatus).toHaveBeenCalledTimes(2);
+    expect(button(row("claude"), "Check MCP Status").disabled).toBe(true);
+
+    postRemove.resolve(mcpStatus("claude", "detected"));
+    await flush();
+
+    expect(row("claude").textContent).toContain("MCP Not Installed");
+    expect(button(row("claude"), "Install MCP")).toBeTruthy();
+    expect(button(row("claude"), "Check MCP Status").disabled).toBe(false);
   });
 
   it("does not commit, recheck, or toast after unmounting direct MCP operations", async () => {
