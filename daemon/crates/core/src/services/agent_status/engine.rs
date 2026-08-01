@@ -53,6 +53,7 @@ pub struct AgentStatusEngine {
     idle_confirmations: u8,
     review_in_progress: bool,
     user_prompt_submitted: bool,
+    has_seen_user_prompt: bool,
     observed_input_sequence: u64,
     observed_output_sequence: u64,
     observed_resize_sequence: u64,
@@ -72,6 +73,7 @@ impl Default for AgentStatusEngine {
             idle_confirmations: 0,
             review_in_progress: false,
             user_prompt_submitted: false,
+            has_seen_user_prompt: false,
             observed_input_sequence: 0,
             observed_output_sequence: 0,
             observed_resize_sequence: 0,
@@ -91,7 +93,8 @@ impl AgentStatusEngine {
     /// title, or notifications.
     pub fn hook_is_nested(&self, agent_type: &str, now: i64) -> bool {
         self.process_identity.as_deref().is_some_and(|current| {
-            current != agent_type && now - self.process_identity_at <= policy::PROCESS_IDENTITY_FRESH_MS
+            current != agent_type
+                && now - self.process_identity_at <= policy::PROCESS_IDENTITY_FRESH_MS
         })
     }
 
@@ -118,11 +121,13 @@ impl AgentStatusEngine {
         if agent_type == "codex" {
             if report.user_prompt_submitted {
                 self.user_prompt_submitted = true;
+                self.has_seen_user_prompt = true;
             } else if report.state == Some(AgentState::Idle) {
                 self.user_prompt_submitted = false;
             }
         } else {
             self.user_prompt_submitted = false;
+            self.has_seen_user_prompt = false;
         }
 
         let mut next = self.effective.clone();
@@ -187,6 +192,7 @@ impl AgentStatusEngine {
             self.identity_confirmations = 0;
             self.idle_confirmations = 0;
             self.user_prompt_submitted = false;
+            self.has_seen_user_prompt = false;
             let mut next = self.effective.clone();
             next.agent_type = None;
             next.agent_state = AgentState::Unknown;
@@ -248,6 +254,7 @@ impl AgentStatusEngine {
         let mut next = self.effective.clone();
         let codex_work_locked =
             Self::codex_work_locked_for(&agent_type, self.user_prompt_submitted);
+        let codex_has_seen_prompt = agent_type == "codex" && self.has_seen_user_prompt;
         let identity_source = if strong_identity.is_some() {
             AgentStatusSource::Process
         } else {
@@ -263,8 +270,10 @@ impl AgentStatusEngine {
         }
 
         self.review_in_progress = observation.detection.review_in_progress;
+        let screen_visible_working =
+            observation.detection.visible_working || self.review_in_progress;
         next.visible_blocker = observation.detection.visible_blocker && !self.review_in_progress;
-        next.visible_working = observation.detection.visible_working || self.review_in_progress;
+        next.visible_working = screen_visible_working;
         if codex_work_locked {
             next.visible_working = false;
         }
@@ -281,6 +290,24 @@ impl AgentStatusEngine {
             next.source = AgentStatusSource::Screen;
             next.confidence = 80;
             next.visible_blocker = false;
+            next.visible_working = true;
+            return self.commit(next, observation.observed_at);
+        }
+
+        // Codex can start an automatic continuation immediately after Stop,
+        // without another UserPromptSubmit hook. Once this session has handled
+        // a real prompt, trust live working chrome over the stale hook-owned idle.
+        if codex_has_seen_prompt
+            && self.effective.source == AgentStatusSource::Hook
+            && self.effective.agent_state == AgentState::Idle
+            && screen_visible_working
+            && !next.visible_blocker
+            && !observation.detection.skip_state_update
+        {
+            self.idle_confirmations = 0;
+            next.agent_state = AgentState::Working;
+            next.source = AgentStatusSource::Screen;
+            next.confidence = 85;
             next.visible_working = true;
             return self.commit(next, observation.observed_at);
         }
@@ -661,7 +688,7 @@ mod tests {
     }
 
     #[test]
-    fn codex_user_prompt_submit_allows_working_then_stop_resets_gate() {
+    fn codex_user_prompt_submit_allows_working_then_stop_resets_hook_gate() {
         let mut engine = AgentStatusEngine::default();
         engine.apply_hook(codex_hook(1, Some(AgentState::Idle)));
         let mut prompt = codex_hook(2, Some(AgentState::Working));
@@ -673,11 +700,27 @@ mod tests {
         engine.apply_hook(codex_hook(3, Some(AgentState::Idle)));
         assert_eq!(engine.snapshot().agent_state, AgentState::Idle);
 
+        engine.apply_hook(codex_hook(4, Some(AgentState::Working)));
+        assert_eq!(engine.snapshot().agent_state, AgentState::Idle);
+        assert!(!engine.snapshot().visible_working);
+    }
+
+    #[test]
+    fn codex_visible_working_releases_stop_before_automatic_continuation() {
+        let mut engine = AgentStatusEngine::default();
+        engine.apply_hook(codex_hook(1, Some(AgentState::Idle)));
+        let mut prompt = codex_hook(2, Some(AgentState::Working));
+        prompt.user_prompt_submitted = true;
+        engine.apply_hook(prompt);
+        engine.apply_hook(codex_hook(3, Some(AgentState::Idle)));
+
         let mut obs = codex_observation(10_000);
         obs.detection = AgentDetection::from_state(AgentState::Working);
         engine.observe(obs);
-        assert_eq!(engine.snapshot().agent_state, AgentState::Idle);
-        assert!(!engine.snapshot().visible_working);
+
+        assert_eq!(engine.snapshot().agent_state, AgentState::Working);
+        assert_eq!(engine.snapshot().source, AgentStatusSource::Screen);
+        assert!(engine.snapshot().visible_working);
     }
 
     #[test]
