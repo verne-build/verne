@@ -21,7 +21,7 @@ import { Input } from "./ui/input";
 import { Button } from "./ui/button";
 import { Card, CardContent } from "./ui/card";
 import ThemePreview from "./ThemePreview.vue";
-import SettingsMcp from "./SettingsMcp.vue";
+import SettingsAgents from "./SettingsAgents.vue";
 import SettingsVoice from "./SettingsVoice.vue";
 
 const emit = defineEmits<{ close: []; fluxCapacitor: [] }>();
@@ -800,7 +800,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKeydown));
               </div>
             </CardContent>
           </Card>
-          <SettingsMcp />
+          <SettingsAgents />
         </template>
       </div>
     </ScrollArea>
