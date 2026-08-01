@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from "vue";
 import { useVirtualizer } from "@tanstack/vue-virtual";
-import { Check, ChevronDown, ChevronRight, FolderOpen, FolderPlus, Search } from "@lucide/vue";
+import { Check, ChevronDown, ChevronRight, FolderOpen, FolderPlus, Plus, Search } from "@lucide/vue";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useRpc } from "@/composables/useRpc";
 import { useProjectIcons } from "@/composables/useProjectIcons";
@@ -54,6 +54,10 @@ const activeWorkspaceName = computed(() =>
 );
 function selectWorkspace(id: string): void {
   activeChip.value = id;
+}
+async function newWorkspace(): Promise<void> {
+  const dir = await store.openAndSelectWorkspace();
+  if (dir) activeChip.value = dir.id;
 }
 function onWorkspaceFilterKeydown(event: KeyboardEvent): void {
   if (event.key === "Escape") {
@@ -338,6 +342,12 @@ watch(() => store.directories.map((d) => d.id).join(","), () => {
               <Check :class="['ml-auto size-3.5', activeChip === d.id ? 'opacity-100' : 'opacity-0']" />
             </DropdownMenuItem>
             <p v-if="!filteredRootDirs.length" class="px-2 py-1.5 text-xs text-muted-foreground">No Workspaces Found</p>
+          </div>
+          <div class="border-t p-1">
+            <DropdownMenuItem :disabled="store.picking" @select="newWorkspace">
+              <Plus aria-hidden="true" class="size-4 text-muted-foreground" />
+              New Workspace
+            </DropdownMenuItem>
           </div>
         </DropdownMenuContent>
       </DropdownMenu>

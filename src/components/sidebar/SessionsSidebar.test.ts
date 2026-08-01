@@ -161,6 +161,24 @@ describe("SessionsSidebar workspace dropdown", () => {
     expect(store.openAndSelectWorkspace).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the New Workspace footer while the list is filtered and selects the new dir", async () => {
+    // Returns an already-registered dir: the mocked store isn't reactive, so a
+    // brand-new id would never surface a trigger label to assert on.
+    store.openAndSelectWorkspace.mockResolvedValueOnce({ id: "dir-2", name: "Beta", path: "/b" });
+    await flush();
+    await openMenu();
+    await typeFilter("zzz");
+    expect(menuItemTexts()).toEqual(["All Workspaces", "New Workspace"]);
+
+    const footer = Array.from(document.querySelectorAll<HTMLElement>("[data-slot=dropdown-menu-item]"))
+      .find((el) => el.textContent?.trim() === "New Workspace");
+    footer!.click();
+    await flush();
+
+    expect(store.openAndSelectWorkspace).toHaveBeenCalledTimes(1);
+    expect(namedButton("Select Workspace").textContent).toContain("Beta");
+  });
+
   it("uses a Lucide chevron and omits the count from Archived", async () => {
     app.unmount();
     store.sessionsList.mockReturnValue([
