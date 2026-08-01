@@ -152,6 +152,16 @@ function mcpStatus(key: string, status: McpAgentStatus["status"] = "registered")
   return { key, displayName: NAMES[key as AgentInventoryKey], status };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((done, fail) => {
+    resolve = done;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+}
+
 async function flush(): Promise<void> {
   for (let index = 0; index < 6; index += 1) {
     await Promise.resolve();
@@ -302,5 +312,186 @@ describe("SettingsAgents", () => {
     expect(mocks.mcpUninstall).toHaveBeenCalledWith({ agent: "claude" });
     expect(mocks.mcpManualCommands).toHaveBeenCalledWith({ agent: "opencode" });
     expect(mocks.clipboardWrite).toHaveBeenCalledWith("opencode mcp add verne");
+  });
+
+  it("retains the exact Check MCP Status action beside every known MCP state", async () => {
+    const statuses: Record<string, McpAgentStatus["status"]> = {
+      claude: "registered",
+      codex: "needsApproval",
+      cursor: "detected",
+      opencode: "notDetected",
+    };
+    mocks.mcpAgentStatus.mockImplementation(async ({ agent: key }: { agent: string }) =>
+      mcpStatus(key, statuses[key]),
+    );
+    await mount(snapshotWithInstalled("claude", "codex", "cursor", "opencode"));
+
+    for (const key of ["claude", "codex", "cursor", "opencode"] as const) {
+      expect(button(row(key), "Check MCP Status")).toBeTruthy();
+    }
+    expect(button(row("claude"), "Remove MCP")).toBeTruthy();
+    expect(button(row("codex"), "Remove MCP")).toBeTruthy();
+    expect(button(row("cursor"), "Install MCP")).toBeTruthy();
+    expect(button(row("opencode"), "Install MCP")).toBeTruthy();
+  });
+
+  it("keeps a row busy until overlapping checks settle and lets the newest result win", async () => {
+    await mount(snapshotWithInstalled("claude"));
+    const older = deferred<McpAgentStatus>();
+    const newer = deferred<McpAgentStatus>();
+    mocks.mcpAgentStatus.mockReset();
+    mocks.mcpAgentStatus
+      .mockImplementationOnce(() => older.promise)
+      .mockImplementationOnce(() => newer.promise);
+
+    button(row("claude"), "Check MCP Status").click();
+    await flush();
+    inventorySnapshot.value = snapshotWithInstalled("claude");
+    await flush();
+
+    expect(mocks.mcpAgentStatus).toHaveBeenCalledTimes(2);
+    expect(button(row("claude"), "Check MCP Status").disabled).toBe(true);
+
+    older.resolve(mcpStatus("claude", "detected"));
+    await flush();
+
+    expect(row("claude").textContent).not.toContain("MCP Not Installed");
+    expect(button(row("claude"), "Check MCP Status").disabled).toBe(true);
+
+    newer.resolve(mcpStatus("claude", "needsApproval"));
+    await flush();
+
+    expect(row("claude").textContent).toContain("MCP Needs Approval");
+    expect(button(row("claude"), "Check MCP Status").disabled).toBe(false);
+  });
+
+  it("keeps bulk refresh mutually exclusive and suppresses a superseded install toast", async () => {
+    mocks.mcpAgentStatus.mockImplementation(async ({ agent: key }: { agent: string }) =>
+      mcpStatus(key, "detected"),
+    );
+    await mount(snapshotWithInstalled("codex"));
+    const install = deferred<void>();
+    const bulk = deferred<McpAgentStatus>();
+    mocks.mcpInstall.mockImplementationOnce(() => install.promise);
+    mocks.mcpAgentStatus.mockReset();
+    mocks.mcpAgentStatus.mockImplementationOnce(() => bulk.promise);
+    refreshInventory.mockClear();
+
+    button(row("codex"), "Install MCP").click();
+    await flush();
+    expect(button(document, "Refresh").disabled).toBe(true);
+    button(document, "Refresh").click();
+    expect(refreshInventory).not.toHaveBeenCalled();
+
+    inventorySnapshot.value = snapshotWithInstalled("codex");
+    await flush();
+    bulk.resolve(mcpStatus("codex", "registered"));
+    await flush();
+
+    expect(button(row("codex"), "Check MCP Status").disabled).toBe(true);
+    expect(button(row("codex"), "Remove MCP").disabled).toBe(true);
+
+    install.resolve();
+    await flush();
+
+    expect(row("codex").textContent).toContain("MCP Installed");
+    expect(button(row("codex"), "Check MCP Status").disabled).toBe(false);
+    expect(mocks.mcpAgentStatus).toHaveBeenCalledTimes(1);
+    expect(mocks.toastSuccess).not.toHaveBeenCalled();
+  });
+
+  it("does not commit, recheck, or toast after unmounting direct MCP operations", async () => {
+    const initial: Record<string, McpAgentStatus["status"]> = {
+      claude: "registered",
+      codex: "detected",
+      opencode: "registered",
+    };
+    mocks.mcpAgentStatus.mockImplementation(async ({ agent: key }: { agent: string }) =>
+      mcpStatus(key, initial[key]),
+    );
+    await mount(snapshotWithInstalled("claude", "codex", "opencode"));
+    const install = deferred<void>();
+    const remove = deferred<void>();
+    const check = deferred<McpAgentStatus>();
+    mocks.mcpInstall.mockImplementationOnce(() => install.promise);
+    mocks.mcpUninstall.mockImplementationOnce(() => remove.promise);
+    mocks.mcpAgentStatus.mockReset();
+    mocks.mcpAgentStatus.mockImplementationOnce(() => check.promise);
+
+    button(row("codex"), "Install MCP").click();
+    button(row("claude"), "Remove MCP").click();
+    button(row("opencode"), "Check MCP Status").click();
+    await flush();
+    app.unmount();
+
+    install.resolve();
+    remove.reject(new Error("late remove failure"));
+    check.reject(new Error("late check failure"));
+    await flush();
+
+    expect(mocks.mcpAgentStatus).toHaveBeenCalledTimes(1);
+    expect(mocks.toastSuccess).not.toHaveBeenCalled();
+    expect(mocks.toastError).not.toHaveBeenCalled();
+  });
+
+  it("does not commit or toast from manual and clipboard continuations after unmount", async () => {
+    await mount();
+    const manual = deferred<string>();
+    const clipboard = deferred<void>();
+    mocks.mcpManualCommands.mockReset();
+    mocks.mcpManualCommands.mockImplementationOnce(() => manual.promise);
+    mocks.clipboardWrite.mockReset();
+    mocks.clipboardWrite.mockImplementationOnce(() => clipboard.promise);
+
+    button(row("opencode"), "Show Manual Setup").click();
+    button(row("claude"), "Copy Update Command").click();
+    await flush();
+    app.unmount();
+
+    manual.reject(new Error("late manual failure"));
+    clipboard.resolve();
+    await flush();
+
+    expect(mocks.toastSuccess).not.toHaveBeenCalled();
+    expect(mocks.toastError).not.toHaveBeenCalled();
+  });
+
+  it("does not toast when inventory refresh rejects after unmount", async () => {
+    await mount();
+    const refresh = deferred<AgentInventorySnapshot>();
+    refreshInventory.mockReset();
+    refreshInventory.mockImplementationOnce(() => refresh.promise);
+
+    button(document, "Refresh").click();
+    await flush();
+    app.unmount();
+    refresh.reject(new Error("late inventory failure"));
+    await flush();
+
+    expect(mocks.toastError).not.toHaveBeenCalled();
+  });
+
+  it("labels version and latest lookup failures without flattening discovery failures", async () => {
+    const value = snapshot();
+    value.agents = value.agents.map((item) => {
+      if (item.key === "antigravity") return { ...item, errorCode: "version" };
+      if (item.key === "pi") return { ...item, latestVersion: null, updateStatus: "unknown", errorCode: "latest" };
+      return item;
+    });
+    await mount(value);
+
+    expect(row("antigravity").textContent).toContain("Version Check Failed");
+    expect(row("pi").textContent).toContain("Latest Check Failed");
+    expect(row("grok").textContent).toContain("Check Failed");
+  });
+
+  it("states that a snapshot discovery failure may retain stale prior results", async () => {
+    const value = snapshot();
+    value.refreshError = "discovery";
+    await mount(value);
+
+    expect(document.body.textContent).toContain("Detection Failed");
+    expect(document.body.textContent).toContain("Prior results may be stale or retained");
+    expect(document.body.textContent).not.toContain("Latest-version checks may be unavailable");
   });
 });

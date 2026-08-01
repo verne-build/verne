@@ -29,10 +29,16 @@ const { request } = useRpc();
 const mcpStatuses = ref<Partial<Record<AgentInventoryKey, McpAgentStatus>>>({});
 const manualCommands = ref<Partial<Record<AgentInventoryKey, string>>>({});
 const expanded = ref(new Set<AgentInventoryKey>());
-const busy = ref(new Set<AgentInventoryKey>());
+const busyCounts = ref<Partial<Record<AgentInventoryKey, number>>>({});
 const refreshing = ref(false);
-let mcpRefreshGeneration = 0;
+const operationOwners = new Map<AgentInventoryKey, number>();
+let nextOperationId = 0;
 let disposed = false;
+
+type McpOperation = {
+  id: number;
+  keys: readonly AgentInventoryKey[];
+};
 
 function shortenHome(path: string | null): string | null {
   if (!path) return null;
@@ -48,6 +54,8 @@ function detectionState(agent: AgentInventoryItem): { label: string; variant: Ba
 }
 
 function updateState(agent: AgentInventoryItem): { label: string; variant: BadgeVariant } {
+  if (agent.errorCode === "version") return { label: "Version Check Failed", variant: "destructive" };
+  if (agent.errorCode === "latest") return { label: "Latest Check Failed", variant: "destructive" };
   if (agent.updateStatus === "outdated") return { label: "Update Available", variant: "default" };
   if (agent.updateStatus === "current") return { label: "Current", variant: "secondary" };
   return { label: "Update Unknown", variant: "outline" };
@@ -91,11 +99,38 @@ const checkedAt = computed(() => {
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(date);
 });
 
-function setBusy(key: AgentInventoryKey, value: boolean): void {
-  const next = new Set(busy.value);
-  if (value) next.add(key);
-  else next.delete(key);
-  busy.value = next;
+const busy = computed(() => new Set(
+  Object.entries(busyCounts.value)
+    .filter(([, count]) => count > 0)
+    .map(([key]) => key as AgentInventoryKey),
+));
+
+const hasBusy = computed(() => busy.value.size > 0);
+
+function beginOperation(keys: readonly AgentInventoryKey[]): McpOperation {
+  const operation = { id: ++nextOperationId, keys };
+  const next = { ...busyCounts.value };
+  keys.forEach((key) => {
+    operationOwners.set(key, operation.id);
+    next[key] = (next[key] ?? 0) + 1;
+  });
+  busyCounts.value = next;
+  return operation;
+}
+
+function owns(operation: McpOperation, key: AgentInventoryKey): boolean {
+  return !disposed && operationOwners.get(key) === operation.id;
+}
+
+function finishOperation(operation: McpOperation): void {
+  if (disposed) return;
+  const next = { ...busyCounts.value };
+  operation.keys.forEach((key) => {
+    const count = (next[key] ?? 0) - 1;
+    if (count > 0) next[key] = count;
+    else delete next[key];
+  });
+  busyCounts.value = next;
 }
 
 function patchMcp(key: AgentInventoryKey, status: McpAgentStatus): void {
@@ -103,87 +138,99 @@ function patchMcp(key: AgentInventoryKey, status: McpAgentStatus): void {
 }
 
 async function refreshMcp(agents: readonly AgentInventoryItem[]): Promise<void> {
-  const generation = ++mcpRefreshGeneration;
+  const supported = agents.filter((agent) => MCP_KEYS.has(agent.key));
   const installed = agents.filter((agent) =>
     MCP_KEYS.has(agent.key) && agent.discoveryStatus === "installed",
   );
+  const operation = beginOperation(supported.map((agent) => agent.key));
   const installedKeys = new Set(installed.map((agent) => agent.key));
   mcpStatuses.value = Object.fromEntries(
     Object.entries(mcpStatuses.value).filter(([key]) => installedKeys.has(key as AgentInventoryKey)),
   );
-  installed.forEach((agent) => setBusy(agent.key, true));
-
   const results = await Promise.allSettled(
     installed.map((agent) => request.mcpAgentStatus({ agent: agent.key })),
   );
-  if (disposed || generation !== mcpRefreshGeneration) return;
-
-  const next = { ...mcpStatuses.value };
-  results.forEach((result, index) => {
-    const agent = installed[index]!;
-    next[agent.key] = result.status === "fulfilled" ? result.value : {
-      key: agent.key,
-      displayName: agent.displayName,
-      status: "error",
-      detail: result.reason instanceof Error ? result.reason.message : String(result.reason),
-    };
-    setBusy(agent.key, false);
-  });
-  mcpStatuses.value = next;
+  if (!disposed) {
+    const next = { ...mcpStatuses.value };
+    results.forEach((result, index) => {
+      const agent = installed[index]!;
+      if (!owns(operation, agent.key)) return;
+      next[agent.key] = result.status === "fulfilled" ? result.value : {
+        key: agent.key,
+        displayName: agent.displayName,
+        status: "error",
+        detail: result.reason instanceof Error ? result.reason.message : String(result.reason),
+      };
+    });
+    mcpStatuses.value = next;
+  }
+  finishOperation(operation);
 }
 
 async function refreshAll(): Promise<void> {
-  if (refreshing.value) return;
+  if (refreshing.value || hasBusy.value) return;
   refreshing.value = true;
   try {
     const next = await inventory.refresh();
+    if (disposed) return;
     await refreshMcp(next.agents);
   } catch (error) {
-    toast.error("Refresh Failed", { description: error instanceof Error ? error.message : String(error) });
+    if (!disposed)
+      toast.error("Refresh Failed", { description: error instanceof Error ? error.message : String(error) });
   } finally {
-    refreshing.value = false;
+    if (!disposed) refreshing.value = false;
   }
 }
 
 async function checkMcp(agent: AgentInventoryItem): Promise<void> {
-  setBusy(agent.key, true);
+  if (refreshing.value || busy.value.has(agent.key) || agent.discoveryStatus !== "installed") return;
+  const operation = beginOperation([agent.key]);
   try {
-    patchMcp(agent.key, await request.mcpAgentStatus({ agent: agent.key }));
+    const status = await request.mcpAgentStatus({ agent: agent.key });
+    if (owns(operation, agent.key)) patchMcp(agent.key, status);
   } catch (error) {
-    patchMcp(agent.key, {
+    if (owns(operation, agent.key)) patchMcp(agent.key, {
       key: agent.key,
       displayName: agent.displayName,
       status: "error",
       detail: error instanceof Error ? error.message : String(error),
     });
   } finally {
-    setBusy(agent.key, false);
+    finishOperation(operation);
   }
 }
 
 async function installMcp(agent: AgentInventoryItem): Promise<void> {
-  if (agent.discoveryStatus !== "installed") return;
-  setBusy(agent.key, true);
+  if (refreshing.value || busy.value.has(agent.key) || agent.discoveryStatus !== "installed") return;
+  const operation = beginOperation([agent.key]);
   try {
     await request.mcpInstall({ agent: agent.key });
-    patchMcp(agent.key, await request.mcpAgentStatus({ agent: agent.key }));
+    if (!owns(operation, agent.key)) return;
+    const status = await request.mcpAgentStatus({ agent: agent.key });
+    if (!owns(operation, agent.key)) return;
+    patchMcp(agent.key, status);
     toast.success("Installed Verne MCP");
   } catch (error) {
-    toast.error("Install Failed", { description: error instanceof Error ? error.message : String(error) });
+    if (owns(operation, agent.key))
+      toast.error("Install Failed", { description: error instanceof Error ? error.message : String(error) });
   } finally {
-    setBusy(agent.key, false);
+    finishOperation(operation);
   }
 }
 
 async function removeMcp(agent: AgentInventoryItem): Promise<void> {
-  setBusy(agent.key, true);
+  if (refreshing.value || busy.value.has(agent.key)) return;
+  const operation = beginOperation([agent.key]);
   try {
     await request.mcpUninstall({ agent: agent.key });
-    patchMcp(agent.key, await request.mcpAgentStatus({ agent: agent.key }));
+    if (!owns(operation, agent.key)) return;
+    const status = await request.mcpAgentStatus({ agent: agent.key });
+    if (owns(operation, agent.key)) patchMcp(agent.key, status);
   } catch (error) {
-    toast.error("Remove Failed", { description: error instanceof Error ? error.message : String(error) });
+    if (owns(operation, agent.key))
+      toast.error("Remove Failed", { description: error instanceof Error ? error.message : String(error) });
   } finally {
-    setBusy(agent.key, false);
+    finishOperation(operation);
   }
 }
 
@@ -191,9 +238,11 @@ async function ensureManualCommand(key: AgentInventoryKey): Promise<string> {
   if (manualCommands.value[key] != null) return manualCommands.value[key]!;
   try {
     const command = await request.mcpManualCommands({ agent: key });
+    if (disposed) return "";
     manualCommands.value = { ...manualCommands.value, [key]: command };
     return command;
   } catch (error) {
+    if (disposed) return "";
     manualCommands.value = { ...manualCommands.value, [key]: "" };
     toast.error("Manual Setup Failed", { description: error instanceof Error ? error.message : String(error) });
     return "";
@@ -215,18 +264,22 @@ async function copyManualCommand(key: AgentInventoryKey): Promise<void> {
   if (!command) return;
   try {
     await navigator.clipboard.writeText(command);
+    if (disposed) return;
     toast.success("Install Commands Copied");
   } catch (error) {
-    toast.error("Couldn’t Copy", { description: error instanceof Error ? error.message : String(error) });
+    if (!disposed)
+      toast.error("Couldn’t Copy", { description: error instanceof Error ? error.message : String(error) });
   }
 }
 
 async function copyUpdateCommand(command: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(command);
+    if (disposed) return;
     toast.success("Update Command Copied");
   } catch (error) {
-    toast.error("Couldn’t Copy", { description: error instanceof Error ? error.message : String(error) });
+    if (!disposed)
+      toast.error("Couldn’t Copy", { description: error instanceof Error ? error.message : String(error) });
   }
 }
 
@@ -236,7 +289,8 @@ watch(inventory.snapshot, (next) => {
 
 onBeforeUnmount(() => {
   disposed = true;
-  mcpRefreshGeneration += 1;
+  nextOperationId += 1;
+  operationOwners.clear();
 });
 </script>
 
@@ -254,7 +308,7 @@ onBeforeUnmount(() => {
         variant="outline"
         size="sm"
         class="min-h-10 shrink-0 transition-transform active:scale-[0.96]"
-        :disabled="refreshing"
+        :disabled="refreshing || hasBusy"
         @click="refreshAll"
       >
         <Loader2 v-if="refreshing" class="size-3.5 animate-spin" />
@@ -343,12 +397,24 @@ onBeforeUnmount(() => {
                 <ChevronRight v-else class="size-3.5" />
               </Button>
               <Button
+                type="button"
+                variant="ghost"
+                size="xs"
+                class="min-h-10 transition-transform active:scale-[0.96]"
+                :disabled="refreshing || busy.has(agent.key) || agent.discoveryStatus !== 'installed'"
+                @click="checkMcp(agent)"
+              >
+                <Loader2 v-if="busy.has(agent.key)" class="size-3.5 animate-spin" />
+                <Search v-else class="size-3.5" />
+                Check MCP Status
+              </Button>
+              <Button
                 v-if="agent.mcpStatus?.status === 'registered' || agent.mcpStatus?.status === 'needsApproval'"
                 type="button"
                 variant="ghost"
                 size="xs"
                 class="min-h-10 transition-transform active:scale-[0.96]"
-                :disabled="busy.has(agent.key)"
+                :disabled="refreshing || busy.has(agent.key)"
                 @click="removeMcp(agent)"
               >
                 <Loader2 v-if="busy.has(agent.key)" class="size-3.5 animate-spin" />
@@ -361,7 +427,7 @@ onBeforeUnmount(() => {
                 variant="secondary"
                 size="xs"
                 class="min-h-10 transition-transform active:scale-[0.96]"
-                :disabled="busy.has(agent.key) || agent.discoveryStatus !== 'installed'"
+                :disabled="refreshing || busy.has(agent.key) || agent.discoveryStatus !== 'installed'"
                 @click="installMcp(agent)"
               >
                 <Loader2 v-if="busy.has(agent.key)" class="size-3.5 animate-spin" />
@@ -376,19 +442,6 @@ onBeforeUnmount(() => {
                 disabled
               >
                 Install MCP
-              </Button>
-              <Button
-                v-else
-                type="button"
-                variant="ghost"
-                size="xs"
-                class="min-h-10 transition-transform active:scale-[0.96]"
-                :disabled="busy.has(agent.key)"
-                @click="checkMcp(agent)"
-              >
-                <Loader2 v-if="busy.has(agent.key)" class="size-3.5 animate-spin" />
-                <Search v-else class="size-3.5" />
-                Check MCP Status
               </Button>
             </div>
           </div>
@@ -422,7 +475,9 @@ onBeforeUnmount(() => {
       :title="inventory.snapshot.value?.checkedAt"
     >
       Last Checked: {{ checkedAt }}
-      <span v-if="inventory.snapshot.value?.refreshError"> · Latest-version checks may be unavailable.</span>
+      <span v-if="inventory.snapshot.value?.refreshError" class="text-destructive">
+        · Detection Failed · Prior results may be stale or retained.
+      </span>
     </p>
   </section>
 </template>
