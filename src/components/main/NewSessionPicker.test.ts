@@ -24,6 +24,8 @@ const store = vi.hoisted(() => ({
   selectedDirectoryId: "dir-1" as string | null,
   pendingPicker: { dirId: "dir-1" } as { dirId: string } | null,
   terminalTabsByDirectory: { "dir-1": [] as unknown[] },
+  picking: false,
+  openAndSelectWorkspace: vi.fn(async () => null as WorkingDirectory | null),
   loadTabsForDirectory: vi.fn(async () => []),
   selectDirectory: vi.fn(),
   openSessionPicker: vi.fn(),
@@ -280,6 +282,42 @@ describe("NewSessionPicker", () => {
     expect(store.selectDirectory).toHaveBeenCalledWith(expect.objectContaining({ id: "dir-2" }));
     expect(store.openSessionPicker).toHaveBeenCalledWith("dir-2");
     expect(store.pendingPicker).toEqual({ dirId: "dir-2" });
+  });
+
+  it("filters workspaces and opens a new one from the menu footer", async () => {
+    app.unmount();
+    host.replaceChildren();
+    store.directories = [
+      { id: "dir-1", path: "/Users/verne/project", name: "Project", createdAt: 0, sortOrder: 0 },
+      { id: "dir-2", path: "/Users/verne/other", name: "Other", createdAt: 0, sortOrder: 1 },
+    ];
+    store.selectedDirectoryId = "dir-1";
+    store.pendingPicker = { dirId: "dir-1" };
+    store.openSessionPicker.mockClear();
+    store.openAndSelectWorkspace.mockResolvedValueOnce({
+      id: "dir-3", path: "/Users/verne/fresh", name: "Fresh", createdAt: 0, sortOrder: 2,
+    });
+    app = createApp({ render: () => h(NewSessionPicker, { dirId: "dir-1" }) });
+    app.use(createPinia());
+    app.mount(host);
+    await flush();
+
+    await openMenu("Select Directory");
+    const filter = document.querySelector<HTMLInputElement>('input[placeholder="Filter Workspaces…"]');
+    if (!filter) throw new Error("Missing workspace filter");
+    filter.value = "OTH";
+    filter.dispatchEvent(new Event("input", { bubbles: true }));
+    await flush();
+
+    const menu = document.querySelector("[data-slot=dropdown-menu-content]");
+    expect(menu?.textContent).toContain("Other");
+    expect(menu?.textContent).not.toContain("Project");
+    // Footer stays put while the list is filtered down.
+    actionMenuItem("New Workspace").click();
+    await flush();
+
+    expect(store.openAndSelectWorkspace).toHaveBeenCalled();
+    expect(store.openSessionPicker).toHaveBeenCalledWith("dir-3");
   });
 
   it("keeps a branch failure retryable when inventory state changes", async () => {

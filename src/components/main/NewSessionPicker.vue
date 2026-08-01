@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch, type Ref } from "vue";
 import {
   Check,
   ChevronDown,
@@ -8,6 +8,7 @@ import {
   FolderGit2,
   GitBranch as GitBranchIcon,
   GitFork,
+  Plus,
   Search,
 } from "@lucide/vue";
 import { useWorkspaceStore } from "@/stores/workspace";
@@ -46,6 +47,8 @@ const branches = ref<GitBranch[]>([]);
 const selectedBranch = ref<GitBranch | null>(null);
 const branchMenuOpen = ref(false);
 const branchQuery = ref("");
+const workspaceMenuOpen = ref(false);
+const workspaceQuery = ref("");
 const dirtyWarningOpen = ref(false);
 const launching = ref(false);
 const loadingBranches = ref(false);
@@ -86,6 +89,14 @@ const checkoutModeLabel = computed(() => checkoutMode.value === "current"
 const branchLabel = computed(() => checkoutMode.value === "worktree" ? "Create From" : "Branch");
 const localBranches = computed(() => branches.value.filter((branch) => !branch.isRemote));
 const remoteBranches = computed(() => branches.value.filter((branch) => branch.isRemote));
+const normalizedWorkspaceQuery = computed(() => workspaceQuery.value.trim().toLowerCase());
+const filteredRoots = computed(() => {
+  const query = normalizedWorkspaceQuery.value;
+  if (!query) return roots.value;
+  return roots.value.filter((dir) =>
+    dir.name.toLowerCase().includes(query) || dir.path.toLowerCase().includes(query),
+  );
+});
 const normalizedBranchQuery = computed(() => branchQuery.value.trim().toLowerCase());
 function matchesBranchQuery(branch: GitBranch): boolean {
   const query = normalizedBranchQuery.value;
@@ -117,16 +128,34 @@ function setBranchMenuOpen(open: boolean): void {
   branchQuery.value = "";
 }
 
-function onBranchFilterKeydown(event: KeyboardEvent): void {
-  if (event.key === "Escape") {
-    if (!branchQuery.value) return;
-    event.preventDefault();
+function setWorkspaceMenuOpen(open: boolean): void {
+  workspaceMenuOpen.value = open;
+  workspaceQuery.value = "";
+}
+
+// Keep typing inside the filter field: reka's menu would otherwise steal keys for
+// typeahead. Arrows/Enter/Tab still fall through so the list stays navigable.
+function filterKeydown(query: Ref<string>) {
+  return (event: KeyboardEvent): void => {
+    if (event.key === "Escape") {
+      if (!query.value) return;
+      event.preventDefault();
+      event.stopPropagation();
+      query.value = "";
+      return;
+    }
+    if (["ArrowUp", "ArrowDown", "Home", "End", "Enter", "Tab"].includes(event.key)) return;
     event.stopPropagation();
-    branchQuery.value = "";
-    return;
-  }
-  if (["ArrowUp", "ArrowDown", "Home", "End", "Enter", "Tab"].includes(event.key)) return;
-  event.stopPropagation();
+  };
+}
+
+const onBranchFilterKeydown = filterKeydown(branchQuery);
+const onWorkspaceFilterKeydown = filterKeydown(workspaceQuery);
+
+async function newWorkspace(): Promise<void> {
+  if (launching.value) return;
+  const dir = await store.openAndSelectWorkspace();
+  if (dir && mounted) store.openSessionPicker(dir.id);
 }
 
 function errorMessage(error: unknown, fallback: string): string {
@@ -317,21 +346,36 @@ onUnmounted(() => {
     <div class="w-full max-w-4xl p-5">
       <h2 id="new-session-picker-title" class="mb-3 flex flex-wrap items-center gap-1 text-xl font-semibold tracking-tight text-foreground">
         <span>Start New Session In</span>
-        <DropdownMenu>
+        <DropdownMenu :open="workspaceMenuOpen" @update:open="setWorkspaceMenuOpen">
           <DropdownMenuTrigger as-child>
             <Button type="button" variant="ghost" class="min-h-10 px-2 text-xl font-semibold underline decoration-dotted underline-offset-4" :disabled="launching" aria-label="Select Directory">
               {{ current?.name ?? "Workspace" }}
               <ChevronDown aria-hidden="true" class="size-4 text-muted-foreground" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" class="min-w-64">
-            <DropdownMenuItem v-for="root in roots" :key="root.id" :disabled="launching" @select="selectPickerDirectory(root)">
-              <span class="min-w-0">
-                <span class="block truncate font-medium">{{ root.name }}</span>
-                <span class="block truncate text-xs text-muted-foreground">{{ homePath(root.path) }}</span>
-              </span>
-              <Check :class="['ml-auto size-3.5', root.id === props.dirId ? 'opacity-100' : 'opacity-0']" />
-            </DropdownMenuItem>
+          <DropdownMenuContent align="start" class="min-w-72 p-0">
+            <div class="border-b p-2">
+              <div class="relative">
+                <Search aria-hidden="true" class="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input v-model="workspaceQuery" placeholder="Filter Workspaces…" class="h-8 pl-8 text-xs" @keydown="onWorkspaceFilterKeydown" />
+              </div>
+            </div>
+            <div class="max-h-64 overflow-y-auto p-1">
+              <DropdownMenuItem v-for="dir in filteredRoots" :key="dir.id" :disabled="launching" @select="selectPickerDirectory(dir)">
+                <span class="min-w-0">
+                  <span class="block truncate font-medium">{{ dir.name }}</span>
+                  <span class="block truncate text-xs text-muted-foreground">{{ homePath(dir.path) }}</span>
+                </span>
+                <Check :class="['ml-auto size-3.5', dir.id === props.dirId ? 'opacity-100' : 'opacity-0']" />
+              </DropdownMenuItem>
+              <p v-if="!filteredRoots.length" class="px-2 py-1.5 text-xs text-muted-foreground">No Workspaces Found</p>
+            </div>
+            <div class="border-t p-1">
+              <DropdownMenuItem :disabled="launching || store.picking" @select="newWorkspace">
+                <Plus aria-hidden="true" class="size-4 text-muted-foreground" />
+                New Workspace
+              </DropdownMenuItem>
+            </div>
           </DropdownMenuContent>
         </DropdownMenu>
       </h2>
