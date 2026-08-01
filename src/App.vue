@@ -54,11 +54,14 @@ import { wireAgentNotifications, unwireAgentNotifications } from "@/composables/
 import { useSettingsScreen } from "@/composables/useSettingsScreen";
 import { useAppUpdates } from "@/composables/useAppUpdates";
 import { useDaemonStaleness } from "@/composables/useDaemonStaleness";
+import { disposeAgentInventory } from "@/composables/useAgentInventory";
+import { useAgentUpdateAdvisory } from "@/composables/useAgentUpdateAdvisory";
 
 const dictation = useDictation();
 const shortcuts = useShortcuts();
 useAppUpdates();
 useDaemonStaleness();
+useAgentUpdateAdvisory();
 const BttfEasterEgg = defineAsyncComponent(() => import("./components/BttfEasterEgg.vue"));
 
 // Manual window-drag fallback for tab bars clipped by reka-ui resizable panels,
@@ -749,6 +752,7 @@ onMounted(async () => {
   }).catch((e) => console.warn("[App] panel state reconcile failed", e));
 });
 onUnmounted(() => {
+  disposeAgentInventory();
   document.removeEventListener("click", handleLinkClick, true);
   window.removeEventListener("beforeunload", handleBeforeUnload);
   window.removeEventListener("open-file-tab", handleOpenFileTab);
