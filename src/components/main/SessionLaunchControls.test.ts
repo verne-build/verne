@@ -215,6 +215,67 @@ describe("SessionLaunchControls", () => {
     expect(starts).toEqual([{ agentType: "claude", modelId: null, effort: null, fast: null }]);
   });
 
+  it("keeps Terminal selectable while cached agents are loading or discovery failed", async () => {
+    app.unmount();
+    host.replaceChildren();
+    setInventory(["claude"]);
+    inventoryLoading.value = true;
+    mount();
+    await flush();
+
+    expect(radios().map((element) => element.getAttribute("aria-label"))).toEqual(["Claude", "Terminal"]);
+
+    setInventory(["claude"], "discovery");
+    await flush();
+
+    expect(document.body.textContent).toContain("Couldn't Load Agents");
+    expect(radios().map((element) => element.getAttribute("aria-label"))).toEqual(["Claude", "Terminal"]);
+    await pickAgent("Terminal");
+    button("Start").click();
+    expect(starts).toEqual([undefined]);
+  });
+
+  it("resets model tuning when inventory replaces the selected agent", async () => {
+    await flush();
+    await selectFrom("Select Model", "Opus");
+    await selectFrom("Select Effort Or Fast Mode", "High");
+    await selectFrom("Select Effort Or Fast Mode", "On");
+
+    setInventory(["antigravity"]);
+    await flush();
+    button("Start").click();
+
+    expect(starts).toEqual([{
+      agentType: "agy",
+      modelId: null,
+      effort: null,
+      fast: null,
+    }]);
+  });
+
+  it("keeps retry failure visible until a later inventory refresh succeeds", async () => {
+    app.unmount();
+    host.replaceChildren();
+    setInventory(["claude"], "discovery");
+    refreshInventory.mockRejectedValueOnce(new Error("offline"));
+    mount();
+    await flush();
+
+    button("Retry").click();
+    await flush();
+    setInventory(["claude"]);
+    await flush();
+
+    expect(document.body.textContent).toContain("Couldn't Load Agents");
+    expect(radio("Terminal")).toBeTruthy();
+
+    refreshInventory.mockResolvedValueOnce(snapshot(["claude"]));
+    button("Retry").click();
+    await flush();
+
+    expect(document.body.textContent).not.toContain("Couldn't Load Agents");
+  });
+
   it("keeps Terminal available and refreshes a failed inventory", async () => {
     app.unmount();
     host.replaceChildren();

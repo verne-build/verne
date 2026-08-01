@@ -42,8 +42,10 @@ const selectedModelId = ref<string | null>(null);
 const selectedEffort = ref<string | null>(null);
 const fast = ref(false);
 const loading = computed(() => inventory.loading.value);
+const refreshFailed = ref(false);
 const error = computed(() =>
-  !inventory.loading.value && inventory.snapshot.value?.refreshError === "discovery",
+  refreshFailed.value
+  || (!inventory.loading.value && inventory.snapshot.value?.refreshError === "discovery"),
 );
 
 const surface = computed(() => agentIconSurfaceForTheme(getActiveThemeSpec().type));
@@ -59,9 +61,16 @@ const selectedModel = computed<ModelDefinition | null>(() => selectedModelId.val
   : null);
 const isTerminal = computed(() => !selectedAgent.value);
 
-const radioOptions = computed(() => agentChoices.value.length > 0
-  ? agentChoices.value.map((agent) => ({ value: agent.type as AgentType | "terminal", label: agent.label, icon: agent.icon }))
-  : [{ value: "terminal" as AgentType | "terminal", label: "Terminal", icon: undefined }]);
+const radioOptions = computed(() => {
+  const options = agentChoices.value.map((agent) => ({
+    value: agent.type as AgentType | "terminal",
+    label: agent.label,
+    icon: agent.icon,
+  }));
+  if (options.length === 0 || loading.value || error.value)
+    options.push({ value: "terminal", label: "Terminal", icon: undefined });
+  return options;
+});
 
 const radioGroup = ref<HTMLElement | null>(null);
 const root = ref<HTMLElement | null>(null);
@@ -109,13 +118,17 @@ function compatibleModel(): void {
   if (!supportsFast.value) fast.value = false;
 }
 
-function selectAgent(value: AgentType | "terminal"): void {
-  agentSelectionTouched.value = true;
+function replaceAgent(value: AgentType | "terminal"): void {
   if (selectedAgentType.value === value) return;
   selectedAgentType.value = value;
   selectedModelId.value = null;
   selectedEffort.value = null;
   fast.value = false;
+}
+
+function selectAgent(value: AgentType | "terminal"): void {
+  agentSelectionTouched.value = true;
+  replaceAgent(value);
 }
 
 function selectModel(value: string): void {
@@ -143,12 +156,22 @@ function onRadioClick(value: AgentType | "terminal"): void {
   selectAgent(value);
 }
 
+async function retryInventory(): Promise<void> {
+  try {
+    await inventory.refresh();
+    refreshFailed.value = false;
+  } catch (failure) {
+    console.error("[SessionLaunchControls] inventory refresh failed", failure);
+    refreshFailed.value = true;
+  }
+}
+
 watch([selectedAgent, selectedModel], compatibleModel);
 // Immediate so the first option is checked (and keeps the group's tab stop) while
 // the availability probe is still in flight.
 watch(radioOptions, (options) => {
   if (options.length && !options.some((option) => option.value === selectedAgentType.value))
-    selectedAgentType.value = options[0]!.value;
+    replaceAgent(options[0]!.value);
 }, { immediate: true });
 
 const EDITABLE_TARGET_TAGS = new Set(["INPUT", "TEXTAREA", "SELECT"]);
@@ -336,7 +359,7 @@ onUnmounted(() => {
     <AlertTitle>Couldn't Load Agents</AlertTitle>
     <AlertDescription class="flex items-center justify-between gap-3 text-pretty">
       <span>Verne couldn't check installed agents. Terminal is still available.</span>
-      <Button type="button" variant="outline" class="min-h-10 shrink-0" :disabled="busy || loading" @click="inventory.refresh">Retry</Button>
+      <Button type="button" variant="outline" class="min-h-10 shrink-0" :disabled="busy || loading" @click="retryInventory">Retry</Button>
     </AlertDescription>
   </Alert>
 </template>
