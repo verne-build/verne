@@ -253,7 +253,7 @@ describe("SessionLaunchControls", () => {
     }]);
   });
 
-  it("keeps retry failure visible until a later inventory refresh succeeds", async () => {
+  it("clears retry transport failure when a pushed inventory snapshot succeeds", async () => {
     app.unmount();
     host.replaceChildren();
     setInventory(["claude"], "discovery");
@@ -263,17 +263,17 @@ describe("SessionLaunchControls", () => {
 
     button("Retry").click();
     await flush();
-    setInventory(["claude"]);
+    setInventory(["claude"], "discovery");
     await flush();
 
     expect(document.body.textContent).toContain("Couldn't Load Agents");
     expect(radio("Terminal")).toBeTruthy();
 
-    refreshInventory.mockResolvedValueOnce(snapshot(["claude"]));
-    button("Retry").click();
+    setInventory(["claude"]);
     await flush();
 
     expect(document.body.textContent).not.toContain("Couldn't Load Agents");
+    expect(radios().map((element) => element.getAttribute("aria-label"))).toEqual(["Claude"]);
   });
 
   it("keeps Terminal available and refreshes a failed inventory", async () => {
