@@ -8,8 +8,14 @@ import type {
 import type { LatestVersionResult } from "./latest";
 import { AGENT_INVENTORY_KEYS } from "./store";
 import { compareAgentVersions, updateGuidance } from "./version";
+import { INVENTORY_TTL_MS } from "./constants";
+import {
+  INVENTORY_DIAGNOSTIC_KEY,
+  reportDiagnostic,
+  type InventoryDiagnosticDeps,
+} from "./diagnostics";
 
-export const INVENTORY_TTL_MS = 60 * 60 * 1_000;
+export { INVENTORY_TTL_MS };
 
 const DISPLAY_NAMES: Record<AgentInventoryKey, string> = {
   claude: "Claude",
@@ -21,7 +27,7 @@ const DISPLAY_NAMES: Record<AgentInventoryKey, string> = {
   pi: "Pi",
 };
 
-export interface AgentInventoryServiceDeps {
+export interface AgentInventoryServiceDeps extends InventoryDiagnosticDeps {
   probe: () => Promise<AgentInventoryProbeItem[]>;
   probeVersion: (item: AgentInventoryProbeItem) => Promise<string | null>;
   resolveLatest: (item: AgentInventoryProbeItem) => Promise<LatestVersionResult>;
@@ -66,8 +72,10 @@ export class AgentInventoryService {
   private async runRefresh(): Promise<AgentInventorySnapshot> {
     const checkedAtMs = this.deps.now();
     let next: AgentInventorySnapshot;
+    let discoveryRejected = true;
     try {
       const rows = await this.deps.probe();
+      discoveryRejected = false;
       next = {
         schemaVersion: 1,
         agents: await this.resolveAgents(rows),
@@ -76,6 +84,9 @@ export class AgentInventoryService {
         refreshError: null,
       };
     } catch {
+      if (discoveryRejected) {
+        reportDiagnostic(this.deps, INVENTORY_DIAGNOSTIC_KEY, "discovery-rejected", checkedAtMs);
+      }
       next = {
         schemaVersion: 1,
         agents: this.snapshot?.agents.map(copyAgent) ?? AGENT_INVENTORY_KEYS.map(unknownAgent),

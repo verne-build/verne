@@ -44,7 +44,9 @@ export function useAgentUpdateAdvisory(): void {
   started = true;
   const { snapshot } = useAgentInventory();
   watch(snapshot, (next) => {
-    if (!next) return;
+    if (!next || next.refreshError !== null) return;
+    const expiresAt = Date.parse(next.expiresAt);
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return;
     show(next.agents.filter((agent) =>
       agent.discoveryStatus === "installed" && agent.updateStatus === "outdated",
     ));

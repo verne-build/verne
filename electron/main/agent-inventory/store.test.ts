@@ -45,6 +45,13 @@ describe("agent inventory snapshot storage", () => {
     expect(validateSnapshot(value, NOW)).toEqual(value);
   });
 
+  it("accepts expiry exactly one hour after the check", () => {
+    const value = snapshot();
+
+    expect(Date.parse(value.expiresAt) - Date.parse(value.checkedAt)).toBe(3_600_000);
+    expect(validateSnapshot(value, NOW)).toEqual(value);
+  });
+
   it.each([
     ["wrong schema", { ...snapshot(), schemaVersion: 2 }],
     ["duplicate key", { ...snapshot(), agents: [...snapshot().agents.slice(0, 6), snapshot().agents[0]] }],
@@ -55,6 +62,9 @@ describe("agent inventory snapshot storage", () => {
     ["malformed error enum", { ...snapshot(), agents: snapshot().agents.map((agent, index) => index === 0 ? { ...agent, errorCode: "timeout" } : agent) }],
     ["non-ISO checked timestamp", { ...snapshot(), checkedAt: "2026-08-01 00:00:00Z" }],
     ["non-ISO expiry timestamp", { ...snapshot(), expiresAt: "2026-08-01T01:00:00Z" }],
+    ["backwards expiry", { ...snapshot(), expiresAt: "2026-07-31T23:59:59.999Z" }],
+    ["expiry before one hour", { ...snapshot(), expiresAt: "2026-08-01T00:59:59.999Z" }],
+    ["expiry after one hour", { ...snapshot(), expiresAt: "2026-08-01T01:00:00.001Z" }],
     ["future timestamp", { ...snapshot(), checkedAt: "2026-08-01T00:05:00.001Z" }],
     ["extra snapshot field", { ...snapshot(), unexpected: true }],
     ["extra agent field", { ...snapshot(), agents: snapshot().agents.map((agent, index) => index === 0 ? { ...agent, unexpected: true } : agent) }],
@@ -63,7 +73,11 @@ describe("agent inventory snapshot storage", () => {
   });
 
   it("allows a checked timestamp exactly five minutes ahead", () => {
-    const value = { ...snapshot(), checkedAt: "2026-08-01T00:05:00.000Z" };
+    const value = {
+      ...snapshot(),
+      checkedAt: "2026-08-01T00:05:00.000Z",
+      expiresAt: "2026-08-01T01:05:00.000Z",
+    };
 
     expect(validateSnapshot(value, NOW)).toEqual(value);
   });

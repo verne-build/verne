@@ -6,11 +6,19 @@ import type {
   AgentInventoryProbeItem,
   AgentUpdateStatus,
 } from "../../../src/types/agentInventory";
+import {
+  diagnosticDuration,
+  diagnosticStart,
+  emitDiagnostic,
+  reportDiagnostic,
+  type InventoryDiagnosticCode,
+  type InventoryDiagnosticDeps,
+} from "./diagnostics";
 
 const MAX_VERSION_OUTPUT_BYTES = 65_536;
 const CODEX_PACKAGE = "@openai/codex";
 
-export interface VersionDeps {
+export interface VersionDeps extends InventoryDiagnosticDeps {
   execFile: typeof execFile;
   timeoutMs: number;
   maxOutputBytes: number;
@@ -28,13 +36,17 @@ export async function probeInstalledVersion(
 ): Promise<string | null> {
   if (item.discoveryStatus !== "available" || !item.resolvedBinary) return null;
 
-  const first = await probe(item.resolvedBinary, item.versionProbe.args, deps);
-  const version = first === null ? null : parseInstalledVersion(item.key, first);
+  const first = await probe(item, item.versionProbe.args, deps);
+  const version = first === null ? null : parseInstalledVersion(item.key, first.output);
   if (version !== null) return version;
+  if (first !== null) emitDiagnostic(deps, item.key, "version-parse", first.durationMs);
 
   if (item.versionProbe.kind !== "semver" || !item.versionProbe.fallback_args) return null;
-  const fallback = await probe(item.resolvedBinary, item.versionProbe.fallback_args, deps);
-  return fallback === null ? null : parseInstalledVersion(item.key, fallback);
+  const fallback = await probe(item, item.versionProbe.fallback_args, deps);
+  if (fallback === null) return null;
+  const fallbackVersion = parseInstalledVersion(item.key, fallback.output);
+  if (fallbackVersion === null) emitDiagnostic(deps, item.key, "version-parse", fallback.durationMs);
+  return fallbackVersion;
 }
 
 export function parseInstalledVersion(key: AgentInventoryKey, output: string): string | null {
@@ -93,24 +105,54 @@ export function updateGuidance(
     : { updateCommand: null, updateUrl: item.update.docs_url };
 }
 
-function probe(binary: string, args: readonly string[], deps: VersionDeps): Promise<string | null> {
+interface VersionProbeOutput {
+  output: string;
+  durationMs: number;
+}
+
+function probe(
+  item: AgentInventoryProbeItem,
+  args: readonly string[],
+  deps: VersionDeps,
+): Promise<VersionProbeOutput | null> {
   return new Promise((resolve) => {
+    const startedAt = diagnosticStart(deps);
     try {
-      deps.execFile(binary, args, {
+      deps.execFile(item.resolvedBinary!, args, {
         shell: false,
         timeout: deps.timeoutMs,
         maxBuffer: deps.maxOutputBytes,
       }, (error, stdout) => {
-        if (error || typeof stdout !== "string" || Buffer.byteLength(stdout, "utf8") > deps.maxOutputBytes) {
+        if (error) {
+          reportDiagnostic(deps, item.key, versionFailureCode(error), startedAt);
           resolve(null);
           return;
         }
-        resolve(stdout);
+        if (typeof stdout !== "string") {
+          reportDiagnostic(deps, item.key, "version-exec", startedAt);
+          resolve(null);
+          return;
+        }
+        if (Buffer.byteLength(stdout, "utf8") > deps.maxOutputBytes) {
+          reportDiagnostic(deps, item.key, "version-output-cap", startedAt);
+          resolve(null);
+          return;
+        }
+        resolve({ output: stdout, durationMs: diagnosticDuration(deps, startedAt) });
       });
     } catch {
+      reportDiagnostic(deps, item.key, "version-exec", startedAt);
       resolve(null);
     }
   });
+}
+
+function versionFailureCode(error: unknown): InventoryDiagnosticCode {
+  if (!isRecord(error)) return "version-exec";
+  if (error.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") return "version-output-cap";
+  if (error.killed === true) return "version-timeout";
+  if (typeof error.code === "number") return "version-nonzero";
+  return "version-exec";
 }
 
 const SEMVER_SOURCE = "(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-([0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?(?:\\+([0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?";
@@ -179,6 +221,10 @@ function compareCursorBuilds(current: string, latest: string): AgentUpdateStatus
 
 function stripAnsi(value: string): string {
   return value.replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 function realExecutablePath(path: string | null): string | null {

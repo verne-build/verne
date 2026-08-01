@@ -7,6 +7,7 @@ import type {
   AgentInventorySnapshot,
   AgentUpdateStatus,
 } from "../../../src/types/agentInventory";
+import { INVENTORY_TTL_MS } from "./constants";
 
 const MAX_FUTURE_MS = 5 * 60 * 1_000;
 const SNAPSHOT_FIELDS = ["schemaVersion", "agents", "checkedAt", "expiresAt", "refreshError"];
@@ -45,7 +46,8 @@ export function validateSnapshot(value: unknown, nowMs: number): AgentInventoryS
 
   const checkedAt = parseIso(value.checkedAt);
   if (checkedAt === null || checkedAt > nowMs + MAX_FUTURE_MS) return null;
-  if (parseIso(value.expiresAt) === null) return null;
+  const expiresAt = parseIso(value.expiresAt);
+  if (expiresAt === null || expiresAt - checkedAt !== INVENTORY_TTL_MS) return null;
 
   for (let index = 0; index < AGENT_INVENTORY_KEYS.length; index++) {
     if (!isAgent(value.agents[index], AGENT_INVENTORY_KEYS[index])) return null;

@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 let publishInventory: ((event: { payload: AgentInventorySnapshot }) => void) | undefined;
+const NOW = Date.parse("2026-07-31T01:30:00.000Z");
 
 vi.mock("@/composables/useRpc", () => ({
   useRpc: () => ({ request: { agentInventoryGet: mocks.get, agentInventoryRefresh: mocks.refresh } }),
@@ -48,13 +49,17 @@ function item(
   };
 }
 
-function snapshot(agents: AgentInventoryItem[]): AgentInventorySnapshot {
+function snapshot(
+  agents: AgentInventoryItem[],
+  overrides: Partial<Pick<AgentInventorySnapshot, "expiresAt" | "refreshError">> = {},
+): AgentInventorySnapshot {
   return {
     schemaVersion: 1,
     agents,
     checkedAt: "2026-07-31T01:00:00.000Z",
-    expiresAt: "2026-08-01T01:00:00.000Z",
+    expiresAt: "2026-07-31T02:00:00.000Z",
     refreshError: null,
+    ...overrides,
   };
 }
 
@@ -65,6 +70,7 @@ describe("useAgentUpdateAdvisory", () => {
     mocks.activeCategory.value = "appearance";
     mocks.showSettings.value = false;
     mocks.get.mockResolvedValue(null);
+    vi.spyOn(Date, "now").mockReturnValue(NOW);
     publishInventory = undefined;
     mocks.listen.mockImplementation(async (_event, handler) => {
       publishInventory = handler;
@@ -75,6 +81,7 @@ describe("useAgentUpdateAdvisory", () => {
   afterEach(async () => {
     const { disposeAgentInventory } = await import("./useAgentInventory");
     disposeAgentInventory();
+    vi.restoreAllMocks();
   });
 
   async function start() {
@@ -131,6 +138,37 @@ describe("useAgentUpdateAdvisory", () => {
     await publish(snapshot([item("claude", "Claude", "installed", "outdated", "2.1.5")]));
 
     expect(mocks.toast).toHaveBeenCalledTimes(2);
+  });
+
+  it("stays silent for an expired snapshot", async () => {
+    await start();
+    await publish(snapshot(
+      [item("claude", "Claude")],
+      { expiresAt: new Date(NOW).toISOString() },
+    ));
+
+    expect(mocks.toast).not.toHaveBeenCalled();
+  });
+
+  it("stays silent for retained outdated rows after discovery failure", async () => {
+    await start();
+    await publish(snapshot(
+      [item("claude", "Claude")],
+      { refreshError: "discovery" },
+    ));
+
+    expect(mocks.toast).not.toHaveBeenCalled();
+  });
+
+  it("notifies immediately from a fresh error-free cached snapshot and deduplicates its push", async () => {
+    const cached = snapshot([item("claude", "Claude")]);
+    mocks.get.mockResolvedValue(cached);
+
+    await start();
+    await vi.waitFor(() => expect(mocks.toast).toHaveBeenCalledTimes(1));
+    await publish(cached);
+
+    expect(mocks.toast).toHaveBeenCalledTimes(1);
   });
 
   it("opens MCP settings from the toast action", async () => {

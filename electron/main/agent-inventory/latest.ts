@@ -1,5 +1,11 @@
 import { execFile } from "node:child_process";
 import type { AgentInventoryProbeItem } from "../../../src/types/agentInventory";
+import {
+  diagnosticStart,
+  reportDiagnostic,
+  type InventoryDiagnosticCode,
+  type InventoryDiagnosticDeps,
+} from "./diagnostics";
 
 const MAX_HTTP_RESPONSE_BYTES = 1_048_576;
 const MAX_CLI_OUTPUT_BYTES = 65_536;
@@ -25,13 +31,15 @@ export interface LatestVersionResult {
   packageName: string | null;
 }
 
-export interface LatestDeps {
+export interface LatestDeps extends InventoryDiagnosticDeps {
   fetch: typeof globalThis.fetch;
   execFile: typeof execFile;
   httpTimeoutMs: number;
   cliTimeoutMs: number;
   maxResponseBytes: number;
   maxOutputBytes: number;
+  scheduleTimeout?: (callback: () => void, delayMs: number) => unknown;
+  cancelTimeout?: (handle: unknown) => void;
 }
 
 export const NODE_LATEST_DEPS: LatestDeps = {
@@ -52,20 +60,22 @@ export async function resolveLatestVersion(
   }
 
   const source = item.latestSource;
+  const startedAt = diagnosticStart(deps);
   if (!isAllowedSourceUrl(source.kind, source.url)) return unknown();
-  const text = await fetchText(source.url, deps);
-  if (text === null) return unknown();
+  const fetched = await fetchText(item.key, source.url, startedAt, deps);
+  if (fetched === null) return unknown();
 
+  let result: LatestVersionResult;
   if (source.kind === "antigravity-installer") {
-    return { version: parseAntigravityInstaller(text), packageName: null };
+    result = { version: parseAntigravityInstaller(fetched), packageName: null };
+  } else if (source.kind === "cursor-installer") {
+    result = { version: parseCursorInstaller(fetched), packageName: null };
+  } else {
+    const value = parseJson(fetched);
+    result = source.kind === "npm-json" ? npmResult(value) : piResult(value);
   }
-  if (source.kind === "cursor-installer") {
-    return { version: parseCursorInstaller(text), packageName: null };
-  }
-
-  const value = parseJson(text);
-  if (source.kind === "npm-json") return npmResult(value);
-  return piResult(value);
+  if (result.version === null) reportDiagnostic(deps, item.key, "latest-parse", startedAt);
+  return result;
 }
 
 export function parseAntigravityInstaller(text: string): string | null {
@@ -102,22 +112,38 @@ function isAllowedSourceUrl(kind: keyof typeof SOURCE_URLS, url: string): boolea
   return SOURCE_URLS[kind].has(url);
 }
 
-async function fetchText(url: string, deps: LatestDeps): Promise<string | null> {
+async function fetchText(
+  key: AgentInventoryProbeItem["key"],
+  url: string,
+  startedAt: number,
+  deps: LatestDeps,
+): Promise<string | null> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), deps.httpTimeoutMs);
+  const scheduleTimeout = deps.scheduleTimeout ?? ((callback: () => void, delayMs: number) => setTimeout(callback, delayMs));
+  const cancelTimeout = deps.cancelTimeout ?? ((handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>));
+  const timeout = scheduleTimeout(() => controller.abort(), deps.httpTimeoutMs);
   try {
     const response = await deps.fetch(url, { signal: controller.signal, redirect: "error" });
-    if (!response.ok) return null;
-    return await readBody(response, deps.maxResponseBytes);
+    if (!response.ok) {
+      reportDiagnostic(deps, key, "latest-http-status", startedAt, response.status);
+      return null;
+    }
+    const body = await readBody(response, deps.maxResponseBytes);
+    if (body.kind === "ok") return body.text;
+    reportDiagnostic(deps, key, body.kind === "cap" ? "latest-body-cap" : "latest-fetch", startedAt);
+    return null;
   } catch {
+    reportDiagnostic(deps, key, controller.signal.aborted ? "latest-fetch-timeout" : "latest-fetch", startedAt);
     return null;
   } finally {
-    clearTimeout(timeout);
+    cancelTimeout(timeout);
   }
 }
 
-async function readBody(response: Response, maxBytes: number): Promise<string | null> {
-  if (!response.body) return null;
+type BodyResult = { kind: "ok"; text: string } | { kind: "cap" } | { kind: "read" };
+
+async function readBody(response: Response, maxBytes: number): Promise<BodyResult> {
+  if (!response.body) return { kind: "read" };
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
@@ -128,7 +154,7 @@ async function readBody(response: Response, maxBytes: number): Promise<string | 
       total += value.byteLength;
       if (total > maxBytes) {
         await reader.cancel();
-        return null;
+        return { kind: "cap" };
       }
       chunks.push(value);
     }
@@ -138,9 +164,9 @@ async function readBody(response: Response, maxBytes: number): Promise<string | 
       bytes.set(chunk, offset);
       offset += chunk.byteLength;
     }
-    return new TextDecoder().decode(bytes);
+    return { kind: "ok", text: new TextDecoder().decode(bytes) };
   } catch {
-    return null;
+    return { kind: "read" };
   } finally {
     reader.releaseLock();
   }
@@ -169,22 +195,43 @@ function resolveGrokVersion(item: AgentInventoryProbeItem, deps: LatestDeps): Pr
   if (item.discoveryStatus !== "available" || !item.resolvedBinary) return Promise.resolve(null);
   const binary = item.resolvedBinary;
   return new Promise((resolve) => {
+    const startedAt = diagnosticStart(deps);
     try {
       deps.execFile(binary, ["update", "--check"], {
         shell: false,
         timeout: deps.cliTimeoutMs,
         maxBuffer: deps.maxOutputBytes,
       }, (error: Error | null, stdout: string) => {
-        if (error || typeof stdout !== "string" || Buffer.byteLength(stdout, "utf8") > deps.maxOutputBytes) {
+        if (error) {
+          reportDiagnostic(deps, item.key, grokFailureCode(error), startedAt);
           resolve(null);
           return;
         }
-        resolve(parseGrokUpdateCheck(stdout));
+        if (typeof stdout !== "string") {
+          reportDiagnostic(deps, item.key, "latest-cli-exec", startedAt);
+          resolve(null);
+          return;
+        }
+        if (Buffer.byteLength(stdout, "utf8") > deps.maxOutputBytes) {
+          reportDiagnostic(deps, item.key, "latest-cli-output-cap", startedAt);
+          resolve(null);
+          return;
+        }
+        const version = parseGrokUpdateCheck(stdout);
+        if (version === null) reportDiagnostic(deps, item.key, "latest-cli-parse", startedAt);
+        resolve(version);
       });
     } catch {
+      reportDiagnostic(deps, item.key, "latest-cli-exec", startedAt);
       resolve(null);
     }
   });
+}
+
+function grokFailureCode(error: unknown): InventoryDiagnosticCode {
+  if (!isRecord(error)) return "latest-cli-exec";
+  if (error.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") return "latest-cli-output-cap";
+  return error.killed === true ? "latest-cli-timeout" : "latest-cli-exec";
 }
 
 function validSemver(value: unknown): value is string {

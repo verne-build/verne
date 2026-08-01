@@ -89,6 +89,42 @@ function createService(overrides: Partial<AgentInventoryServiceDeps> & { cached?
 }
 
 describe("agent inventory service", () => {
+  it("logs one sanitized total-discovery diagnostic on rejection", async () => {
+    const events: unknown[] = [];
+    const rawError = "PRIVATE_DISCOVERY_ERROR PATH=/Users/alice/bin ENV=secret";
+    const { service } = createService(Object.assign({
+      probe: vi.fn().mockRejectedValue(new Error(rawError)),
+      now: vi.fn()
+        .mockReturnValueOnce(NOW)
+        .mockReturnValueOnce(NOW + 17),
+    }, {
+      diagnostic: (event: unknown) => events.push(event),
+    }));
+
+    await service.refresh();
+
+    expect(events).toEqual([{
+      key: "inventory",
+      code: "discovery-rejected",
+      durationMs: 17,
+      httpStatus: null,
+    }]);
+    expect(JSON.stringify(events)).not.toContain(rawError);
+    expect(JSON.stringify(events)).not.toContain("/Users/alice/bin");
+    expect(JSON.stringify(events)).not.toContain("ENV=secret");
+  });
+
+  it("does not diagnose successful discovery containing missing agents", async () => {
+    const events: unknown[] = [];
+    const { service } = createService(Object.assign({}, {
+      diagnostic: (event: unknown) => events.push(event),
+    }));
+
+    await service.refresh();
+
+    expect(events).toEqual([]);
+  });
+
   it("deduplicates concurrent refreshes", async () => {
     const pending = deferred<AgentInventoryProbeItem[]>();
     const { service, deps } = createService({ probe: vi.fn(() => pending.promise) });

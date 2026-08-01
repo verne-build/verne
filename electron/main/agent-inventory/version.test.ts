@@ -47,6 +47,77 @@ function depsFor(
 }
 
 describe("installed agent versions", () => {
+  it("pins sanitized diagnostics for exec, timeout, output-cap, parse, and nonzero failures", async () => {
+    const events: unknown[] = [];
+    const binary = "/Users/alice/private/bin/claude";
+    const rawExecError = "PRIVATE_EXEC_ERROR ENV_TOKEN=secret";
+    const rawTimeoutError = "PRIVATE_TIMEOUT_ERROR";
+    const rawNonzeroError = "PRIVATE_NONZERO_ERROR";
+    const rawOutput = "PRIVATE_STDOUT_AND_STDERR";
+    const probe = probeItem("claude", {
+      kind: "semver",
+      args: ["--version"],
+      fallback_args: null,
+    }, binary);
+
+    const run = async (
+      error: (Error & { code?: string | number; killed?: boolean }) | null,
+      stdout: string,
+      stderr: string,
+      clock: number[],
+      maxOutputBytes = 65_536,
+    ) => {
+      const deps = Object.assign({
+        timeoutMs: 20,
+        maxOutputBytes,
+        execFile: ((_: string, _args: readonly string[], _options: unknown, callback: (error: Error | null, stdout: string, stderr: string) => void) => {
+          queueMicrotask(() => callback(error, stdout, stderr));
+          return {} as ChildProcess;
+        }) as VersionDeps["execFile"],
+      }, {
+        diagnostic: (event: unknown) => events.push(event),
+        now: () => clock.shift() ?? 0,
+      });
+      await probeInstalledVersion(probe, deps);
+    };
+
+    await run(Object.assign(new Error(rawExecError), { code: "ENOENT" }), "", "PRIVATE_STDERR", [100, 108]);
+    await run(Object.assign(new Error(rawTimeoutError), { killed: true }), "", "", [200, 213]);
+    await run(null, rawOutput, "PRIVATE_STDERR", [300, 315], 4);
+    await run(null, "not-semver", "PRIVATE_STDERR", [400, 390]);
+    await run(Object.assign(new Error(rawNonzeroError), { code: 7 }), "PRIVATE_NONZERO_STDOUT", "PRIVATE_STDERR", [500, 521]);
+
+    expect(events).toEqual([
+      { key: "claude", code: "version-exec", durationMs: 8, httpStatus: null },
+      { key: "claude", code: "version-timeout", durationMs: 13, httpStatus: null },
+      { key: "claude", code: "version-output-cap", durationMs: 15, httpStatus: null },
+      { key: "claude", code: "version-parse", durationMs: 0, httpStatus: null },
+      { key: "claude", code: "version-nonzero", durationMs: 21, httpStatus: null },
+    ]);
+    const serialized = JSON.stringify(events);
+    for (const secret of [binary, rawExecError, rawTimeoutError, rawNonzeroError, rawOutput, "PRIVATE_STDERR", "ENV_TOKEN=secret"]) {
+      expect(serialized).not.toContain(secret);
+    }
+  });
+
+  it("does not diagnose successful probes or ordinary missing agents", async () => {
+    const events: unknown[] = [];
+    const available = probeItem("claude", {
+      kind: "semver",
+      args: ["--version"],
+      fallback_args: null,
+    });
+    const missing = { ...available, discoveryStatus: "missing" as const, resolvedBinary: null };
+    const deps = Object.assign(depsFor(["2.1.4"]), {
+      diagnostic: (event: unknown) => events.push(event),
+      now: viClock([100, 101]),
+    });
+
+    await expect(probeInstalledVersion(available, deps)).resolves.toBe("2.1.4");
+    await expect(probeInstalledVersion(missing, deps)).resolves.toBeNull();
+    expect(events).toEqual([]);
+  });
+
   it.each([
     ["claude", "2.1.4 (Claude Code)", "2.1.4"],
     ["codex", "codex-cli 0.44.1", "0.44.1"],
@@ -158,3 +229,7 @@ describe("installed agent versions", () => {
     }
   });
 });
+
+function viClock(values: number[]): () => number {
+  return () => values.shift() ?? 0;
+}

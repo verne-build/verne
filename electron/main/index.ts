@@ -76,6 +76,7 @@ import { AgentInventoryService } from "./agent-inventory/service";
 import { readSnapshot, writeSnapshot } from "./agent-inventory/store";
 import { probeInstalledVersion, NODE_VERSION_DEPS } from "./agent-inventory/version";
 import { resolveLatestVersion, NODE_LATEST_DEPS } from "./agent-inventory/latest";
+import { CONSOLE_INVENTORY_DIAGNOSTIC_LOGGER } from "./agent-inventory/diagnostics";
 import {
   refreshInventoryAfterDaemonRestart,
   registerAgentInventoryCommands,
@@ -392,10 +393,13 @@ app.whenReady().then(async () => {
   sidecar = await timed("ensureSidecar", () => ensureSidecar());
   const d0 = daemon, s0 = sidecar;
   const inventoryPath = join(internalDataDir, "agent-inventory.json");
+  const inventoryDiagnostic = CONSOLE_INVENTORY_DIAGNOSTIC_LOGGER;
+  const versionDeps = { ...NODE_VERSION_DEPS, diagnostic: inventoryDiagnostic };
+  const latestDeps = { ...NODE_LATEST_DEPS, diagnostic: inventoryDiagnostic };
   agentInventory = new AgentInventoryService({
     probe: () => d0.request<AgentInventoryProbeItem[]>("agent_inventory_probe", null),
-    probeVersion: (item) => probeInstalledVersion(item, NODE_VERSION_DEPS),
-    resolveLatest: (item) => resolveLatestVersion(item, NODE_LATEST_DEPS),
+    probeVersion: (item) => probeInstalledVersion(item, versionDeps),
+    resolveLatest: (item) => resolveLatestVersion(item, latestDeps),
     read: () => readSnapshot(inventoryPath, Date.now()),
     write: (snapshot) => writeSnapshot(inventoryPath, snapshot),
     emit: (snapshot) => {
@@ -404,6 +408,7 @@ app.whenReady().then(async () => {
       }
     },
     now: Date.now,
+    diagnostic: inventoryDiagnostic,
   });
   registerAgentInventoryCommands(agentInventory);
   // Sidecar events: best-effort (it's app-lifecycle, freshly spawned above).
