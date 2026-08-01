@@ -122,6 +122,90 @@ describe("useAgentInventory", () => {
     expect(replacement.snapshot.value).toEqual(second);
   });
 
+  it("ignores a pending listener callback after disposal", async () => {
+    const registration = deferred<() => void>();
+    const pendingGet = deferred<AgentInventorySnapshot | null>();
+    let publish: ((event: { payload: AgentInventorySnapshot }) => void) | undefined;
+    mocks.get.mockReturnValue(pendingGet.promise);
+    mocks.listen.mockImplementation((_event, handler) => {
+      publish = handler;
+      return registration.promise;
+    });
+    const { disposeAgentInventory, useAgentInventory } = await import("./useAgentInventory");
+    const inventory = useAgentInventory();
+
+    disposeAgentInventory();
+    publish?.({ payload: snapshot("2026-07-31T02:00:00.000Z") });
+
+    expect(inventory.snapshot.value).toBeNull();
+    expect(inventory.loading.value).toBe(false);
+    registration.resolve(mocks.unlisten);
+    await flushPromises();
+    expect(mocks.unlisten).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores an obsolete pending listener after reinitialization", async () => {
+    const firstRegistration = deferred<() => void>();
+    const callbacks: Array<(event: { payload: AgentInventorySnapshot }) => void> = [];
+    mocks.get.mockResolvedValue(null);
+    mocks.listen.mockImplementation((_event, handler) => {
+      callbacks.push(handler);
+      return callbacks.length === 1 ? firstRegistration.promise : Promise.resolve(mocks.unlisten);
+    });
+    const { disposeAgentInventory, useAgentInventory } = await import("./useAgentInventory");
+    const initial = useAgentInventory();
+    disposeAgentInventory();
+    const replacement = useAgentInventory();
+
+    callbacks[0]({ payload: snapshot("2026-07-31T01:00:00.000Z") });
+    expect(initial.snapshot.value).toBeNull();
+    callbacks[1]({ payload: snapshot("2026-07-31T02:00:00.000Z") });
+
+    expect(replacement.snapshot.value?.checkedAt).toBe("2026-07-31T02:00:00.000Z");
+    firstRegistration.resolve(mocks.unlisten);
+    await flushPromises();
+    expect(mocks.unlisten).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps loading until a newer refresh completes when the initial get resolves first", async () => {
+    const initialGet = deferred<AgentInventorySnapshot | null>();
+    const pendingRefresh = deferred<AgentInventorySnapshot>();
+    mocks.get.mockReturnValue(initialGet.promise);
+    mocks.refresh.mockReturnValue(pendingRefresh.promise);
+    const { useAgentInventory } = await import("./useAgentInventory");
+    const inventory = useAgentInventory();
+    const refresh = inventory.refresh();
+
+    initialGet.resolve(snapshot("2026-07-31T01:00:00.000Z"));
+    await flushPromises();
+
+    expect(inventory.snapshot.value).toBeNull();
+    expect(inventory.loading.value).toBe(true);
+    pendingRefresh.resolve(snapshot("2026-07-31T02:00:00.000Z"));
+    await refresh;
+
+    expect(inventory.snapshot.value?.checkedAt).toBe("2026-07-31T02:00:00.000Z");
+    expect(inventory.loading.value).toBe(false);
+  });
+
+  it("keeps a newer refresh snapshot when the initial get resolves last", async () => {
+    const initialGet = deferred<AgentInventorySnapshot | null>();
+    const pendingRefresh = deferred<AgentInventorySnapshot>();
+    mocks.get.mockReturnValue(initialGet.promise);
+    mocks.refresh.mockReturnValue(pendingRefresh.promise);
+    const { useAgentInventory } = await import("./useAgentInventory");
+    const inventory = useAgentInventory();
+    const refresh = inventory.refresh();
+
+    pendingRefresh.resolve(snapshot("2026-07-31T02:00:00.000Z"));
+    await refresh;
+    initialGet.resolve(snapshot("2026-07-31T01:00:00.000Z"));
+    await flushPromises();
+
+    expect(inventory.snapshot.value?.checkedAt).toBe("2026-07-31T02:00:00.000Z");
+    expect(inventory.loading.value).toBe(false);
+  });
+
   it("derives installed keys and outdated items from the latest snapshot", async () => {
     mocks.get.mockResolvedValue(snapshot("2026-07-31T01:00:00.000Z", [
       agent({ key: "claude", discoveryStatus: "installed", updateStatus: "outdated" }),

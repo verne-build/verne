@@ -6,56 +6,70 @@ import type { AgentInventorySnapshot } from "@/types";
 const snapshot = ref<AgentInventorySnapshot | null>(null);
 const loading = ref(false);
 
-let initialized = false;
 let generation = 0;
-let lifecycle = 0;
-let unlisten: UnlistenFn | null = null;
+type Lifecycle = {
+  operation: object | null;
+  unlisten: UnlistenFn | null;
+};
+let lifecycle: Lifecycle | null = null;
 
-function commitPushedSnapshot(next: AgentInventorySnapshot): void {
+function isCurrent(owner: Lifecycle, operation: object, requestGeneration: number): boolean {
+  return lifecycle === owner && owner.operation === operation && generation === requestGeneration;
+}
+
+function beginOperation(owner: Lifecycle): { operation: object; requestGeneration: number } {
+  const operation = {};
+  owner.operation = operation;
+  loading.value = true;
+  return { operation, requestGeneration: generation };
+}
+
+function commitPushedSnapshot(owner: Lifecycle, next: AgentInventorySnapshot): void {
+  if (lifecycle !== owner) return;
   generation += 1;
+  owner.operation = null;
   snapshot.value = next;
   loading.value = false;
 }
 
 function start(): void {
-  if (initialized) return;
-  initialized = true;
-  const currentLifecycle = ++lifecycle;
+  if (lifecycle) return;
+  const owner: Lifecycle = { operation: null, unlisten: null };
+  lifecycle = owner;
 
   void listen<AgentInventorySnapshot>("agent-inventory-changed", (event) => {
-    commitPushedSnapshot(event.payload);
+    commitPushedSnapshot(owner, event.payload);
   }).then((nextUnlisten) => {
-    if (!initialized || lifecycle !== currentLifecycle) {
+    if (lifecycle !== owner) {
       nextUnlisten();
       return;
     }
-    unlisten = nextUnlisten;
+    owner.unlisten = nextUnlisten;
   }).catch((error) => {
     console.error("[agent-inventory] listen failed", error);
   });
 
-  const requestGeneration = generation;
-  loading.value = true;
+  const { operation, requestGeneration } = beginOperation(owner);
   void useRpc().request.agentInventoryGet().then((next) => {
-    if (!initialized || generation !== requestGeneration) return;
+    if (!isCurrent(owner, operation, requestGeneration)) return;
     snapshot.value = next;
   }).catch((error) => {
     console.error("[agent-inventory] get failed", error);
   }).finally(() => {
-    if (initialized && generation === requestGeneration) loading.value = false;
+    if (isCurrent(owner, operation, requestGeneration)) loading.value = false;
   });
 }
 
 export async function refresh(): Promise<AgentInventorySnapshot> {
   start();
-  const requestGeneration = generation;
-  loading.value = true;
+  const owner = lifecycle!;
+  const { operation, requestGeneration } = beginOperation(owner);
   try {
     const next = await useRpc().request.agentInventoryRefresh();
-    if (initialized && generation === requestGeneration) snapshot.value = next;
+    if (isCurrent(owner, operation, requestGeneration)) snapshot.value = next;
     return next;
   } finally {
-    if (initialized && generation === requestGeneration) loading.value = false;
+    if (isCurrent(owner, operation, requestGeneration)) loading.value = false;
   }
 }
 
@@ -77,11 +91,10 @@ export function useAgentInventory() {
 }
 
 export function disposeAgentInventory(): void {
-  lifecycle += 1;
+  const owner = lifecycle;
+  lifecycle = null;
   generation += 1;
-  initialized = false;
-  unlisten?.();
-  unlisten = null;
+  owner?.unlisten?.();
   snapshot.value = null;
   loading.value = false;
 }
