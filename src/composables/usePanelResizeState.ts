@@ -11,7 +11,9 @@ interface Options {
   visibleStateKey?: string;
   initialVisible?: boolean;
   writeCachedVisible?: (v: boolean) => void;
-  /** Live width of the containing right panel. Omit to stay always-docked. */
+  /** Width of the containing right panel. Must be the SETTLED width — the one
+   *  it will have once any in-flight slide lands, not a sweeping measurement
+   *  (see `judgedWidth`). Omit to stay always-docked. */
   containerWidth?: Ref<number>;
 }
 
@@ -60,6 +62,10 @@ export function usePanelResizeState(opts: Options) {
   if (opts.containerWidth) {
     const width = opts.containerWidth;
     watch([width, sizePx], () => {
+      // Decides immediately, every time. `width` is the caller's contract: a
+      // settled width, never one sweeping through a slide (see `judgedWidth`),
+      // so there is nothing to wait out — the panel animates in already docked
+      // or already overlaid rather than rearranging once it lands.
       const next = nextOverlayMode(overlayMode.value, width.value, sizePx.value);
       if (next === overlayMode.value) return;
       overlayMode.value = next;
@@ -93,8 +99,14 @@ export function usePanelResizeState(opts: Options) {
   function applyPersisted(pxRaw: string | null, visRaw?: string | null) {
     const px = pxRaw !== null && Number.isFinite(parseFloat(pxRaw ?? "")) ? parseFloat(pxRaw!) : null;
     if (px) {
-      sizePx.value = opts.clamp(px);
-      if (!overlayMode.value) nextTick(() => panelRef.value?.resize(sizePx.value));
+      const next = opts.clamp(px);
+      // This resolves from the DB well after the panel has painted (its owner
+      // remounts on every open), so only touch the layout when the stored value
+      // actually differs from the synchronous cache we rendered with —
+      // otherwise every open ends with a redundant late resize.
+      const changed = next !== sizePx.value;
+      sizePx.value = next;
+      if (changed && !overlayMode.value) nextTick(() => panelRef.value?.resize(next));
     }
     if (opts.visibleStateKey && visRaw != null) {
       const v = visRaw === "true";

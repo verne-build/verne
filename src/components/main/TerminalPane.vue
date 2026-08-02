@@ -9,6 +9,7 @@ import {
   incrementMountedTerminalViewCount,
 } from "@/composables/useTerminal";
 import { useShortcuts } from "@/composables/useShortcuts";
+import { slideCoverActive, rightPanelSliding } from "@/lib/panelAnimationState";
 import { agentIconSurfaceForTheme, getAgentIconForSurface } from "@/composables/useAgentIcon";
 import { useTheme } from "@/composables/useTheme";
 import { sessionEndAction, sessionEndLabel, shouldConfirmArchive } from "@/lib/sessionEnd";
@@ -83,6 +84,11 @@ const terminalWrapper = ref<HTMLElement | null>(null);
 // session and inject transcribed text via sendTextToSession().
 const sessionId = ref<string | null>(null);
 const dropActive = ref(false);
+
+// Center panes only. The bottom panel spans the full width beneath the split,
+// so a left/right slide never resizes it — covering it just made an unrelated
+// part of the window flicker.
+const covered = computed(() => slideCoverActive.value && !props.compact);
 
 const isActive = computed(() => props.multi && props.focusedSessionId === props.paneId);
 const isExited = computed(() => store.sessionLifecycle.get(props.paneId) === "exited");
@@ -333,21 +339,40 @@ onUnmounted(() => {
   >
     <!-- Title bar: label + split / close actions -->
     <div
-      class="drag-region flex items-center text-xs bg-sidebar border-b overflow-hidden shrink-0 gap-1.5"
+      class="drag-region pane-header relative flex items-center text-xs bg-sidebar border-b overflow-hidden shrink-0 gap-1.5"
       :class="[
         compact ? 'h-9' : 'h-11.5',
         isActive ? 'border-border text-foreground' : 'border-border text-muted-foreground',
-        reserveRightOverlay ? 'pr-14' : 'pr-1',
-        reserveLeftOverlay ? 'pl-[133px]' : 'pl-4',
+        reserveRightOverlay ? 'pr-[58px]' : 'pr-1',
+        reserveLeftOverlay ? 'pl-[144px]' : 'pl-4',
       ]"
     >
       <!-- Separates the window controls + toggle/search strip (an App.vue overlay
            that floats over this bar) from this session's own identity, so the two
            groups don't read as one run of icons. -->
-      <span v-if="reserveLeftOverlay" class="h-4 w-px shrink-0 bg-border mr-1" aria-hidden="true" />
+      <!-- Absolutely positioned, so mounting/unmounting it can't shift the
+           title: in flow it cost 11px (rule + margin + flex gap) that snapped
+           the instant the panel was toggled, while the padding beside it eased.
+           The reserve padding (144px) accounts for the space it would occupy. -->
+      <span
+        class="pane-header-rule absolute top-1/2 left-[133px] h-4 w-px -translate-y-1/2 bg-border"
+        :class="reserveLeftOverlay ? 'opacity-100' : 'opacity-0'"
+        aria-hidden="true"
+      />
       <img v-if="agentIconSrc" :src="agentIconSrc" class="size-3.5 shrink-0" :alt="panelLabel" />
       <SquareTerminal v-else class="size-3.5 shrink-0" />
       <span class="truncate flex-1 leading-none text-muted-foreground">{{ panelLabel }}</span>
+      <!-- Cleared for the duration of a right-panel slide. These sit at the
+           pane's right edge, which sweeps the width of the panel, and the eye
+           catches the split icon travelling. Fading them out means the slot is
+           simply empty during the motion and the correct control — this menu,
+           or the strip's Maximize — fades in once it has landed.
+           Center panes only: the bottom panel spans the full width, so a right
+           slide never moves its headers. -->
+      <span
+        class="pane-header-actions flex items-center gap-1.5 shrink-0"
+        :class="rightPanelSliding && !compact && 'pointer-events-none opacity-0'"
+      >
       <Button
         v-if="isArchived && tab?.resumeAvailable"
         data-no-drag
@@ -417,6 +442,7 @@ onUnmounted(() => {
         <Trash2 v-if="endMode === 'close'" class="size-3.5" />
         <X v-else class="size-3.5" />
       </Button>
+      </span>
     </div>
 
     <!-- Archived banner: sits in flow between the panel heading and the terminal,
@@ -457,7 +483,7 @@ onUnmounted(() => {
       <ContextMenuTrigger as-child>
         <div
           ref="terminalWrapper"
-          class="flex-1 min-h-0 relative"
+          class="flex-1 min-h-0 relative overflow-hidden"
           data-terminal-drop
           :data-active-terminal="!multi || focusedSessionId === paneId ? 'true' : undefined"
           @dragover.capture="onDragOver"
@@ -471,8 +497,8 @@ onUnmounted(() => {
             ref="container"
             :data-session-id="sessionId"
             :data-terminal-session-id="paneId"
-            class="absolute inset-0 overflow-hidden"
-            :class="isArchived ? 'opacity-70' : ''"
+            class="absolute inset-0 overflow-hidden slide-cover-blur"
+            :class="[isArchived ? 'opacity-70' : '', covered ? 'is-covered' : '']"
           >
             <GridTerminal
               v-if="isArchived"
@@ -579,3 +605,61 @@ onUnmounted(() => {
     </ContextMenu>
   </div>
 </template>
+
+<style scoped>
+/* The header's overlay reserve (`pl-[133px]` vs `pl-4`, `pr-14` vs `pr-1`)
+   flips the instant a panel is toggled, but the panel takes 180ms to get there
+   — so the title jumped a clear 128px one way, then slid back the other.
+   Easing the padding on the panel's own curve keeps the title's absolute x
+   monotonic: the header's left edge and its padding now move as one.
+
+   Always on, not gated: this padding only ever changes on a panel toggle, so a
+   splitter drag never triggers it. */
+.pane-header {
+  transition: padding 180ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+.pane-header-rule {
+  transition: opacity 180ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+/* Hidden instantly, never faded out: the slide curve is heavily front-loaded, so
+   even a 60ms fade left the icon visibly half-lit a third of the way across the
+   window. Back in only once the slide has fully stopped, hence the delay —
+   fading in against the tail of the motion made it read as still moving. */
+/* Fades and grows in on exactly the same clock as the strip's Maximize fades
+   and shrinks out — they share this slot, so the handover is a cross-dissolve.
+   No delay: the slide has already ended by the time this is unset. */
+.pane-header-actions {
+  transform-origin: right center;
+  transform: scale(1);
+  transition:
+    opacity 150ms ease-out,
+    transform 150ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+.pane-header-actions.opacity-0 {
+  transform: scale(0.85);
+  transition: none;
+}
+
+/* Panel slide cover: blur the grid so its reflow is never seen sharply.
+   Scoped to the grid container, so the pane header stays crisp and readable.
+   Blur only — a dim on top of it just read as a fade to black.
+
+   Asymmetric by design — ramps in fast, holds, then fades back out. The release
+   is driven by `slideCoverActive`, which waits for the grid to actually re-fit
+   (the resize debounce plus the controller's frame hold land well after the
+   slide does); a fixed delay uncovered a still-reflowing grid. Never set under
+   reduced motion. The fade-out lives on the base class so it runs when
+   `.is-covered` is removed.
+
+   At 28px the blur's soft edge is wide, so the wrapper clips it
+   (overflow-hidden) — otherwise it seeps up over the pane header. */
+.slide-cover-blur {
+  transition: filter 130ms ease-out;
+}
+.slide-cover-blur.is-covered {
+  /* Big enough that the terminal reads as abstract colour fields, not text. */
+  filter: blur(28px);
+  transition: filter 50ms ease-out;
+}
+
+</style>

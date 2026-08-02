@@ -106,6 +106,7 @@ vi.mock('@/lib/terminal/TerminalController', () => ({
 
     resize(...args: unknown[]) { testState.controllerResize(...args); }
     commitResize() { testState.controllerCommitResize(); }
+    isResizeHeld() { return false; }
     setMetrics(...args: unknown[]) { testState.controllerSetMetrics(...args); }
     repaint() { testState.controllerRepaint(); }
     dispose() {}

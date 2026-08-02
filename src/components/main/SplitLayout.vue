@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount } from "vue";
 import { useWorkspaceStore } from "@/stores/workspace";
-import { setSplitterDragging } from "@/composables/useTerminal";
+import { trackSplitterDrag } from "@/composables/usePanelAnimation";
 import { isLeaf, firstLeaf, nodeKey } from "@/lib/paneLayout";
 import { isCenterSessionPickerId } from "@/lib/centerSessionPicker";
 import { centerPaneAnchorId } from "@/lib/centerPanePlacement";
@@ -86,7 +86,7 @@ onBeforeUnmount(() => {
     @layout="onLayout"
   >
     <template v-for="(child, i) in node.children" :key="key(child)">
-      <ResizableHandle v-if="i > 0" @dragging="setSplitterDragging" />
+      <ResizableHandle v-if="i > 0" @dragging="trackSplitterDrag" />
       <ResizablePanel
         :id="key(child)"
         :order="i + 1"

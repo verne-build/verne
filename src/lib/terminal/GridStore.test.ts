@@ -64,6 +64,27 @@ describe('GridStore.applySync', () => {
   });
 });
 
+describe('GridStore.screenIsBlank', () => {
+  it('is true for an all-blank screen', () => {
+    const store = new GridStore();
+    store.applySync(sync());
+    expect(store.screenIsBlank()).toBe(true);
+  });
+
+  it('is false when any visible row has a printable character', () => {
+    const store = new GridStore();
+    store.applySync(sync({ runs: [{ line: 1, startCol: 2, cells: [cell('x')], wrapped: false }] }));
+    expect(store.screenIsBlank()).toBe(false);
+  });
+
+  it('ignores spacer cells trailing a wide char', () => {
+    const store = new GridStore();
+    store.applySync(sync({ runs: [{ line: 0, startCol: 0, cells: [cell('\u4f60', 2)], wrapped: false }] }));
+    // The spacer alone would look blank; the wide char it belongs to does not.
+    expect(store.screenIsBlank()).toBe(false);
+  });
+});
+
 describe('GridStore.linkAt', () => {
   const linked = (ch: string, link: string): Cell => ({ ...cell(ch), link });
 

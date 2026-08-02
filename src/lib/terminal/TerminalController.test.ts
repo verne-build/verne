@@ -3,6 +3,7 @@ import {
   TerminalController,
   RESIZE_HOLD_MS,
   RESIZE_SETTLE_MS,
+  RESIZE_HOLD_MAX_EXTENSIONS,
   type GridTransport,
 } from './TerminalController';
 import { GridStore } from './GridStore';
@@ -1008,6 +1009,56 @@ describe('resize hold (pre-resize frame survives the reflow)', () => {
     expect(renderer.paints).toBe(1);
     flushPaint();
     expect(renderer.paints).toBe(1); // stale pre-resize rAF was dropped
+  });
+
+  it('waits past the deadline when the program cleared the screen mid-repaint', () => {
+    // Codex answers SIGWINCH by wiping and redrawing; that redraw can outlast
+    // RESIZE_HOLD_MS. Committing on the deadline would reveal the wipe.
+    const { controller, delta, intermediateSync, deadline, commits, renderer } = setupHold();
+    delta(2, 'content'); // pre-resize screen has something on it
+    const paintsBefore = renderer.paints;
+    controller.resize(100, 30);
+    intermediateSync(100, 30); // reflowed AND blank — the program cleared it
+    deadline();
+    expect(commits).toEqual([]); // still holding the pre-resize frame
+    expect(renderer.paints).toBe(paintsBefore); // nothing new reached the screen
+    deadline();
+    expect(commits).toEqual([]);
+  });
+
+  it('commits as soon as the redraw puts content back', () => {
+    const { controller, delta, intermediateSync, deadline, advance, commits } = setupHold();
+    delta(2, 'content');
+    controller.resize(100, 30);
+    intermediateSync(100, 30);
+    deadline();
+    expect(commits).toEqual([]);
+    delta(3, 'redrawn'); // the program's repaint lands
+    advance(RESIZE_SETTLE_MS);
+    expect(commits).toEqual([[100, 30]]);
+  });
+
+  it('caps the extensions so a screen that never comes back still commits', () => {
+    const { controller, delta, intermediateSync, deadline, commits } = setupHold();
+    delta(2, 'content');
+    controller.resize(100, 30);
+    intermediateSync(100, 30);
+    for (let i = 0; i < RESIZE_HOLD_MAX_EXTENSIONS; i++) {
+      deadline();
+      expect(commits).toEqual([]);
+    }
+    deadline();
+    expect(commits).toEqual([[100, 30]]); // capped — never holds indefinitely
+  });
+
+  it('does not extend when the screen was already blank before the resize', () => {
+    // Nothing was wiped, so there is no redraw to wait for — a program that
+    // simply never repaints must not hold the pane for the full cap.
+    const { controller, intermediateSync, deadline, commits } = setupHold();
+    controller.resize(100, 30);
+    intermediateSync(100, 30);
+    deadline();
+    expect(commits).toEqual([[100, 30]]);
   });
 
   it('arms the deadline with RESIZE_HOLD_MS', () => {

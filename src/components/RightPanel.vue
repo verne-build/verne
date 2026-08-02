@@ -20,6 +20,8 @@ import CommitsTab from "./CommitsTab.vue";
 import FileEditorTab from "./FileEditorTab.vue";
 import { useGitOperations } from "@/composables/useGitOperations";
 import { usePanelResizeState } from "@/composables/usePanelResizeState";
+import { judgedWidth } from "@/lib/overlaySidebar";
+import { panelsAnimating } from "@/lib/panelAnimationState";
 import { Button } from "./ui/button";
 import { useDiffReview } from "@/composables/useDiffReview";
 import { useSearchPanelState } from "@/composables/useSearchPanelState";
@@ -41,8 +43,6 @@ import { PANEL_SIZES } from "@/lib/panelSizes";
 import { scSelectionStillChanged } from "@/lib/scSelectionReconcile";
 import type { GitStatus } from "@/types";
 
-const props = defineProps<{ maximized?: boolean; bottomOpen?: boolean }>();
-const emit = defineEmits<{ toggleRight: []; toggleMaximize: []; toggleBottom: [] }>();
 
 const store = useWorkspaceStore();
 const {
@@ -166,12 +166,29 @@ async function handleJumpToComment(c: ReviewComment) {
   }
 }
 
+/** The width this panel is about to occupy, known by App.vue before the panel
+ *  has laid out. Lets the inner sidebars pick docked vs overlay on the very
+ *  first render instead of a frame after mount. */
+const props = defineProps<{ expectedWidth?: number }>();
+
 const cached = readCachedPanelState();
 
 // One observer for the whole right panel — every inner sidebar derives its
 // docked/overlay mode from this width, so they must not each measure.
+//
+// Seeded from `expectedWidth` rather than starting at 0: this component
+// remounts on every open, and the inner sidebars' docked/overlay rule runs
+// immediately during setup. With a 0 width it can't decide, so it decided again
+// after mount once the observer reported — one frame late, and visible as the
+// panel's contents rearranging just after it appeared.
 const panelEl = ref<HTMLElement | null>(null);
-const panelWidth = ref(0);
+const panelWidth = ref(props.expectedWidth ?? 0);
+// What the inner sidebars judge docked-vs-overlay against. While anything is
+// sliding the measurement sweeps, so the known target wins; otherwise the
+// measurement is the truth (drags, window resizes).
+const settledWidth = computed(() =>
+  judgedWidth(panelWidth.value, props.expectedWidth, panelsAnimating.value),
+);
 let panelObserver: ResizeObserver | null = null;
 provide("rightPanelWidth", panelWidth);
 
@@ -186,7 +203,7 @@ const explorer = usePanelResizeState({
   visibleStateKey: "file_explorer_visible",
   initialVisible: cached.fileExplorerVisible,
   writeCachedVisible: writeCachedFileExplorerVisible,
-  containerWidth: panelWidth,
+  containerWidth: settledWidth,
 });
 
 
@@ -196,7 +213,7 @@ const search = usePanelResizeState({
   pxStateKey: "search_list_px",
   initialPx: clampListPanelPx(cached.searchPx ?? PANEL_SIZES.list.defaults.search),
   clamp: clampListPanelPx,
-  containerWidth: panelWidth,
+  containerWidth: settledWidth,
 });
 
 watch(searchSelected, () => search.dismissOverlay());
@@ -408,11 +425,6 @@ function revertScFile() {
       @close="closeFileTab"
       @reorder="reorderTabs"
       @reorder-browser="reorderBrowserTabs"
-      :maximized="maximized"
-      @toggle-right="emit('toggleRight')"
-      @toggle-maximize="emit('toggleMaximize')"
-      :bottom-open="props.bottomOpen"
-      @toggle-bottom="emit('toggleBottom')"
       @promote="promoteTab"
     />
 

@@ -1,12 +1,10 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, onUnmounted, provide, watch, type Ref } from "vue";
-import { Folder, PanelRight, PanelBottom } from "@lucide/vue";
-import PanelBottomFilled from "@/components/icons/PanelBottomFilled.vue";
+import { Folder } from "@lucide/vue";
 import { ask } from "@/platform";
 import { sessionEndAction, shouldConfirmArchive } from "@/lib/sessionEnd";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useRpc } from "@/composables/useRpc";
-import { useShortcuts } from "@/composables/useShortcuts";
 import { paneCount } from "@/lib/paneLayout";
 import { firstRunView } from "@/lib/firstRunView";
 import { deriveCenterPanePlacements } from "@/lib/centerPanePlacement";
@@ -18,22 +16,14 @@ import {
   centerPaneAnchorRegistryKey,
   createCenterPaneAnchorRegistry,
 } from "./centerPaneAnchorRegistry";
-import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Kbd, KbdGroup } from "@/components/ui/kbd";
 
 const store = useWorkspaceStore();
 const rpc = useRpc();
-const shortcuts = useShortcuts();
 const centerPaneAnchorRegistry = createCenterPaneAnchorRegistry();
 provide(centerPaneAnchorRegistryKey, centerPaneAnchorRegistry);
 
 const rightCollapsed = inject<Ref<boolean>>("rightCollapsed");
 const leftCollapsed = inject<Ref<boolean>>("leftCollapsed");
-function expandRight() {
-  if (rightCollapsed) rightCollapsed.value = false;
-}
-
 const dirId = computed(() => store.selectedDirectoryId);
 const showRightOverlay = computed(() => !!dirId.value && !!rightCollapsed?.value);
 const arrangement = computed(() =>
@@ -57,15 +47,6 @@ const pickerDirectoryName = computed(() => {
   const id = store.pendingPicker?.dirId;
   return store.directories.find((directory) => directory.id === id)?.name ?? "Workspace";
 });
-
-const bottomPanelOpen = computed(() => {
-  const state = dirId.value ? store.bottomPanelFor(dirId.value) : null;
-  return !!state?.tabs.length && !state.collapsed;
-});
-
-function toggleBottomPanel() {
-  window.dispatchEvent(new CustomEvent("menu-action", { detail: { action: "toggleBottomPanel" } }));
-}
 
 const welcome = computed(() =>
   firstRunView({
@@ -141,55 +122,15 @@ onUnmounted(() => {
          bar): border-box shrinks their content box to 45px, so without it these
          buttons centre half a pixel lower and visibly jump when the right panel
          opens. -->
+    <!-- Left-side spacer only. The right-hand toggles used to live here as a
+         second copy of FileTabBar's actions; they are now one persistent strip
+         in App.vue that never remounts across a panel toggle. -->
     <div
-      v-if="leftCollapsed || showRightOverlay"
-      class="absolute top-0 left-0 right-0 h-11.5 border-b border-transparent flex items-center justify-between z-10 pointer-events-none"
+      v-if="leftCollapsed"
+      class="absolute top-0 left-0 right-0 h-11.5 border-b border-transparent flex items-center z-10 pointer-events-none"
     >
-      <div v-if="leftCollapsed" class="shrink-0 w-[128px]" />
+      <div class="shrink-0 w-[128px]" />
       <div class="flex-1" />
-      <TooltipProvider :delay-duration="250">
-        <Tooltip v-if="showRightOverlay">
-          <TooltipTrigger as-child>
-            <Button
-              type="button"
-              size="icon-xs"
-              variant="ghost"
-              class="text-muted-foreground pointer-events-auto ml-0.5"
-              :aria-label="bottomPanelOpen ? 'Hide Bottom Panel' : 'Show Bottom Panel'"
-              @click="toggleBottomPanel"
-            >
-              <PanelBottomFilled v-if="bottomPanelOpen" class="size-3.5" />
-              <PanelBottom v-else class="size-3.5" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" class="flex items-center gap-2">
-            <span>{{ bottomPanelOpen ? "Hide Bottom Panel" : "Show Bottom Panel" }}</span>
-            <KbdGroup>
-              <Kbd v-for="(key, i) in shortcuts.displayKeys('toggle-bottom-panel')" :key="i">{{ key }}</Kbd>
-            </KbdGroup>
-          </TooltipContent>
-        </Tooltip>
-        <Tooltip v-if="showRightOverlay">
-          <TooltipTrigger as-child>
-            <Button
-              type="button"
-              size="icon-xs"
-              variant="ghost"
-              class="text-muted-foreground pointer-events-auto ml-0.5 mr-1.5"
-              aria-label="Show right sidebar"
-              @click="expandRight"
-            >
-              <PanelRight class="size-3.5" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" class="flex items-center gap-2">
-            <span>Show Panel</span>
-            <KbdGroup>
-              <Kbd v-for="(key, i) in shortcuts.displayKeys('toggle-right-panel')" :key="i">{{ key }}</Kbd>
-            </KbdGroup>
-          </TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
     </div>
     <div class="flex-1 min-h-0 flex flex-col">
       <div v-if="!dirId" class="flex-1 min-h-0 flex items-center justify-center">

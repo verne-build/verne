@@ -43,9 +43,6 @@ const props = defineProps<{
   activeId: string | null;
   isFileDirty: (path: string) => boolean;
   rootDir?: string;
-  maximized?: boolean;
-  /** Bottom terminal panel is visible and expanded — drives the filled icon. */
-  bottomOpen?: boolean;
 }>();
 
 const shortcuts = useShortcuts();
@@ -53,11 +50,8 @@ const shortcuts = useShortcuts();
 const emit = defineEmits<{
   select: [id: string];
   close: [id: string];
-  toggleRight: [];
   reorder: [ids: string[]];
   reorderBrowser: [ids: string[]];
-  toggleMaximize: [];
-  toggleBottom: [];
   promote: [id: string];
 }>();
 
@@ -352,7 +346,8 @@ function onDragEnd(e: DragEndPayload) {
 
 <template>
   <TooltipProvider :delay-duration="250">
-    <TabBar variant="pill" class="px-1.5 gap-0.5 bg-sidebar">
+    <!-- pr reserves the persistent top-right control strip (App.vue). -->
+    <TabBar variant="pill" class="pl-1.5 pr-[82px] gap-0.5 bg-sidebar">
       <!-- Pinned tabs: SC + Commits, never scroll -->
       <div class="flex items-center gap-0.5 h-11.5 shrink-0">
         <template v-for="tab in pinnedTabs" :key="tab.id">
@@ -579,63 +574,6 @@ function onDragEnd(e: DragEndPayload) {
       </div>
       </DragDropProvider>
 
-      <template #actions>
-        <Tooltip>
-          <TooltipTrigger as-child>
-            <Button
-              size="icon-xs"
-              variant="ghost"
-              :class="['ml-0.5', props.maximized ? 'text-foreground' : 'text-muted-foreground hover:text-foreground']"
-              tabindex="0"
-              @click="emit('toggleMaximize')"
-            >
-              <Minimize2 v-if="props.maximized" class="size-3.5" />
-              <Maximize2 v-else class="size-3.5" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">{{ props.maximized ? "Restore Panel" : "Maximize Panel" }}</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger as-child>
-            <Button
-              size="icon-xs"
-              variant="ghost"
-              class="text-muted-foreground ml-0.5"
-              tabindex="0"
-              :aria-label="props.bottomOpen ? 'Hide Bottom Panel' : 'Show Bottom Panel'"
-              @click="emit('toggleBottom')"
-            >
-              <PanelBottomFilled v-if="props.bottomOpen" class="size-3.5" />
-              <PanelBottom v-else class="size-3.5" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" class="flex items-center gap-2">
-            <span>{{ props.bottomOpen ? "Hide Bottom Panel" : "Show Bottom Panel" }}</span>
-            <KbdGroup>
-              <Kbd v-for="(key, i) in shortcuts.displayKeys('toggle-bottom-panel')" :key="i">{{ key }}</Kbd>
-            </KbdGroup>
-          </TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger as-child>
-            <Button
-              size="icon-xs"
-              variant="ghost"
-              class="text-muted-foreground ml-0.5"
-              tabindex="0"
-              @click="emit('toggleRight')"
-            >
-              <PanelRightFilled class="size-3.5" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" class="flex items-center gap-2">
-            <span>Hide Panel</span>
-            <KbdGroup>
-              <Kbd v-for="(key, i) in shortcuts.displayKeys('toggle-right-panel')" :key="i">{{ key }}</Kbd>
-            </KbdGroup>
-          </TooltipContent>
-        </Tooltip>
-      </template>
     </TabBar>
   </TooltipProvider>
 </template>

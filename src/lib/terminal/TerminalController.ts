@@ -50,6 +50,16 @@ export const RESIZE_HOLD_MS = 200;
  *  new frame. Grid deltas are coalesced at 8ms; eight quiet intervals cover the
  *  measured multi-delta Codex redraw gap. */
 export const RESIZE_SETTLE_MS = 64;
+/** Extra windows the deadline may wait when it lands mid-clear.
+ *
+ *  Some agents (Codex) answer SIGWINCH by wiping the screen and redrawing, and
+ *  that redraw can outlast RESIZE_HOLD_MS. Committing on the deadline then
+ *  reveals the wipe — a blank pane for a frame or two before content returns.
+ *  Only granted while the screen is actually blank AND had content before the
+ *  resize, so a program that legitimately cleared, or one that simply never
+ *  repaints, still commits on the first deadline. Caps the hold at
+ *  RESIZE_HOLD_MS * (1 + RESIZE_HOLD_MAX_EXTENSIONS). */
+export const RESIZE_HOLD_MAX_EXTENSIONS = 2;
 
 /** The transport a controller drives: the live socket-backed `GridSession`, or a
  *  no-op `StaticGridTransport` for a frozen archived snapshot. Structural so both
@@ -102,6 +112,11 @@ interface ResizeHold {
   sawSync: boolean;
   deadlineTimer: unknown | null;
   settleTimer: unknown | null;
+  /** Screen had printable content when the resize went out — so a blank screen
+   *  now means the program cleared it, rather than it having always been empty. */
+  hadContent: boolean;
+  /** Deadline extensions already granted (see RESIZE_HOLD_MAX_EXTENSIONS). */
+  extensions: number;
 }
 
 export class TerminalController {
@@ -669,11 +684,32 @@ export class TerminalController {
       sawSync: false,
       deadlineTimer: null,
       settleTimer: null,
+      hadContent: !this.store.screenIsBlank(),
+      extensions: 0,
     };
     this.hold = hold;
+    this.armHoldDeadline(hold);
+  }
+
+  /** Arm (or re-arm) the hold's deadline. Firing mid-clear buys another window
+   *  instead of committing: see RESIZE_HOLD_MAX_EXTENSIONS. */
+  private armHoldDeadline(hold: ResizeHold): void {
     hold.deadlineTimer = this.setTimer(() => {
-      if (this.hold === hold) this.commitResize();
+      if (this.hold !== hold) return;
+      hold.deadlineTimer = null;
+      const midClear = hold.hadContent && this.store.screenIsBlank();
+      if (midClear && hold.extensions < RESIZE_HOLD_MAX_EXTENSIONS) {
+        hold.extensions += 1;
+        this.armHoldDeadline(hold);
+        return;
+      }
+      this.commitResize();
     }, RESIZE_HOLD_MS);
+  }
+
+  /** True while a resize hold is armed, i.e. `onResizeCommit` is still to come. */
+  isResizeHeld(): boolean {
+    return this.hold !== null;
   }
 
   /** End the hold: size the canvas (host), the renderer, and repaint. Safe to

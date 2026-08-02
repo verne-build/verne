@@ -446,6 +446,21 @@ export class GridStore {
     if (this.scrollOffset !== prevRow) this.markAllDirty(); // content row shifted
   }
 
+  /** True when every visible cell is blank — no printable character anywhere on
+   *  screen. Used to recognise a program that has cleared the screen and not yet
+   *  redrawn it (the middle of a full-screen TUI's post-SIGWINCH repaint), so a
+   *  resize hold doesn't release onto the empty intermediate. Cells only, not
+   *  `lineMap`: this runs on a timer and must not build a string per row. */
+  screenIsBlank(): boolean {
+    for (let r = 0; r < this.rows; r++) {
+      for (const cell of this.visibleRow(r)) {
+        // Spacers (width 0) trail a wide char, which is itself printable.
+        if (cell.width !== 0 && cell.cp !== 32 && cell.cp !== 0) return false;
+      }
+    }
+    return true;
+  }
+
   /** Mark every render row dirty (window shifted / palette change). */
   markAllDirty(): void {
     for (let i = 0; i < this.rows; i++) this.dirtyRows.add(i);

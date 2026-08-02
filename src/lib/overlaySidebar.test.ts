@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { nextOverlayMode, overlayWidth } from "./overlaySidebar";
+import { judgedWidth, nextOverlayMode, overlayWidth } from "./overlaySidebar";
 
 // contentMin 480, hysteresis 48 → enter below 480, leave at/above 528.
 describe("nextOverlayMode", () => {
@@ -45,5 +45,23 @@ describe("overlayWidth", () => {
 
   it("passes the docked width through before measurement", () => {
     expect(overlayWidth(200, 0)).toBe(200);
+  });
+});
+
+describe("judgedWidth", () => {
+  it("uses the target while sliding, so the destination decides", () => {
+    // A slide sweeps the measurement; judging those intermediate widths is what
+    // flips the sidebar on the way past.
+    expect(judgedWidth(900, 600, true)).toBe(600);
+    expect(judgedWidth(600, 900, true)).toBe(900);
+  });
+
+  it("uses the measurement when nothing is sliding", () => {
+    expect(judgedWidth(900, 600, false)).toBe(900);
+  });
+
+  it("falls back to the measurement when no target is known", () => {
+    expect(judgedWidth(900, undefined, true)).toBe(900);
+    expect(judgedWidth(900, 0, true)).toBe(900);
   });
 });

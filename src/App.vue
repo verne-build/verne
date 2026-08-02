@@ -7,8 +7,19 @@ import { useRpc } from "./composables/useRpc";
 import RightPanel from "./components/RightPanel.vue";
 import ThemeSelector from "./components/ThemeSelector.vue";
 import { Toaster } from "./components/ui/sonner";
-import { PanelLeft, FolderOpen, Check, Search } from "@lucide/vue";
+import {
+  PanelLeft,
+  PanelRight,
+  PanelBottom,
+  FolderOpen,
+  Check,
+  Search,
+  Maximize2,
+  Minimize2,
+} from "@lucide/vue";
 import PanelLeftFilled from "./components/icons/PanelLeftFilled.vue";
+import PanelRightFilled from "./components/icons/PanelRightFilled.vue";
+import PanelBottomFilled from "./components/icons/PanelBottomFilled.vue";
 import { Button } from "./components/ui/button";
 import { Kbd, KbdGroup } from "./components/ui/kbd";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./components/ui/tooltip";
@@ -19,6 +30,13 @@ import {
   DropdownMenuTrigger,
 } from "./components/ui/dropdown-menu";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "./components/ui/resizable";
+import {
+  usePanelAnimation,
+  trackSplitterDrag,
+  isSplitterDragging,
+  panelsAnimating,
+} from "./composables/usePanelAnimation";
+import { setRightPanelSliding } from "@/lib/panelAnimationState";
 import { useChordHint } from "./composables/useChordHint";
 import { useFpsMeter } from "./composables/useFpsMeter";
 import FpsMeter from "./components/FpsMeter.vue";
@@ -44,7 +62,7 @@ import Sidebar from "@/components/sidebar/Sidebar.vue";
 import NewSessionButton from "@/components/sidebar/NewSessionButton.vue";
 import KeyboardShortcutsModal from "@/components/KeyboardShortcutsModal.vue";
 import CommandPalette from "@/components/CommandPalette.vue";
-import { setSplitterDragging, flushTerminalLayouts } from "@/composables/useTerminal";
+import { flushTerminalLayouts } from "@/composables/useTerminal";
 import { useWindowDrag } from "@/composables/useWindowDrag";
 import DictationOverlay from "@/components/DictationOverlay.vue";
 import DaemonRestartOverlay from "@/components/DaemonRestartOverlay.vue";
@@ -137,11 +155,7 @@ function persistCollapseState() {
 watch(leftCollapsed, () => persistCollapseState());
 watch(rightCollapsed, () => persistCollapseState());
 
-// Sidebar collapse is a one-shot v-if change — the terminal container resizes
-// in a single layout pass. The ResizeObserver's 100ms debounce would otherwise
-// leave xterm at the old cols/rows for 100ms before snapping. Flush immediately
-// after Vue applies the DOM change and the browser lays out the new size.
-watch([leftCollapsed, rightCollapsed, fileMaximized], () => {
+function relayoutAfterPanelChange(): void {
   requestAnimationFrame(() => flushTerminalLayouts());
   // Monaco's automaticLayout can miss these abrupt flex changes under WKWebView
   // (blank editor) — force an explicit remeasure once the layout settles.
@@ -150,6 +164,67 @@ watch([leftCollapsed, rightCollapsed, fileMaximized], () => {
       window.dispatchEvent(new CustomEvent("relayout-editors")),
     ),
   );
+}
+// fileMaximized is still a one-shot class flip, so it flushes immediately.
+// The collapse toggles are animated (below) and flush when the slide settles —
+// GridTerminal's own trailing resize debounce already coalesces the frames in
+// between into a single PTY resize at the final size.
+watch(fileMaximized, () => relayoutAfterPanelChange());
+
+// Animated collapse: `leftAnim`/`rightAnim` are true only while a toggle is in
+// flight, which is what gates both the CSS transition and layout persistence.
+// Suppressed until the persisted collapse state has been reconciled from the DB
+// so a slow first load doesn't slide the panels around at startup.
+const panelAnimReady = ref(false);
+const leftAnim = usePanelAnimation(relayoutAfterPanelChange);
+const rightAnim = usePanelAnimation(relayoutAfterPanelChange);
+// Content stays mounted through a close so the panel isn't blank while it
+// slides out; it unmounts (releasing its watchers/terminals) once settled.
+const leftContentVisible = computed(() => !leftCollapsed.value || leftAnim.animating.value);
+const rightContentVisible = computed(() => !rightCollapsed.value || rightAnim.animating.value);
+
+function applyPanelCollapse(
+  panel: { collapse: () => void; expand: () => void; resize: (n: number) => void } | null,
+  collapsed: boolean,
+  expandedSize: number,
+): void {
+  if (!panel) return;
+  if (collapsed) {
+    panel.collapse();
+    return;
+  }
+  // reka's expand() restores its own remembered pre-collapse size, which it
+  // doesn't have on a fresh mount (it would fall back to min-size and lose the
+  // user's persisted width). Expand, then land the exact size ourselves.
+  panel.expand();
+  panel.resize(expandedSize);
+}
+
+const canAnimatePanels = () => panelAnimReady.value && !isSplitterDragging();
+// Published so the pane header can clear its trailing actions for this slide
+// specifically — they sit still through a left or bottom one.
+watch(rightAnim.animating, (active) => setRightPanelSliding(active));
+// Crossfades with the pane's split menu, which shares this exact slot.
+//
+// Opening: shows from the first frame, growing in as the split menu vanishes.
+// Closing: HOLDS through the slide and only starts leaving once it lands —
+// that is the moment the split menu has finished travelling into the slot, so
+// the two overlap and genuinely cross-dissolve instead of taking turns.
+const showStripMaximize = computed(
+  () => !rightCollapsed.value || rightAnim.animating.value,
+);
+
+// When the change isn't animated (startup reconcile, drag-collapse) there's no
+// settle callback to hang the relayout off, so flush it here instead.
+watch(leftCollapsed, (collapsed) => {
+  if (canAnimatePanels()) leftAnim.begin();
+  else relayoutAfterPanelChange();
+  applyPanelCollapse(leftPanelRef.value, collapsed, panelSizes.value.left);
+});
+watch(rightCollapsed, (collapsed) => {
+  if (canAnimatePanels()) rightAnim.begin();
+  else relayoutAfterPanelChange();
+  applyPanelCollapse(rightPanelRef.value, collapsed, panelSizes.value.right);
 });
 const showRight = computed(() => !!store.selectedDirectory);
 // Maximize only makes sense while the file panel is visible — clear it when the
@@ -185,6 +260,41 @@ const pxToPct = (px: number, fallback: number) => {
   if (!w) return fallback;
   return Math.max(5, Math.min(90, (px / w) * 100));
 };
+// Width the main area will have once the current slide lands. It only sweeps
+// for a LEFT slide (the sidebar's width leaving or arriving); snapshotting at
+// the toggle works because the measurement is still the pre-slide one then.
+const projectedMainAreaWidth = ref(0);
+watch(leftCollapsed, (collapsed) => {
+  projectedMainAreaWidth.value = Math.max(
+    0,
+    mainAreaWidth.value + (collapsed ? panelSizes.value.left : -panelSizes.value.left),
+  );
+});
+
+// The right panel is %-sized, so both its slide-time pin and the width its
+// inner sidebars judge themselves against need a px value — and it has to be
+// the SETTLED one, or they reconfigure after the slide instead of during it.
+const rightPinnedPx = computed(() => {
+  const base =
+    leftAnim.animating.value && projectedMainAreaWidth.value
+      ? projectedMainAreaWidth.value
+      : mainAreaWidth.value;
+  return Math.round((panelSizes.value.right / 100) * base);
+});
+// Anchored to the panel's RIGHT edge, which is the edge that stays put — the
+// left edge is the one sweeping. Pinning to the left edge (a plain width) made
+// the whole file panel translate across the screen instead of being revealed.
+const rightSlideStyle = computed(() =>
+  rightAnim.animating.value && rightPinnedPx.value
+    ? {
+        position: "absolute" as const,
+        top: "0",
+        right: "0",
+        height: "100%",
+        width: `${rightPinnedPx.value}px`,
+      }
+    : undefined,
+);
 const centerMinPct = computed(() => pxToPct(CENTER_PANEL_MIN_PX, 20));
 const rightMinPct = computed(() => pxToPct(RIGHT_PANEL_MIN_PX, 20));
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
@@ -206,6 +316,8 @@ const panelSaveTimers: Partial<Record<"left" | "right", ReturnType<typeof setTim
 
 // Outer layout: left sidebar vs rest
 function onPanelLayout(sizes: number[]) {
+  // Mid-slide sizes are transient — persisting one would stomp the stored width.
+  if (leftAnim.animating.value) return;
   const leftMounted = !leftCollapsed.value;
   const leftIdx = leftMounted ? 0 : -1;
   const left = leftIdx >= 0 && sizes[leftIdx] > 0 ? sizes[leftIdx] : panelSizes.value.left;
@@ -220,6 +332,7 @@ function onPanelLayout(sizes: number[]) {
 
 // Inner layout: center vs right panel — % of the group.
 function onInnerLayout(sizes: number[]) {
+  if (rightAnim.animating.value) return;
   const rightMounted = showRight.value && !rightCollapsed.value;
   const rightIdx = rightMounted ? sizes.length - 1 : -1;
   const right = rightIdx >= 0 && sizes[rightIdx] > 0 ? sizes[rightIdx] : panelSizes.value.right;
@@ -334,6 +447,22 @@ const bottomPanelOpen = computed(() => {
   const dirId = store.selectedDirectoryId;
   const state = dirId ? store.bottomPanelFor(dirId) : null;
   return !!state?.tabs.length && !state.collapsed;
+});
+
+// App.vue owns the vertical panel group, so it also owns the bottom panel's
+// animation gate and passes it down (BottomPanel renders into this group).
+const bottomAnim = usePanelAnimation(relayoutAfterPanelChange);
+// `bottomPanelOpen` is per-scope, so it also flips when the selected workspace
+// changes — switching sessions was raising a slide (and with it the center's
+// blur cover) for something the user never toggled. Only a change WITHIN a
+// scope is a toggle.
+let lastBottomScopeId: string | null = store.selectedDirectoryId ?? null;
+watch(bottomPanelOpen, () => {
+  const scopeId = store.selectedDirectoryId ?? null;
+  const scopeChanged = scopeId !== lastBottomScopeId;
+  lastBottomScopeId = scopeId;
+  if (scopeChanged) return;
+  if (canAnimatePanels()) bottomAnim.begin();
 });
 
 // ⌃` — show/hide the bottom terminal panel, creating the first terminal if the
@@ -727,8 +856,9 @@ onMounted(async () => {
       next.right = clamp(next.right, 5, 95);
       panelSizes.value = next;
       nextTick(() => {
-        leftPanelRef.value?.resize(next.left);
-        rightPanelRef.value?.resize(next.right);
+        // Never resize a collapsed panel — that would silently reopen it.
+        if (!leftCollapsed.value) leftPanelRef.value?.resize(next.left);
+        if (!rightCollapsed.value) rightPanelRef.value?.resize(next.right);
       });
     }
     const dbLeftCollapsed = leftCollapseStr === "true";
@@ -749,7 +879,10 @@ onMounted(async () => {
         rightCollapsed.value = dbRightCollapsed;
       }
     }
-  }).catch((e) => console.warn("[App] panel state reconcile failed", e));
+  }).catch((e) => console.warn("[App] panel state reconcile failed", e))
+    // Only animate toggles the user drives — not the startup reconcile, which
+    // would otherwise slide the panels into place on every launch.
+    .finally(() => nextTick(() => (panelAnimReady.value = true)));
 });
 onUnmounted(() => {
   disposeAgentInventory();
@@ -832,6 +965,89 @@ onUnmounted(() => {
         </Tooltip>
       </TooltipProvider>
     </div>
+    <!-- Persistent top-right controls, mirroring the top-left strip: ONE set of
+         nodes that stays mounted and stays put whether the right panel is open
+         or collapsed. Previously these existed twice — once in FileTabBar's
+         actions cell, once in TabsCenter's overlay — so toggling the panel
+         swapped one instance for the other mid-slide.
+
+         Right-anchored, so Maximize (which only applies while the file panel is
+         up) grows/shrinks the strip on the LEFT and the two permanent toggles
+         never move. When the panel is collapsed the pane's own split menu takes
+         that vacated slot, which is what makes the two states read as a swap
+         rather than a reflow. Whatever sits underneath reserves the width:
+         `pr-[82px]` on the file tab bar, `reserveRightOverlay` on the pane. -->
+    <div
+      v-if="!showSettings && !onboarding && store.selectedDirectory"
+      class="drag-region absolute top-0 right-0 z-50 h-11.5 flex items-center pr-1.5"
+    >
+      <TooltipProvider :delay-duration="300">
+        <!-- Maximize shares its slot with the pane's split menu, which travels
+             into it as the panel closes. So it collapses its width as it fades
+             rather than unmounting: the slot is genuinely handed over, and the
+             two never overlap because it only shows once the slide has landed. -->
+        <span class="strip-maximize" :class="{ 'is-shown': showStripMaximize }">
+          <Tooltip>
+            <TooltipTrigger as-child>
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                :class="fileMaximized ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'"
+                :tabindex="showStripMaximize ? 0 : -1"
+                :aria-hidden="!showStripMaximize"
+                @click="fileMaximized = !fileMaximized"
+              >
+                <Minimize2 v-if="fileMaximized" class="size-3.5" />
+                <Maximize2 v-else class="size-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">{{ fileMaximized ? "Restore Panel" : "Maximize Panel" }}</TooltipContent>
+          </Tooltip>
+        </span>
+        <Tooltip>
+          <TooltipTrigger as-child>
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              class="text-muted-foreground hover:text-foreground"
+              tabindex="0"
+              :aria-label="bottomPanelOpen ? 'Hide Bottom Panel' : 'Show Bottom Panel'"
+              @click="toggleBottomPanel"
+            >
+              <PanelBottomFilled v-if="bottomPanelOpen" class="size-3.5" />
+              <PanelBottom v-else class="size-3.5" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" class="flex items-center gap-2">
+            <span>{{ bottomPanelOpen ? "Hide Bottom Panel" : "Show Bottom Panel" }}</span>
+            <KbdGroup>
+              <Kbd v-for="(key, i) in shortcuts.displayKeys('toggle-bottom-panel')" :key="i">{{ key }}</Kbd>
+            </KbdGroup>
+          </TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger as-child>
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              class="ml-0.5 text-muted-foreground hover:text-foreground"
+              tabindex="0"
+              :aria-label="rightCollapsed ? 'Show Right Panel' : 'Hide Right Panel'"
+              @click="rightCollapsed = !rightCollapsed"
+            >
+              <PanelRightFilled v-if="!rightCollapsed" class="size-3.5" />
+              <PanelRight v-else class="size-3.5" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" class="flex items-center gap-2">
+            <span>{{ rightCollapsed ? "Show Panel" : "Hide Panel" }}</span>
+            <KbdGroup>
+              <Kbd v-for="(key, i) in shortcuts.displayKeys('toggle-right-panel')" :key="i">{{ key }}</Kbd>
+            </KbdGroup>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    </div>
     <!-- No workspaces: full-screen onboarding, no sidebar/header chrome. -->
     <div
       v-if="onboarding"
@@ -845,47 +1061,61 @@ onUnmounted(() => {
       :key="`left-${showRight}`"
       direction="horizontal"
       class="flex-1 overflow-hidden relative"
+      :class="{ 'panel-anim': leftAnim.animating.value }"
       @layout="onPanelLayout"
     >
-      <template v-if="!leftCollapsed">
-        <ResizablePanel
-          ref="leftPanelRef"
-          id="left-sidebar"
-          :order="1"
-          :default-size="panelSizes.left"
-          :min-size="LEFT_PANEL_MIN_PX"
-          :max-size="LEFT_PANEL_MAX_PX"
-          size-unit="px"
-          class="bg-sidebar"
+      <ResizablePanel
+        ref="leftPanelRef"
+        id="left-sidebar"
+        :order="1"
+        :default-size="leftCollapsed ? 0 : panelSizes.left"
+        :min-size="LEFT_PANEL_MIN_PX"
+        :max-size="LEFT_PANEL_MAX_PX"
+        collapsible
+        :collapsed-size="0"
+        size-unit="px"
+        class="bg-sidebar"
+        @collapse="leftCollapsed = true"
+        @expand="leftCollapsed = false"
+      >
+        <!-- Pinned to the expanded width while sliding so the sidebar's own
+             layout doesn't reflow every frame — it slides under the clip. -->
+        <div
+          v-if="leftContentVisible"
+          class="h-full flex flex-col"
+          :style="leftAnim.animating.value ? { width: `${panelSizes.left}px` } : undefined"
         >
-          <div class="h-full flex flex-col">
-            <!-- Traffic light spacer + drag region + New Session.
-                 (Left toggle + search live in the persistent overlay above.) -->
-            <div
-              class="drag-region h-11.5 shrink-0 flex items-center justify-end pr-1"
-            >
-              <NewSessionButton
-                v-if="!showSettings"
-                class="relative z-10"
-                @new-session="newTerminal"
-              />
-            </div>
-            <SettingsSidebar
-              v-if="showSettings"
-              class="flex-1 min-h-0"
-              @close="showSettings = false"
-              @flux-capacitor="showBttf = true"
-            />
-            <Sidebar
-              v-else
-              class="flex-1 min-h-0"
-              @open-settings="showSettings = true"
-              @open-shortcuts="showShortcuts = true"
+          <!-- Traffic light spacer + drag region + New Session.
+               (Left toggle + search live in the persistent overlay above.) -->
+          <div
+            class="drag-region h-11.5 shrink-0 flex items-center justify-end pr-1"
+          >
+            <NewSessionButton
+              v-if="!showSettings"
+              class="relative z-10"
+              @new-session="newTerminal"
             />
           </div>
-        </ResizablePanel>
-        <ResizableHandle :class="handleClass" @dragging="setSplitterDragging" />
-      </template>
+          <SettingsSidebar
+            v-if="showSettings"
+            class="flex-1 min-h-0"
+            @close="showSettings = false"
+            @flux-capacitor="showBttf = true"
+          />
+          <Sidebar
+            v-else
+            class="flex-1 min-h-0"
+            @open-settings="showSettings = true"
+            @open-shortcuts="showShortcuts = true"
+          />
+        </div>
+      </ResizablePanel>
+      <!-- Hidden (and undraggable) once collapsed, but kept through the slide
+           so its divider travels with the panel edge. -->
+      <ResizableHandle
+        :class="[handleClass, !leftContentVisible && 'pointer-events-none opacity-0']"
+        @dragging="trackSplitterDrag"
+      />
 
       <!-- Right section: header + center + right sidebar -->
       <ResizablePanel id="main-area" :order="2" :min-size="30" class="bg-[var(--editor-bg)]">
@@ -949,6 +1179,7 @@ onUnmounted(() => {
             v-show="!showSettings"
             direction="vertical"
             class="flex-1 overflow-hidden"
+            :class="{ 'panel-anim': bottomAnim.animating.value }"
             @layout="onBottomLayout"
           >
             <ResizablePanel id="main-upper" :order="1" :min-size="20">
@@ -956,36 +1187,44 @@ onUnmounted(() => {
                 :key="`inner-${showRight}`"
                 direction="horizontal"
                 class="inner-resize-group overflow-hidden"
-                :class="{ 'is-file-maximized': fileMaximized }"
+                :class="{
+                  'is-file-maximized': fileMaximized,
+                  'panel-anim': rightAnim.animating.value,
+                }"
                 @layout="onInnerLayout"
               >
                 <ResizablePanel id="center" :order="1" :min-size="centerMinPct" class="maximize-center">
                   <TabsCenter class="h-full" />
                 </ResizablePanel>
 
-                <template v-if="showRight && !rightCollapsed">
-                  <ResizableHandle :class="[handleClass, 'maximize-handle']" @dragging="setSplitterDragging" />
+                <template v-if="showRight">
+                  <ResizableHandle
+                    :class="[handleClass, 'maximize-handle', !rightContentVisible && 'pointer-events-none opacity-0']"
+                    @dragging="trackSplitterDrag"
+                  />
                   <ResizablePanel
                     ref="rightPanelRef"
                     id="right-sidebar"
                     :order="2"
-                    :default-size="panelSizes.right"
+                    :default-size="rightCollapsed ? 0 : panelSizes.right"
                     :min-size="rightMinPct"
-                    class="maximize-right bg-[var(--editor-bg)]"
+                    collapsible
+                    :collapsed-size="0"
+                    class="maximize-right relative bg-[var(--editor-bg)]"
+                    @collapse="rightCollapsed = true"
+                    @expand="rightCollapsed = false"
                   >
                     <RightPanel
+                      v-if="rightContentVisible"
                       class="h-full"
-                      :maximized="fileMaximized"
-                      @toggle-right="rightCollapsed = !rightCollapsed"
-                      @toggle-maximize="fileMaximized = !fileMaximized"
-                      :bottom-open="bottomPanelOpen"
-                      @toggle-bottom="toggleBottomPanel"
+                      :expected-width="rightPinnedPx || undefined"
+                      :style="rightSlideStyle"
                     />
                   </ResizablePanel>
                 </template>
               </ResizablePanelGroup>
             </ResizablePanel>
-            <BottomPanel ref="bottomPanelRef" />
+            <BottomPanel ref="bottomPanelRef" :animating="bottomAnim.animating.value" />
           </ResizablePanelGroup>
         </div>
       </ResizablePanel>
@@ -1031,6 +1270,26 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+/* Panel open/close animation. reka-ui sizes every panel with an inline
+   `flex-basis:0; flex-grow:<n>`, and grow is proportional to the group total —
+   so the transition must cover ALL panels in the group, not just the one being
+   collapsed, or the widths won't interpolate cleanly.
+
+   `.panel-anim` is present only while a toggle is in flight (usePanelAnimation),
+   which is what keeps splitter dragging frame-exact: a drag never sets it. */
+.panel-anim > :deep([data-slot="resizable-panel"]) {
+  transition: flex-grow 180ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+.panel-anim > :deep([data-slot="resizable-handle"]) {
+  transition: opacity 180ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .panel-anim > :deep([data-slot="resizable-panel"]),
+  .panel-anim > :deep([data-slot="resizable-handle"]) {
+    transition: none;
+  }
+}
+
 /* Maximize: override reka-ui's inline flex so the file panel fills the inner
    area and the terminal/agent center collapses out of view. Pure CSS override
    keeps both panels mounted (terminals stay warm) and leaves the persisted
@@ -1046,6 +1305,43 @@ onUnmounted(() => {
 .inner-resize-group.is-file-maximized :deep(.maximize-right) {
   flex: 1 1 0% !important;
   max-width: 100% !important;
+}
+
+/* Width collapses with the fade so the slot is released to the pane's split
+   menu; the strip is right-anchored, so the two toggles never move. Exact
+   widths matter — the reserves downstream are px-precise: 82px open
+   (FileTabBar `pr-[82px]`), 56px collapsed (pane header `pr-14`). */
+.strip-maximize {
+  display: inline-flex;
+  align-items: center;
+  overflow: hidden;
+  width: 0;
+  margin-right: 0;
+  opacity: 0;
+  transform-origin: right center;
+  transform: scale(0.85);
+  /* Width steps rather than eases: animating it in a right-anchored strip makes
+     the icon look like it slides in from the edge instead of fading in place.
+     On the way out it holds until the fade has finished, then collapses,
+     releasing the slot to the pane's split menu. */
+  transition:
+    opacity 150ms ease-out,
+    transform 150ms cubic-bezier(0.32, 0.72, 0, 1),
+    width 0s linear 150ms,
+    margin-right 0s linear 150ms;
+}
+.strip-maximize.is-shown {
+  width: 1.5rem;
+  margin-right: 0.125rem;
+  opacity: 1;
+  transform: scale(1);
+  /* Claim the slot and fade straight away — no wait on the slide, the strip
+     doesn't move, so there's nothing to catch this against. */
+  transition:
+    opacity 150ms ease-out,
+    transform 150ms cubic-bezier(0.32, 0.72, 0, 1),
+    width 0s,
+    margin-right 0s;
 }
 
 .chord-enter-active,

@@ -98,6 +98,28 @@ describe("usePanelResizeState overlay mode", () => {
     expect(state.open.value).toBe(false);
   });
 
+  it("does not re-resize when the persisted size matches what it rendered with", async () => {
+    // Resolves from the DB after the panel has painted, so a redundant resize
+    // here shows up as the panel's contents shifting once it is already open.
+    const { state } = make(900);
+    await nextTick();
+    const resize = vi.fn();
+    state.panelRef.value = { expand: vi.fn(), collapse: vi.fn(), resize };
+    state.applyPersisted("185");
+    await nextTick();
+    expect(resize).not.toHaveBeenCalled();
+  });
+
+  it("still applies a persisted size that differs from the cache", async () => {
+    const { state } = make(900);
+    await nextTick();
+    const resize = vi.fn();
+    state.panelRef.value = { expand: vi.fn(), collapse: vi.fn(), resize };
+    state.applyPersisted("240");
+    await nextTick();
+    expect(resize).toHaveBeenCalledWith(240);
+  });
+
   it("ignores layout sizes while overlaid", async () => {
     const { containerWidth, state } = make(900);
     await nextTick();

@@ -27,3 +27,19 @@ export function overlayWidth(sizePx: number, containerWidth: number): number {
     Math.min(sizePx, containerWidth - PANEL_SIZES.overlay.peek),
   );
 }
+
+/** Width the docked/overlay rule should judge against.
+ *
+ *  The live measurement sweeps while a panel slides, and deciding against those
+ *  intermediate widths flips the sidebar on the way past. Every slide that
+ *  changes this width has a knowable target, though — so callers pass it and the
+ *  rule judges the destination from the first frame, letting the panel animate
+ *  in already in its final configuration instead of rearranging afterwards.
+ *  Falls back to the measurement when no target is known. */
+export function judgedWidth(
+  measured: number,
+  target: number | undefined,
+  sliding: boolean,
+): number {
+  return sliding && target != null && target > 0 ? target : measured;
+}

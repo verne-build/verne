@@ -32,6 +32,7 @@ import { positionToScrollOffset, sliderGeometry, lineToTrackY } from '../../lib/
 import TerminalFindBox from './TerminalFindBox.vue';
 import { gridToText, rowToText } from '../../lib/terminal/a11y';
 import { registerGridSession, unregisterGridSession } from '../../composables/useTerminal';
+import { beginGridResize, endGridResize } from '../../lib/panelAnimationState';
 import type { FontMetrics, TerminalRenderer } from '../../lib/terminal/renderer';
 
 // `cwd` resolves repo-relative file links (e.g. electron/main/window.ts).
@@ -334,11 +335,27 @@ function applySize(opts: { hold?: boolean } = {}): void {
  *  can't stop the program miscounting, but coalescing turns a drag's dozens of
  *  SIGWINCH into a single final one, so it duplicates at most once instead of N. */
 let resizeTimer: ReturnType<typeof setTimeout> | null = null;
+/** Held from the first observed resize until the controller commits the new
+ *  grid, so anything covering the reflow (the center's slide blur) knows when
+ *  the terminal has actually landed rather than guessing at a delay. */
+let resizeSettlePending = false;
+function markResizeSettled(): void {
+  if (!resizeSettlePending) return;
+  resizeSettlePending = false;
+  endGridResize();
+}
 function scheduleResize(): void {
+  if (!resizeSettlePending) {
+    resizeSettlePending = true;
+    beginGridResize();
+  }
   if (resizeTimer != null) clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => {
     resizeTimer = null;
     applySize({ hold: true });
+    // No hold was armed (archived pane, unchanged grid, hidden container) — the
+    // commit callback will never fire, so release here.
+    if (!controller?.isResizeHeld()) markResizeSettled();
   }, 80);
 }
 
@@ -530,7 +547,10 @@ onMounted(async () => {
   controller.ime.onPreedit = () => controller?.repaint();
   controller.onAfterPaint = () => updateScrollUi();
   controller.onScroll = () => updateScrollUi(); // sub-line scrollbar tracking
-  controller.onResizeCommit = (cols, rows) => sizeCanvas(cols, rows);
+  controller.onResizeCommit = (cols, rows) => {
+    sizeCanvas(cols, rows);
+    markResizeSettled();
+  };
 
   registerGridSession(props.sessionId!, session, renderKind);
   if (hasRetainedGridFrame(runtimeLease)) {
@@ -1014,6 +1034,7 @@ onBeforeUnmount(() => {
   if (cnv) unbindCanvasEvents(cnv);
   resizeObserver?.disconnect();
   if (resizeTimer != null) clearTimeout(resizeTimer);
+  markResizeSettled();
   if (searchDebounce != null) clearTimeout(searchDebounce);
   if (a11yTimer != null) clearTimeout(a11yTimer);
   if (!controller) {
