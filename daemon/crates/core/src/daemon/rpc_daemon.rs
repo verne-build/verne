@@ -1,6 +1,5 @@
-//! Lean daemon RPC dispatch: PTY sessions + detection only. Operates on
-//! `DaemonState` (sessions + ws_port + event_bus) — no DB, no hooks, no git.
-//! Everything else is served by the sidecar (`crate::daemon::rpc_server`).
+//! Daemon RPC dispatch for PTY sessions, detection, canonical agent inventory,
+//! and other daemon-owned services. Operates on `DaemonState` — no DB or hooks.
 
 use std::sync::Arc;
 
@@ -31,6 +30,23 @@ pub fn dispatch(req: Request, state: Arc<DaemonState>) -> BoxFut {
 }
 
 async fn dispatch_impl(req: Request, state: Arc<DaemonState>) -> Response {
+    dispatch_impl_with_inventory_probe(req, state, || {
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+        crate::services::agent_inventory::probe(&shell, std::time::Duration::from_secs(2))
+    })
+    .await
+}
+
+async fn dispatch_impl_with_inventory_probe<F>(
+    req: Request,
+    state: Arc<DaemonState>,
+    inventory_probe: F,
+) -> Response
+where
+    F: FnOnce() -> Result<Vec<crate::services::agent_inventory::AgentInventoryProbeItem>, String>
+        + Send
+        + 'static,
+{
     match req.method.as_str() {
         "ping" => Response::ok(req.id, serde_json::json!("pong")),
         "__shutdown" => {
@@ -112,10 +128,7 @@ async fn dispatch_impl(req: Request, state: Arc<DaemonState>) -> Response {
         }
 
         m if m == methods::AGENT_INVENTORY_PROBE => {
-            let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
-            match tokio::task::spawn_blocking(move || {
-                crate::services::agent_inventory::probe(&shell, std::time::Duration::from_secs(2))
-            }).await {
+            match tokio::task::spawn_blocking(inventory_probe).await {
                 Ok(Ok(rows)) => Response::ok(req.id, serde_json::to_value(rows).unwrap()),
                 Ok(Err(error)) => Response::err(req.id, error),
                 Err(error) => Response::err(req.id, error.to_string()),
@@ -334,11 +347,32 @@ mod tests {
             params: serde_json::Value::Null,
         };
 
-        let resp = dispatch_impl(req, state).await;
+        let resp = dispatch_impl_with_inventory_probe(req, state, || {
+            Ok(crate::services::agent_inventory::parse_probe_output(""))
+        })
+        .await;
 
-        assert_ne!(
-            resp.error.as_ref().map(|error| error.message.as_str()),
-            Some("unknown daemon method: agent_inventory_probe"),
+        assert!(
+            resp.error.is_none(),
+            "unexpected RPC error: {:?}",
+            resp.error
+        );
+        let rows = resp.result.unwrap().as_array().unwrap().clone();
+        let keys = rows
+            .iter()
+            .map(|row| row["key"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            keys,
+            [
+                "claude",
+                "codex",
+                "antigravity",
+                "cursor",
+                "grok",
+                "opencode",
+                "pi"
+            ]
         );
     }
 }

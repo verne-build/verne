@@ -39,7 +39,7 @@ pub const TABS_HAS_RUNNING_CHILD: &str = "tabs_has_running_child";
 // Archive: one-shot renderer-native grid dump for a tab's live PTY.
 pub const TAB_SNAPSHOT: &str = "tab_snapshot";
 
-// sidecar diagnostics (watcher/cache counters; daemon serves the session half)
+// Diagnostics are split across processes; canonical agent discovery is daemon-owned.
 pub const GET_SIDECAR_DIAGNOSTICS: &str = "get_sidecar_diagnostics";
 pub const AGENT_INVENTORY_PROBE: &str = "agent_inventory_probe";
 
