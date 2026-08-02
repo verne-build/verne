@@ -47,7 +47,7 @@ pub fn parse_probe_output(stdout: &str) -> Vec<AgentInventoryProbeItem> {
     let mut records: HashMap<(&str, &str), &str> = HashMap::new();
 
     for line in stdout.lines() {
-        let Some(record) = line.strip_prefix(SENTINEL) else {
+        let Some((_, record)) = line.split_once(SENTINEL) else {
             continue;
         };
         let mut fields = record.split('\t');
@@ -191,6 +191,18 @@ mod tests {
         assert_eq!(rows[1].key, "codex");
         assert_eq!(rows[1].discovery_status, DiscoveryStatus::Missing);
         assert_eq!(rows[5].key, "opencode");
+    }
+
+    #[test]
+    fn parser_accepts_shell_startup_bytes_before_first_sentinel() {
+        let stdout = concat!(
+            "\u{1b}c\u{1b}[3J",
+            "__VERNE_AGENT_INVENTORY__:claude\tclaude\t/opt/bin/claude\n",
+        );
+
+        let rows = parse_probe_output(stdout);
+
+        assert_eq!(rows[0].resolved_binary.as_deref(), Some("/opt/bin/claude"));
     }
 
     #[test]
