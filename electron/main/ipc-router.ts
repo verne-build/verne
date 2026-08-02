@@ -2,7 +2,8 @@ import { ipcMain, BrowserWindow } from "electron";
 import type { DaemonClient } from "./daemon-client";
 import { handleTabUpdate } from "./native/notifications";
 import { getDb } from "./db/connection";
-import { updateTabPresentationSnapshot, getTab } from "./db/tabs";
+import { updateTabPresentationSnapshot, getTab, setTabOscDisplayTitle } from "./db/tabs";
+import { stripSpinner } from "../../src/lib/agentStatus";
 import { canResumeAgent } from "./resume-registry";
 import { handleSessionCwd } from "./scope-repin";
 
@@ -67,8 +68,25 @@ export function installRouter(
 // outlives a closed window. So forwarding must tolerate "window gone" — send to
 // a destroyed webContents throws "Object has been destroyed" (uncaught → fatal).
 export function makeForward(getWindow: () => BrowserWindow, sidecar: DaemonClient) {
+  // Last OSC title written per tab. The daemon re-emits on every title change
+  // (spinner frames included), so dedupe before touching SQLite.
+  const lastOscTitle = new Map<string, string>();
   return (name: string, payload: unknown) => {
     const update = payload as Record<string, unknown>;
+    // Live OSC title → tabs.display_title, so an exited/stopped agent session
+    // keeps its name after a daemon restart. Forwarded on as usual.
+    if (name === "tab-title") {
+      const tabId = typeof update.tabId === "string" ? update.tabId : "";
+      const raw = typeof update.title === "string" ? update.title : "";
+      const title = stripSpinner(raw).trim();
+      if (tabId && title && lastOscTitle.get(tabId) !== title) {
+        try {
+          if (setTabOscDisplayTitle(getDb(), tabId, title)) lastOscTitle.set(tabId, title);
+        } catch (e) {
+          console.error("[osc-title] persist:", e);
+        }
+      }
+    }
     // session-cwd is main-internal: resolve a scope re-pin, never forwarded raw.
     if (name === "session-cwd") {
       void handleSessionCwd(payload as { tabId: string; cwd: string }, {
@@ -110,6 +128,10 @@ export function makeForward(getWindow: () => BrowserWindow, sidecar: DaemonClien
         // the title fields — without this it keeps rendering the previous
         // conversation's name until a reload.
         if (titlesReset) titleResets.push(tabId);
+        // The snapshot write just nulled display_title (new conversation in the
+        // same tab) — drop the dedupe entry so the next OSC title re-persists
+        // even if the text is unchanged.
+        if (titlesReset) lastOscTitle.delete(tabId);
       } catch (e) {
         console.error("[agent-status] persist snapshot:", e);
       }

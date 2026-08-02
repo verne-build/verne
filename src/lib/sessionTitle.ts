@@ -3,12 +3,15 @@
 //   1. manual rename        — the user's word is final
 //   2. generatedTitle       — the one-shot agent-generated title
 //   3. displayTitle         — hook-derived, from the LIVE daemon
-//   4. storedDisplayTitle   — the last hook-derived title we persisted; only
-//                             reached when the daemon no longer has this
-//                             session (archived, exited, daemon restarted).
-//                             Without it those sessions collapse to "Claude".
-//   5. live OSC title       — what the running program calls itself; this is the
+//   4. live OSC title       — what the running program calls itself; this is the
 //                             "pending" name while a generated title is in flight
+//   5. storedDisplayTitle   — the last hook- or OSC-derived title we persisted;
+//                             only reached when nothing live names the session
+//                             (archived, exited, daemon restarted). Without it
+//                             those sessions collapse to "Claude". It sits BELOW
+//                             the live OSC title on purpose: the cached tab row
+//                             only refreshes on tabs_list/rename/archive, so a
+//                             running session must not pin to a stale snapshot.
 //   6. agent name           — "Codex"
 //   7. foreground command
 //   8. numbered label
@@ -29,8 +32,8 @@ export function sessionTitleFrom(inputs: SessionTitleInputs): string {
   if (inputs.userRenamed && inputs.label) return inputs.label;
   if (inputs.generatedTitle) return inputs.generatedTitle;
   if (inputs.displayTitle) return inputs.displayTitle;
-  if (inputs.storedDisplayTitle) return inputs.storedDisplayTitle;
   if (inputs.oscTitle) return inputs.oscTitle;
+  if (inputs.storedDisplayTitle) return inputs.storedDisplayTitle;
   if (inputs.agentType) {
     return inputs.agentType.charAt(0).toUpperCase() + inputs.agentType.slice(1);
   }
@@ -61,9 +64,13 @@ export function terminalTitleFrom(inputs: TerminalTitleInputs): string {
 /** Visible name for any session: agent-owned sessions use their agent title;
  * ordinary terminals use the process they are running. */
 export function sessionDisplayNameFrom(inputs: SessionTitleInputs): string {
-  const normalized = inputs.oscTitle
-    ? { ...inputs, oscTitle: stripSpinner(inputs.oscTitle) }
-    : inputs;
+  // An archived session's stored title is its frozen record — a leftover live
+  // OSC title (the map isn't cleared on archive) must not outrank it.
+  const normalized = inputs.archived
+    ? { ...inputs, oscTitle: undefined }
+    : inputs.oscTitle
+      ? { ...inputs, oscTitle: stripSpinner(inputs.oscTitle) }
+      : inputs;
   if (normalized.archived && normalized.storedDisplayTitle)
     return sessionTitleFrom(normalized);
   return normalized.agentType ? sessionTitleFrom(normalized) : terminalTitleFrom(normalized);

@@ -133,4 +133,66 @@ describe("makeForward", () => {
     });
     expect(send).not.toHaveBeenCalledWith("daemon-event", "tab-titles-reset", { tabId: "tz" });
   });
+
+  // Claude's manifest title strategy is `osc`: no hook title, no generated title.
+  // Unless main persists the OSC title, a dead/restarted daemon leaves the row
+  // with nothing and the session collapses to "Claude".
+  it("persists live OSC titles as display_title for agent sessions", () => {
+    const db = getDb();
+    insertDirectory(db, { id: "do", path: "/tmp/do", name: "do", createdAt: 0, sortOrder: 0 });
+    insertTab(db, {
+      id: "shell", directoryId: "do", label: "1", cwd: "/tmp/do",
+      sortOrder: 0, createdAt: 0, userRenamed: false,
+    });
+    insertTab(db, {
+      id: "ta", directoryId: "do", label: "2", cwd: "/tmp/do",
+      sortOrder: 1, createdAt: 0, userRenamed: false, lastAgentType: "claude",
+    });
+    const { win, send } = fakeWin({});
+    const fwd = makeForward(() => win, sidecar);
+
+    fwd("tab-title", { tabId: "ta", title: "✳ Fix the uploader" });
+    // Spinner glyphs are noise in a frozen name — strip before persisting.
+    expect(getTab(db, "ta")!.displayTitle).toBe("Fix the uploader");
+    // Still forwarded to the renderer.
+    expect(send).toHaveBeenCalledWith("daemon-event", "tab-title", expect.anything());
+
+    // A plain shell titles itself with its cwd — never freeze that onto the row.
+    fwd("tab-title", { tabId: "shell", title: "~/Repos/verne" });
+    expect(getTab(db, "shell")!.displayTitle).toBeUndefined();
+  });
+
+  // The row's title is frozen at archive time; a late OSC frame must not edit it.
+  it("does not overwrite an archived session's frozen title", () => {
+    const db = getDb();
+    insertDirectory(db, { id: "dv", path: "/tmp/dv", name: "dv", createdAt: 0, sortOrder: 0 });
+    insertTab(db, {
+      id: "tv", directoryId: "dv", label: "1", cwd: "/tmp/dv",
+      sortOrder: 0, createdAt: 0, userRenamed: false,
+      lastAgentType: "claude", archivedAt: 123, displayTitle: "Frozen",
+    });
+    makeForward(() => fakeWin({}).win, sidecar)("tab-title", { tabId: "tv", title: "Later" });
+    expect(getTab(db, "tv")!.displayTitle).toBe("Frozen");
+  });
+
+  // A new conversation nulls display_title. The dedupe cache must not then
+  // suppress re-persisting an identical OSC title.
+  it("re-persists an unchanged OSC title after a session reset", () => {
+    const db = getDb();
+    insertDirectory(db, { id: "dw", path: "/tmp/dw", name: "dw", createdAt: 0, sortOrder: 0 });
+    insertTab(db, {
+      id: "tw", directoryId: "dw", label: "1", cwd: "/tmp/dw",
+      sortOrder: 0, createdAt: 0, userRenamed: false,
+      lastAgentType: "claude", lastAgentSessionId: "sid-old",
+    });
+    const fwd = makeForward(() => fakeWin({}).win, sidecar);
+
+    fwd("tab-title", { tabId: "tw", title: "Same name" });
+    fwd("tab-updated", {
+      tabId: "tw", agentType: "claude", agentState: "working", lastAgentSessionId: "sid-new",
+    });
+    expect(getTab(db, "tw")!.displayTitle).toBeUndefined();
+    fwd("tab-title", { tabId: "tw", title: "Same name" });
+    expect(getTab(db, "tw")!.displayTitle).toBe("Same name");
+  });
 });

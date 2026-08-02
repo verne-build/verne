@@ -105,8 +105,18 @@ describe("sessionTitleFrom", () => {
     })).toBe("Mine");
   });
 
-  it("the persisted title beats a live OSC title", () => {
-    expect(sessionTitleFrom({ storedDisplayTitle: "Stored", oscTitle: "Osc" })).toBe("Stored");
+  // The cached tab row only refreshes on tabs_list/rename/archive, so its
+  // display_title lags a running session — the live OSC title must win.
+  it("a live OSC title beats the persisted title", () => {
+    expect(sessionTitleFrom({ storedDisplayTitle: "Stored", oscTitle: "Osc" })).toBe("Osc");
+  });
+
+  // ...except once archived, where the persisted title IS the frozen record and
+  // a leftover OSC entry would otherwise resurrect a mid-session name.
+  it("an archived session ignores a leftover OSC title", () => {
+    expect(sessionDisplayNameFrom({
+      archived: true, storedDisplayTitle: "Fix the uploader", oscTitle: "Osc", agentType: "claude",
+    })).toBe("Fix the uploader");
   });
 });
 

@@ -77,6 +77,24 @@ export function setTabGeneratedTitle(db: DatabaseSync, id: string, title: string
   db.prepare("UPDATE tabs SET generated_title = ? WHERE id = ?").run(title, id);
 }
 
+/** Persist the live OSC title as this session's display title. Agents whose
+ *  manifest title strategy is `osc` (Claude) emit NO hook/generated title, so
+ *  without this their name lives only in renderer memory and a dead or restarted
+ *  daemon collapses the row to "Claude".
+ *
+ *  Guarded to agent sessions: a plain shell sets its OSC title to the cwd, which
+ *  is noise we'd otherwise freeze onto the row. Archived rows already hold their
+ *  frozen title (tabs_archive) — never overwrite one. */
+export function setTabOscDisplayTitle(db: DatabaseSync, id: string, title: string): boolean {
+  const res = db.prepare(
+    `UPDATE tabs SET display_title = ?
+       WHERE id = ? AND last_agent_type IS NOT NULL AND archived_at IS NULL`,
+  ).run(title, id);
+  // False when the guards rejected the write (no agent yet / archived) — the
+  // caller must not then cache this title as persisted.
+  return Number(res.changes) > 0;
+}
+
 export function getTabs(db: DatabaseSync, directoryId?: string | null): Tab[] {
   if (directoryId != null) {
     return (
