@@ -104,15 +104,19 @@ const gotoLine = computed<number | null>(() => {
 const matchingAgents = computed(() => {
   if (!agentsVisible.value) return [];
   const q = term.value.toLowerCase().trim();
-  const items = store.agentsList("current").map((i) => ({
+  // Every live agent, not just the current workspace's — selectSession switches
+  // directory on its own, so scoping only hid sessions the user wanted to reach.
+  const items = store.agentsList("all").map((i) => ({
     tabId: i.tab.id,
     directoryId: i.directory.id,
     title: store.sessionName(i.tab.id),
+    directoryName: i.directory.name,
     agentType: store.tabRuntime.get(i.tab.id)?.agentType ?? i.tab.lastAgentType ?? "claude",
-    updatedAt: i.tab.createdAt,
   }));
   if (!q) return items;
-  return items.filter((a) => a.title.toLowerCase().includes(q));
+  return items.filter(
+    (a) => a.title.toLowerCase().includes(q) || a.directoryName.toLowerCase().includes(q),
+  );
 });
 
 const agentIconSurface = computed(() => {
@@ -253,16 +257,6 @@ function selectAgent(tabId: string) {
   store.selectSession(tabId);
 }
 
-function timeAgo(ts: number): string {
-  const diff = Date.now() - ts;
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return "now";
-  if (mins < 60) return `${mins}m`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h`;
-  return `${Math.floor(hrs / 24)}d`;
-}
-
 // Empty query → split into "Recent Files" (frecency>0) + "Files". While typing,
 // one ranked "Files" group (FFF already floats recent matches to the top).
 const fileGroups = computed<{ heading: string; items: SearchResult[] }[]>(() => {
@@ -364,12 +358,12 @@ const noResults = computed(() => {
             <CommandItem
               v-for="a in matchingAgents"
               :key="a.tabId"
-              :value="`agent:${a.title}`"
+              :value="`agent:${a.title} ${a.directoryName}`"
               @select="selectAgent(a.tabId)"
             >
               <img :src="agentIcon(a.agentType)" class="size-4 shrink-0" aria-hidden="true" />
-              <span class="truncate text-sm">{{ a.title }}</span>
-              <span class="text-xs text-muted-foreground">{{ timeAgo(a.updatedAt) }}</span>
+              <span class="min-w-0 flex-1 truncate text-sm">{{ a.title }}</span>
+              <span class="max-w-[35%] shrink-0 truncate text-xs text-muted-foreground">{{ a.directoryName }}</span>
             </CommandItem>
           </CommandGroup>
         </template>
