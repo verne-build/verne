@@ -116,17 +116,6 @@ async fn dispatch(req: Request, state: Arc<crate::state::AppState>) -> Response 
             }
         }
 
-        m if m == crate::protocol::methods::AGENT_INVENTORY_PROBE => {
-            let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
-            match tokio::task::spawn_blocking(move || {
-                crate::services::agent_inventory::probe(&shell, std::time::Duration::from_secs(2))
-            }).await {
-                Ok(Ok(rows)) => Response::ok(req.id, serde_json::to_value(rows).unwrap()),
-                Ok(Err(error)) => Response::err(req.id, error),
-                Err(error) => Response::err(req.id, error.to_string()),
-            }
-        }
-
         // Slice 5b: DB-free agent-shadow teardown. Electron deletes the tab row
         // itself on close, then forwards this so the sidecar drops the in-memory
         // git2 repo + on-disk shadow tree (it still owns those resources).

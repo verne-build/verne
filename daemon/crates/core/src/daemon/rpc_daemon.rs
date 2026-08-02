@@ -111,6 +111,17 @@ async fn dispatch_impl(req: Request, state: Arc<DaemonState>) -> Response {
             }
         }
 
+        m if m == methods::AGENT_INVENTORY_PROBE => {
+            let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+            match tokio::task::spawn_blocking(move || {
+                crate::services::agent_inventory::probe(&shell, std::time::Duration::from_secs(2))
+            }).await {
+                Ok(Ok(rows)) => Response::ok(req.id, serde_json::to_value(rows).unwrap()),
+                Ok(Err(error)) => Response::err(req.id, error),
+                Err(error) => Response::err(req.id, error.to_string()),
+            }
+        }
+
         m if m == methods::CREATE_TERMINAL => {
             let working_dir = s(req.params.get("workingDir"));
             let cols = req.params.get("cols").and_then(|v| v.as_u64()).map(|n| n as u16);
@@ -312,5 +323,22 @@ mod tests {
         let resp = dispatch_impl(req, state).await;
         let err = resp.error.expect("expected an error response");
         assert_eq!(err.message, "session already exited; nothing to archive.");
+    }
+
+    #[tokio::test]
+    async fn agent_inventory_probe_is_routed_by_the_daemon() {
+        let state = Arc::new(DaemonState::new(0));
+        let req = Request {
+            id: 2,
+            method: methods::AGENT_INVENTORY_PROBE.to_string(),
+            params: serde_json::Value::Null,
+        };
+
+        let resp = dispatch_impl(req, state).await;
+
+        assert_ne!(
+            resp.error.as_ref().map(|error| error.message.as_str()),
+            Some("unknown daemon method: agent_inventory_probe"),
+        );
     }
 }
