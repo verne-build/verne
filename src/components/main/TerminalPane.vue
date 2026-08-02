@@ -532,23 +532,34 @@ onUnmounted(() => {
           <!-- Exited overlay: PTY is gone. Resume is preferred when the agent's
                session id survived; plain restart otherwise. Never for archived
                (that's the un-archive flow). -->
-          <button
+          <div
             v-if="isExited && !isArchived"
-            type="button"
-            class="absolute inset-0 z-40 flex items-center justify-center bg-[var(--editor-bg)]/50 opacity-50 hover:opacity-70 transition-opacity cursor-pointer"
-            @click="tab?.resumeAvailable ? resumeAgent() : restart()"
+            class="absolute inset-0 z-40 flex flex-col items-center justify-center gap-3 bg-[var(--editor-bg)]/70 px-6 text-center"
           >
-            <span class="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <p class="text-xs text-muted-foreground max-w-xs text-balance">
+              {{
+                tab?.resumeAvailable
+                  ? "This session has exited. Resume the agent to pick up where it left off."
+                  : "This session has exited. Restart it to run the command again."
+              }}
+            </p>
+            <button
+              type="button"
+              data-no-drag
+              class="flex items-center gap-1.5 rounded-full bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground shadow hover:bg-primary/90"
+              :title="tab?.resumeAvailable ? 'Resume agent (--resume)' : 'Restart session'"
+              @click="tab?.resumeAvailable ? resumeAgent() : restart()"
+            >
               <template v-if="tab?.resumeAvailable">
                 <Play class="size-3.5" />
-                Session exited — click to resume agent
+                Resume Agent
               </template>
               <template v-else>
                 <RotateCw class="size-3.5" />
-                Session exited — click to restart
+                Restart Session
               </template>
-            </span>
-          </button>
+            </button>
+          </div>
           <!-- Corner resume affordance for archived agents, mirroring the banner
                button so it stays reachable wherever the eye is. Overlay-only so
                scroll/select/copy underneath are unaffected; offset to clear the

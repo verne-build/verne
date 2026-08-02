@@ -540,7 +540,7 @@ describe("TabsCenter real TerminalPane lifecycle", () => {
     testState.store.sessionLifecycle.set("session-a", "exited");
     await flush();
     const exitOverlay = Array.from(root.querySelectorAll("button"))
-      .find((button) => button.textContent?.includes("Session exited"));
+      .find((button) => /Resume agent|Restart session/.test(button.title));
     expect(exitOverlay).not.toBeUndefined();
     expect(root.querySelector('[data-grid-session-id="pty:session-a"]')).toBe(grid);
 
@@ -556,7 +556,7 @@ describe("TabsCenter real TerminalPane lifecycle", () => {
     expect(pane("session-a")).toBe(root);
     expect(root.querySelector('[data-grid-session-id="pty:session-a"]')).toBe(grid);
     expect(Array.from(root.querySelectorAll("button"))
-      .find((button) => button.textContent?.includes("Session exited"))).toBe(exitOverlay);
+      .find((button) => /Resume agent|Restart session/.test(button.title))).toBe(exitOverlay);
     expect(exitOverlay?.isConnected).toBe(true);
     expect(root.contains(exitOverlay!)).toBe(true);
     expect(testState.tabsSessionId).toHaveBeenCalledTimes(1);
@@ -566,7 +566,7 @@ describe("TabsCenter real TerminalPane lifecycle", () => {
 
     expect(pane("session-a")).toBe(root);
     expect(root.querySelector('[data-grid-session-id="pty:session-a"]')).toBe(grid);
-    expect(root.textContent).not.toContain("Session exited");
+    expect(root.textContent).not.toContain("This session has exited");
     expect(testState.tabsSessionId).toHaveBeenCalledTimes(1);
     expect(testState.incrementMountedTerminalViewCount).toHaveBeenCalledTimes(1);
     expect(testState.decrementMountedTerminalViewCount).not.toHaveBeenCalled();
