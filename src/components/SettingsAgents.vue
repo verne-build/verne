@@ -1,26 +1,15 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { toast } from "vue-sonner";
-import {
-  Check,
-  ChevronDown,
-  ChevronRight,
-  Copy,
-  ExternalLink,
-  Loader2,
-  RefreshCw,
-  Search,
-  Trash2,
-} from "@lucide/vue";
+import { ChevronRight, ExternalLink, Loader2, RefreshCw } from "@lucide/vue";
 import { useAgentInventory } from "@/composables/useAgentInventory";
 import { useRpc } from "@/composables/useRpc";
 import { openExternal } from "@/platform";
 import type { AgentInventoryItem, AgentInventoryKey, McpAgentStatus } from "@/types";
-import { Badge } from "./ui/badge";
+import AgentInventoryRow from "./AgentInventoryRow.vue";
 import { Button } from "./ui/button";
 import { Card, CardContent } from "./ui/card";
-
-type BadgeVariant = "default" | "secondary" | "outline" | "destructive";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
 
 const MCP_KEYS = new Set<AgentInventoryKey>(["claude", "codex", "cursor", "opencode"]);
 
@@ -31,6 +20,7 @@ const manualCommands = ref<Partial<Record<AgentInventoryKey, string>>>({});
 const expanded = ref(new Set<AgentInventoryKey>());
 const busyCounts = ref<Partial<Record<AgentInventoryKey, number>>>({});
 const refreshing = ref(false);
+const undetectedOpen = ref(false);
 const operationOwners = new Map<AgentInventoryKey, number>();
 const activeMutations = new Set<AgentInventoryKey>();
 let nextOperationId = 0;
@@ -41,56 +31,13 @@ type McpOperation = {
   keys: readonly AgentInventoryKey[];
 };
 
-function shortenHome(path: string | null): string | null {
-  if (!path) return null;
-  return path
-    .replace(/^\/Users\/[^/]+(?=\/|$)/, "~")
-    .replace(/^\/home\/[^/]+(?=\/|$)/, "~");
-}
+const agents = computed(() => inventory.snapshot.value?.agents ?? []);
+const detected = computed(() => agents.value.filter((agent) => agent.discoveryStatus === "installed"));
+const undetected = computed(() => agents.value.filter((agent) => agent.discoveryStatus !== "installed"));
+const undetectedNames = computed(() => undetected.value.map((agent) => agent.displayName).join(", "));
 
-function detectionState(agent: AgentInventoryItem): { label: string; variant: BadgeVariant } {
-  if (agent.discoveryStatus === "installed") return { label: "Detected", variant: "secondary" };
-  if (agent.discoveryStatus === "missing") return { label: "Not Detected", variant: "outline" };
-  return { label: "Check Failed", variant: "destructive" };
-}
-
-function updateState(agent: AgentInventoryItem): { label: string; variant: BadgeVariant } {
-  if (agent.errorCode === "version") return { label: "Version Check Failed", variant: "destructive" };
-  if (agent.errorCode === "latest") return { label: "Latest Check Failed", variant: "destructive" };
-  if (agent.updateStatus === "outdated") return { label: "Update Available", variant: "default" };
-  if (agent.updateStatus === "current") return { label: "Current", variant: "secondary" };
-  return { label: "Update Unknown", variant: "outline" };
-}
-
-function mcpState(status: McpAgentStatus | undefined): { label: string; variant: BadgeVariant } {
-  switch (status?.status) {
-    case "registered": return { label: "MCP Installed", variant: "default" };
-    case "needsApproval": return { label: "MCP Needs Approval", variant: "secondary" };
-    case "detected": return { label: "MCP Not Installed", variant: "outline" };
-    case "notDetected": return { label: "MCP Agent Not Detected", variant: "outline" };
-    case "error": return { label: "MCP Check Failed", variant: "destructive" };
-    default: return { label: "MCP Not Checked", variant: "outline" };
-  }
-}
-
-const rows = computed(() => (inventory.snapshot.value?.agents ?? []).map((agent) => {
-  const detection = detectionState(agent);
-  const update = updateState(agent);
-  const mcpStatus = mcpStatuses.value[agent.key];
-  const mcp = mcpState(mcpStatus);
-  return {
-    ...agent,
-    detectionLabel: detection.label,
-    detectionVariant: detection.variant,
-    updateLabel: update.label,
-    updateVariant: update.variant,
-    displayPath: shortenHome(agent.resolvedBinary),
-    hasMcp: MCP_KEYS.has(agent.key),
-    mcpStatus,
-    mcpLabel: mcp.label,
-    mcpVariant: mcp.variant,
-  };
-}));
+/** True while any stage of a refresh is still resolving, local or pushed. */
+const scanning = computed(() => refreshing.value || inventory.refreshing.value);
 
 const checkedAt = computed(() => {
   const value = inventory.snapshot.value?.checkedAt;
@@ -138,9 +85,9 @@ function patchMcp(key: AgentInventoryKey, status: McpAgentStatus): void {
   mcpStatuses.value = { ...mcpStatuses.value, [key]: status };
 }
 
-async function refreshMcp(agents: readonly AgentInventoryItem[]): Promise<void> {
-  const supported = agents.filter((agent) => MCP_KEYS.has(agent.key));
-  const installed = agents.filter((agent) =>
+async function refreshMcp(list: readonly AgentInventoryItem[]): Promise<void> {
+  const supported = list.filter((agent) => MCP_KEYS.has(agent.key));
+  const installed = list.filter((agent) =>
     MCP_KEYS.has(agent.key) && agent.discoveryStatus === "installed",
   );
   const operation = beginOperation(
@@ -171,7 +118,7 @@ async function refreshMcp(agents: readonly AgentInventoryItem[]): Promise<void> 
 }
 
 async function refreshAll(): Promise<void> {
-  if (refreshing.value || hasBusy.value) return;
+  if (scanning.value || hasBusy.value) return;
   refreshing.value = true;
   try {
     const next = await inventory.refresh();
@@ -241,6 +188,10 @@ async function removeMcp(agent: AgentInventoryItem): Promise<void> {
   }
 }
 
+function setMcp(agent: AgentInventoryItem, enabled: boolean): void {
+  void (enabled ? installMcp(agent) : removeMcp(agent));
+}
+
 async function ensureManualCommand(key: AgentInventoryKey): Promise<string> {
   if (manualCommands.value[key] != null) return manualCommands.value[key]!;
   try {
@@ -269,29 +220,31 @@ function toggleManual(key: AgentInventoryKey): void {
 async function copyManualCommand(key: AgentInventoryKey): Promise<void> {
   const command = await ensureManualCommand(key);
   if (!command) return;
+  await copyText(command, "Install Commands Copied");
+}
+
+async function copyText(value: string, success: string): Promise<void> {
   try {
-    await navigator.clipboard.writeText(command);
+    await navigator.clipboard.writeText(value);
     if (disposed) return;
-    toast.success("Install Commands Copied");
+    toast.success(success);
   } catch (error) {
     if (!disposed)
       toast.error("Couldn’t Copy", { description: error instanceof Error ? error.message : String(error) });
   }
 }
 
-async function copyUpdateCommand(command: string): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(command);
-    if (disposed) return;
-    toast.success("Update Command Copied");
-  } catch (error) {
-    if (!disposed)
-      toast.error("Couldn’t Copy", { description: error instanceof Error ? error.message : String(error) });
-  }
-}
+/**
+ * Streaming refresh republishes the snapshot many times per run; only a change
+ * to the MCP-capable installed set is worth re-fanning status probes for.
+ */
+const mcpFingerprint = computed(() => detected.value
+  .filter((agent) => MCP_KEYS.has(agent.key))
+  .map((agent) => agent.key)
+  .join(","));
 
-watch(inventory.snapshot, (next) => {
-  if (!refreshing.value) void refreshMcp(next?.agents ?? []);
+watch(mcpFingerprint, () => {
+  if (!refreshing.value) void refreshMcp(agents.value);
 }, { immediate: true });
 
 onBeforeUnmount(() => {
@@ -304,11 +257,17 @@ onBeforeUnmount(() => {
 
 <template>
   <section aria-labelledby="agent-inventory-heading">
-    <div class="mb-3 flex items-center justify-between gap-4">
+    <div class="mb-3 flex items-start justify-between gap-4">
       <div class="min-w-0">
         <h3 id="agent-inventory-heading" class="text-sm font-bold text-balance">Agent Inventory</h3>
         <p class="mt-0.5 text-xs text-muted-foreground text-pretty">
           Installed versions, available updates, and Verne MCP access.
+        </p>
+        <p class="mt-1 text-[11px] text-muted-foreground tabular-nums" :title="inventory.snapshot.value?.checkedAt">
+          Last Checked: {{ checkedAt }}
+          <span v-if="inventory.snapshot.value?.refreshError" class="text-muted-foreground">
+            · Detection failed · prior results may be stale.
+          </span>
         </p>
       </div>
       <Button
@@ -316,176 +275,104 @@ onBeforeUnmount(() => {
         variant="outline"
         size="sm"
         class="min-h-10 shrink-0 transition-transform active:scale-[0.96]"
-        :disabled="refreshing || hasBusy"
+        :disabled="scanning || hasBusy"
         @click="refreshAll"
       >
-        <Loader2 v-if="refreshing" class="size-3.5 animate-spin" />
+        <Loader2 v-if="scanning" class="size-3.5 animate-spin" />
         <RefreshCw v-else class="size-3.5" />
-        Refresh
+        {{ scanning ? "Checking…" : "Refresh" }}
       </Button>
     </div>
 
-    <Card class="!gap-0 overflow-hidden !py-0 bg-popover">
-      <CardContent class="!p-0">
-        <div v-if="rows.length === 0" class="px-6 py-8 text-center text-xs text-muted-foreground">
+    <Card class="relative !gap-0 overflow-hidden !py-0 bg-popover">
+      <div v-if="scanning" class="pointer-events-none absolute inset-x-0 top-0 h-px overflow-hidden">
+        <div class="inventory-scan h-full w-1/3 bg-primary/70" />
+      </div>
+      <CardContent class="!p-0 divide-y divide-border">
+        <div v-if="agents.length === 0" class="px-6 py-8 text-center text-xs text-muted-foreground">
           {{ inventory.loading.value ? "Checking agents…" : "Agent inventory is unavailable." }}
         </div>
+        <div v-else-if="detected.length === 0" class="px-6 py-8 text-center text-xs text-muted-foreground">
+          No coding agents detected on your PATH.
+        </div>
 
-        <article
-          v-for="agent in rows"
+        <AgentInventoryRow
+          v-for="agent in detected"
           :key="agent.key"
-          :data-agent-key="agent.key"
-          class="border-b border-border px-4 py-4 last:border-b-0"
-        >
-          <div class="flex items-start justify-between gap-4">
-            <div class="min-w-0 flex-1">
-              <div class="flex flex-wrap items-center gap-2">
-                <h4 class="text-sm font-medium text-balance">{{ agent.displayName }}</h4>
-                <Badge :variant="agent.detectionVariant" class="text-[10px]">
-                  <Check v-if="agent.discoveryStatus === 'installed'" class="size-3" />
-                  {{ agent.detectionLabel }}
-                </Badge>
-                <Badge :variant="agent.updateVariant" class="text-[10px]">{{ agent.updateLabel }}</Badge>
-              </div>
-              <p v-if="agent.displayPath" class="selectable-text mt-1 truncate font-mono text-[11px] text-muted-foreground">
-                {{ agent.displayPath }}
-              </p>
-            </div>
+          :agent="agent"
+          :has-mcp="MCP_KEYS.has(agent.key)"
+          :mcp-status="mcpStatuses[agent.key]"
+          :busy="busy.has(agent.key)"
+          :locked="refreshing"
+          :manual-open="expanded.has(agent.key)"
+          :manual-command="manualCommands[agent.key]"
+          @set-mcp="setMcp(agent, $event)"
+          @check="checkMcp(agent)"
+          @toggle-manual="toggleManual(agent.key)"
+          @copy-update="copyText(agent.updateCommand!, 'Update Command Copied')"
+          @open-guide="openExternal(agent.updateUrl!)"
+          @copy-path="copyText(agent.resolvedBinary!, 'Path Copied')"
+          @copy-manual="copyManualCommand(agent.key)"
+        />
+      </CardContent>
+    </Card>
 
-            <dl class="grid shrink-0 grid-cols-2 gap-x-4 text-right text-[11px]">
-              <div>
-                <dt class="text-muted-foreground">Current</dt>
-                <dd class="font-medium">{{ agent.currentVersion ?? "—" }}</dd>
-              </div>
-              <div>
-                <dt class="text-muted-foreground">Latest</dt>
-                <dd class="font-medium">{{ agent.latestVersion ?? "—" }}</dd>
-              </div>
-            </dl>
-          </div>
-
-          <div class="mt-3 flex flex-wrap items-center justify-between gap-2">
-            <div class="flex flex-wrap items-center gap-2">
+    <Collapsible v-if="undetected.length" v-model:open="undetectedOpen" class="mt-3">
+      <CollapsibleTrigger
+        data-undetected-toggle
+        aria-label="Not Installed"
+        class="flex w-full min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+      >
+        <ChevronRight class="size-3 shrink-0 transition-transform" :class="{ 'rotate-90': undetectedOpen }" />
+        <span class="shrink-0">Not Installed ({{ undetected.length }})</span>
+        <span class="truncate">· {{ undetectedNames }}</span>
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <Card class="mt-2 !gap-0 overflow-hidden !py-0 bg-popover">
+          <CardContent class="!p-0 divide-y divide-border">
+            <div
+              v-for="agent in undetected"
+              :key="agent.key"
+              :data-agent-key="agent.key"
+              class="flex items-center gap-3 px-4 py-2"
+            >
+              <span class="truncate text-sm">{{ agent.displayName }}</span>
+              <span class="shrink-0 text-[11px] text-muted-foreground">
+                {{ agent.errorCode === "discovery" ? "Detection failed" : "Not detected" }}
+              </span>
               <Button
-                v-if="agent.updateCommand"
+                v-if="agent.updateUrl"
                 type="button"
                 variant="ghost"
                 size="xs"
-                class="min-h-10 transition-transform active:scale-[0.96]"
-                @click="copyUpdateCommand(agent.updateCommand)"
-              >
-                <Copy class="size-3.5" />
-                Copy Update Command
-              </Button>
-              <Button
-                v-else-if="agent.updateUrl"
-                type="button"
-                variant="ghost"
-                size="xs"
-                class="min-h-10 transition-transform active:scale-[0.96]"
+                class="ml-auto shrink-0"
                 @click="openExternal(agent.updateUrl)"
               >
                 <ExternalLink class="size-3.5" />
                 View Installation Guide
               </Button>
             </div>
-
-            <div v-if="agent.hasMcp" data-mcp-controls class="flex flex-wrap items-center justify-end gap-1">
-              <Badge :variant="agent.mcpVariant" class="mr-1 text-[10px]">{{ agent.mcpLabel }}</Badge>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                class="min-h-10 min-w-10 transition-transform active:scale-[0.96]"
-                :aria-label="expanded.has(agent.key) ? 'Hide Manual Setup' : 'Show Manual Setup'"
-                :title="expanded.has(agent.key) ? 'Hide Manual Setup' : 'Show Manual Setup'"
-                @click="toggleManual(agent.key)"
-              >
-                <ChevronDown v-if="expanded.has(agent.key)" class="size-3.5" />
-                <ChevronRight v-else class="size-3.5" />
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="xs"
-                class="min-h-10 transition-transform active:scale-[0.96]"
-                :disabled="refreshing || busy.has(agent.key) || agent.discoveryStatus !== 'installed'"
-                @click="checkMcp(agent)"
-              >
-                <Loader2 v-if="busy.has(agent.key)" class="size-3.5 animate-spin" />
-                <Search v-else class="size-3.5" />
-                Check MCP Status
-              </Button>
-              <Button
-                v-if="agent.mcpStatus?.status === 'registered' || agent.mcpStatus?.status === 'needsApproval'"
-                type="button"
-                variant="ghost"
-                size="xs"
-                class="min-h-10 transition-transform active:scale-[0.96]"
-                :disabled="refreshing || busy.has(agent.key)"
-                @click="removeMcp(agent)"
-              >
-                <Loader2 v-if="busy.has(agent.key)" class="size-3.5 animate-spin" />
-                <Trash2 v-else class="size-3.5" />
-                Remove MCP
-              </Button>
-              <Button
-                v-else-if="agent.mcpStatus?.status === 'detected' || agent.mcpStatus?.status === 'notDetected'"
-                type="button"
-                variant="secondary"
-                size="xs"
-                class="min-h-10 transition-transform active:scale-[0.96]"
-                :disabled="refreshing || busy.has(agent.key) || agent.discoveryStatus !== 'installed'"
-                @click="installMcp(agent)"
-              >
-                <Loader2 v-if="busy.has(agent.key)" class="size-3.5 animate-spin" />
-                Install MCP
-              </Button>
-              <Button
-                v-else-if="agent.discoveryStatus !== 'installed'"
-                type="button"
-                variant="secondary"
-                size="xs"
-                class="min-h-10"
-                disabled
-              >
-                Install MCP
-              </Button>
-            </div>
-          </div>
-
-          <p v-if="agent.mcpStatus?.detail" class="mt-2 text-xs text-destructive text-pretty">
-            {{ agent.mcpStatus.detail }}
-          </p>
-
-          <div v-if="agent.hasMcp && expanded.has(agent.key)" class="mt-2 rounded-lg border border-border bg-muted/60 p-2">
-            <div class="flex items-start gap-2">
-              <pre class="selectable-text min-w-0 flex-1 overflow-x-auto whitespace-pre-wrap break-all p-1 font-mono text-[11px] leading-relaxed text-muted-foreground">{{ manualCommands[agent.key] || "Loading…" }}</pre>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                class="min-h-10 min-w-10 transition-transform active:scale-[0.96]"
-                aria-label="Copy Install Commands"
-                title="Copy Install Commands"
-                @click="copyManualCommand(agent.key)"
-              >
-                <Copy class="size-3.5" />
-              </Button>
-            </div>
-          </div>
-        </article>
-      </CardContent>
-    </Card>
-
-    <p
-      class="mt-3 min-h-4 text-[11px] text-muted-foreground tabular-nums"
-      :title="inventory.snapshot.value?.checkedAt"
-    >
-      Last Checked: {{ checkedAt }}
-      <span v-if="inventory.snapshot.value?.refreshError" class="text-destructive">
-        · Detection Failed · Prior results may be stale or retained.
-      </span>
-    </p>
+          </CardContent>
+        </Card>
+      </CollapsibleContent>
+    </Collapsible>
   </section>
 </template>
+
+<style scoped>
+@keyframes inventory-scan {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+
+.inventory-scan {
+  animation: inventory-scan 1.1s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .inventory-scan {
+    animation: none;
+    opacity: 0.5;
+  }
+}
+</style>

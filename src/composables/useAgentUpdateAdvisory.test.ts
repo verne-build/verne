@@ -46,6 +46,7 @@ function item(
     updateCommand: null,
     updateUrl: null,
     errorCode: null,
+    pendingPhase: null,
   };
 }
 
@@ -59,6 +60,7 @@ function snapshot(
     checkedAt: "2026-07-31T01:00:00.000Z",
     expiresAt: "2026-07-31T02:00:00.000Z",
     refreshError: null,
+    complete: true,
     ...overrides,
   };
 }

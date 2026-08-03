@@ -2,13 +2,16 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { AgentInventoryItem, AgentInventorySnapshot } from "../../../src/types/agentInventory";
+import type {
+  PersistedAgentInventoryItem,
+  PersistedAgentInventorySnapshot,
+} from "../../../src/types/agentInventory";
 import { AGENT_INVENTORY_KEYS, readSnapshot, validateSnapshot, writeSnapshot } from "./store";
 
 const NOW = Date.parse("2026-08-01T00:00:00.000Z");
 const roots: string[] = [];
 
-function item(key: AgentInventoryItem["key"]): AgentInventoryItem {
+function item(key: PersistedAgentInventoryItem["key"]): PersistedAgentInventoryItem {
   return {
     key,
     displayName: key,
@@ -24,7 +27,7 @@ function item(key: AgentInventoryItem["key"]): AgentInventoryItem {
   };
 }
 
-function snapshot(): AgentInventorySnapshot {
+function snapshot(): PersistedAgentInventorySnapshot {
   return {
     schemaVersion: 1,
     agents: AGENT_INVENTORY_KEYS.map(item),

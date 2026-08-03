@@ -78,6 +78,8 @@ export function useAgentInventory() {
   return {
     snapshot: readonly(snapshot),
     loading: readonly(loading),
+    /** True from the first request until the last row finishes resolving. */
+    refreshing: computed(() => loading.value || snapshot.value?.complete === false),
     installedKeys: computed(() => new Set(
       snapshot.value?.agents
         .filter((agent) => agent.discoveryStatus === "installed")

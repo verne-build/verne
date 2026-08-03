@@ -45,6 +45,7 @@ function agent(overrides: Partial<AgentInventoryItem> = {}): AgentInventoryItem 
     updateCommand: "claude update",
     updateUrl: null,
     errorCode: null,
+    pendingPhase: null,
     ...overrides,
   };
 }
@@ -56,6 +57,7 @@ function snapshot(checkedAt: string, agents: AgentInventoryItem[] = [agent()]): 
     checkedAt,
     expiresAt: "2026-08-01T00:00:00.000Z",
     refreshError: null,
+    complete: true,
   };
 }
 

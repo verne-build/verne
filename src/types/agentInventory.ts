@@ -10,6 +10,9 @@ export type AgentInventoryKey =
 export type AgentDiscoveryStatus = "installed" | "missing" | "unknown";
 export type AgentUpdateStatus = "current" | "outdated" | "unknown";
 
+/** Slow field this row is still resolving. Transient — never persisted. */
+export type AgentPendingPhase = "version" | "latest" | null;
+
 export interface AgentInventoryItem {
   key: AgentInventoryKey;
   displayName: string;
@@ -22,6 +25,8 @@ export interface AgentInventoryItem {
   updateCommand: string | null;
   updateUrl: string | null;
   errorCode: "discovery" | "version" | "latest" | null;
+  /** Transient. Stripped before persistence, defaulted to null on read. */
+  pendingPhase: AgentPendingPhase;
 }
 
 export interface AgentInventorySnapshot {
@@ -30,7 +35,14 @@ export interface AgentInventorySnapshot {
   checkedAt: string;
   expiresAt: string;
   refreshError: string | null;
+  /** False while a refresh is still resolving rows. Transient — never persisted. */
+  complete: boolean;
 }
+
+/** On-disk shape: the snapshot without its transient progress fields. */
+export type PersistedAgentInventoryItem = Omit<AgentInventoryItem, "pendingPhase">;
+export type PersistedAgentInventorySnapshot =
+  Omit<AgentInventorySnapshot, "agents" | "complete"> & { agents: PersistedAgentInventoryItem[] };
 
 export type VersionProbe =
   | { kind: "semver"; args: string[]; fallback_args: string[] | null }

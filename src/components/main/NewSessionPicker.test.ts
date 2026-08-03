@@ -86,10 +86,12 @@ function snapshot(keys: readonly AgentInventoryKey[], refreshError: string | nul
       updateCommand: null,
       updateUrl: null,
       errorCode: null,
+      pendingPhase: null,
     })),
     checkedAt: "2026-07-31T00:00:00.000Z",
     expiresAt: "2026-08-01T00:00:00.000Z",
     refreshError,
+    complete: true,
   };
 }
 

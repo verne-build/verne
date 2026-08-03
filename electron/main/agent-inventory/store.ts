@@ -4,8 +4,9 @@ import type {
   AgentDiscoveryStatus,
   AgentInventoryItem,
   AgentInventoryKey,
-  AgentInventorySnapshot,
   AgentUpdateStatus,
+  PersistedAgentInventoryItem,
+  PersistedAgentInventorySnapshot,
 } from "../../../src/types/agentInventory";
 import { INVENTORY_TTL_MS } from "./constants";
 
@@ -38,7 +39,7 @@ export const AGENT_INVENTORY_KEYS: readonly AgentInventoryKey[] = [
   "pi",
 ];
 
-export function validateSnapshot(value: unknown, nowMs: number): AgentInventorySnapshot | null {
+export function validateSnapshot(value: unknown, nowMs: number): PersistedAgentInventorySnapshot | null {
   if (!isRecord(value) || !hasExactFields(value, SNAPSHOT_FIELDS)) return null;
   if (value.schemaVersion !== 1 || !Array.isArray(value.agents)) return null;
   if (value.agents.length !== AGENT_INVENTORY_KEYS.length) return null;
@@ -52,10 +53,10 @@ export function validateSnapshot(value: unknown, nowMs: number): AgentInventoryS
   for (let index = 0; index < AGENT_INVENTORY_KEYS.length; index++) {
     if (!isAgent(value.agents[index], AGENT_INVENTORY_KEYS[index])) return null;
   }
-  return value as unknown as AgentInventorySnapshot;
+  return value as unknown as PersistedAgentInventorySnapshot;
 }
 
-export function readSnapshot(path: string, nowMs: number): AgentInventorySnapshot | null {
+export function readSnapshot(path: string, nowMs: number): PersistedAgentInventorySnapshot | null {
   try {
     return validateSnapshot(JSON.parse(readFileSync(path, "utf8")), nowMs);
   } catch {
@@ -63,7 +64,7 @@ export function readSnapshot(path: string, nowMs: number): AgentInventorySnapsho
   }
 }
 
-export function writeSnapshot(path: string, snapshot: AgentInventorySnapshot): void {
+export function writeSnapshot(path: string, snapshot: PersistedAgentInventorySnapshot): void {
   const directory = dirname(path);
   const temporary = join(directory, `.${basename(path)}.tmp.${process.pid}`);
   mkdirSync(directory, { recursive: true });
@@ -75,7 +76,7 @@ export function writeSnapshot(path: string, snapshot: AgentInventorySnapshot): v
   }
 }
 
-function isAgent(value: unknown, expectedKey: AgentInventoryKey): value is AgentInventoryItem {
+function isAgent(value: unknown, expectedKey: AgentInventoryKey): value is PersistedAgentInventoryItem {
   if (!isRecord(value) || !hasExactFields(value, AGENT_FIELDS)) return false;
   return value.key === expectedKey
     && typeof value.displayName === "string"

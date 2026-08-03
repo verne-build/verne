@@ -21,6 +21,7 @@ const snapshot: AgentInventorySnapshot = {
   checkedAt: "2026-07-31T12:00:00.000Z",
   expiresAt: "2026-07-31T13:00:00.000Z",
   refreshError: null,
+  complete: true,
 };
 
 async function invokeRegistered(method: string, params: unknown): Promise<unknown> {

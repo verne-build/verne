@@ -4,6 +4,7 @@ import type {
   AgentInventoryKey,
   AgentInventoryProbeItem,
   AgentInventorySnapshot,
+  PersistedAgentInventorySnapshot,
 } from "../../../src/types/agentInventory";
 import type { LatestVersionResult } from "./latest";
 import { AGENT_INVENTORY_KEYS } from "./store";
@@ -31,19 +32,30 @@ export interface AgentInventoryServiceDeps extends InventoryDiagnosticDeps {
   probe: () => Promise<AgentInventoryProbeItem[]>;
   probeVersion: (item: AgentInventoryProbeItem) => Promise<string | null>;
   resolveLatest: (item: AgentInventoryProbeItem) => Promise<LatestVersionResult>;
-  read: () => AgentInventorySnapshot | null;
-  write: (snapshot: AgentInventorySnapshot) => void;
+  read: () => PersistedAgentInventorySnapshot | null;
+  write: (snapshot: PersistedAgentInventorySnapshot) => void;
   emit: (snapshot: AgentInventorySnapshot) => void;
   now: () => number;
 }
 
+/**
+ * Refresh resolves in three stages (discovery → per-agent version → per-agent
+ * latest) and publishes after each one, so the settings panel paints rows as
+ * soon as discovery lands instead of waiting on the slowest network fetch.
+ * Intermediate snapshots carry `complete: false` and are emit-only; the disk
+ * cache is written once, from the final state.
+ */
 export class AgentInventoryService {
   private snapshot: AgentInventorySnapshot | null;
+  private published: AgentInventorySnapshot | null;
+  private pendingPublish: AgentInventorySnapshot | null = null;
+  private publishScheduled = false;
   private inFlight: Promise<AgentInventorySnapshot> | null = null;
 
   constructor(private readonly deps: AgentInventoryServiceDeps) {
     const cached = deps.read();
-    this.snapshot = cached ? copySnapshot(cached) : null;
+    this.snapshot = cached ? hydrate(cached) : null;
+    this.published = this.snapshot ? copySnapshot(this.snapshot) : null;
   }
 
   get(): AgentInventorySnapshot | null {
@@ -63,6 +75,7 @@ export class AgentInventoryService {
   }
 
   refreshIfStale(): Promise<AgentInventorySnapshot> {
+    if (this.inFlight) return this.refresh();
     if (this.snapshot && this.deps.now() - Date.parse(this.snapshot.checkedAt) < INVENTORY_TTL_MS) {
       return Promise.resolve(copySnapshot(this.snapshot));
     }
@@ -71,79 +84,121 @@ export class AgentInventoryService {
 
   private async runRefresh(): Promise<AgentInventorySnapshot> {
     const checkedAtMs = this.deps.now();
-    let next: AgentInventorySnapshot;
-    let discoveryRejected = true;
+    const previous = this.snapshot;
+
+    let rows: AgentInventoryProbeItem[];
     try {
-      const rows = await this.deps.probe();
-      discoveryRejected = false;
-      next = {
-        schemaVersion: 1,
-        agents: await this.resolveAgents(rows),
-        checkedAt: new Date(checkedAtMs).toISOString(),
-        expiresAt: new Date(checkedAtMs + INVENTORY_TTL_MS).toISOString(),
-        refreshError: null,
-      };
+      rows = await this.deps.probe();
     } catch {
-      if (discoveryRejected) {
-        reportDiagnostic(this.deps, INVENTORY_DIAGNOSTIC_KEY, "discovery-rejected", checkedAtMs);
-      }
-      next = {
-        schemaVersion: 1,
-        agents: this.snapshot?.agents.map(copyAgent) ?? AGENT_INVENTORY_KEYS.map(unknownAgent),
-        checkedAt: new Date(checkedAtMs).toISOString(),
-        expiresAt: new Date(checkedAtMs + INVENTORY_TTL_MS).toISOString(),
-        refreshError: "discovery",
-      };
+      reportDiagnostic(this.deps, INVENTORY_DIAGNOSTIC_KEY, "discovery-rejected", checkedAtMs);
+      return this.commit(
+        previous?.agents.map(copyAgent) ?? AGENT_INVENTORY_KEYS.map(unknownAgent),
+        checkedAtMs,
+        "discovery",
+      );
     }
 
-    const changed = !samePublishedContent(this.snapshot, next);
-    this.deps.write(copySnapshot(next));
-    this.snapshot = copySnapshot(next);
-    if (changed) this.deps.emit(copySnapshot(next));
+    const byKey = new Map(rows.map((row) => [row.key, row]));
+    const ordered = AGENT_INVENTORY_KEYS.map((key) => byKey.get(key) ?? null);
+    const prior = new Map((previous?.agents ?? []).map((agent) => [agent.key, agent]));
+
+    // Seed each installed row from its prior values so a warm panel keeps
+    // showing versions while they re-resolve; cold rows stay null and render as
+    // skeletons.
+    const working: AgentInventoryItem[] = ordered.map((item, index) => {
+      const key = AGENT_INVENTORY_KEYS[index]!;
+      if (!item) return unknownAgent(key);
+      if (item.discoveryStatus === "missing") return missingAgent(item);
+      const seed = prior.get(key);
+      return installedAgent(
+        item,
+        seed?.currentVersion ?? null,
+        seed?.latestVersion ?? null,
+        seed?.updateStatus ?? "unknown",
+        updateGuidance(item),
+        null,
+        "version",
+      );
+    });
+    this.publishProgress(working, checkedAtMs);
+
+    await Promise.all(ordered.map(async (item, index) => {
+      if (!item || item.discoveryStatus === "missing") return;
+      const guidance = updateGuidance(item);
+
+      const currentVersion = await this.deps.probeVersion(item).catch(() => null);
+      if (currentVersion === null) {
+        working[index] = installedAgent(item, null, null, "unknown", guidance, "version", null);
+        this.publishProgress(working, checkedAtMs);
+        return;
+      }
+
+      // A version that moved invalidates whatever "latest" we were showing.
+      const seed = prior.get(item.key);
+      const carried = seed?.currentVersion === currentVersion ? seed.latestVersion : null;
+      working[index] = installedAgent(
+        item,
+        currentVersion,
+        carried,
+        carried === null ? "unknown" : compareAgentVersions(item.key, currentVersion, carried),
+        guidance,
+        null,
+        "latest",
+      );
+      this.publishProgress(working, checkedAtMs);
+
+      const latest = await this.deps.resolveLatest(item)
+        .catch((): LatestVersionResult => ({ version: null, packageName: null }));
+      const resolvedGuidance = updateGuidance(item, latest.packageName);
+      working[index] = latest.version === null
+        ? installedAgent(item, currentVersion, null, "unknown", resolvedGuidance, "latest", null)
+        : installedAgent(
+          item,
+          currentVersion,
+          latest.version,
+          compareAgentVersions(item.key, currentVersion, latest.version),
+          resolvedGuidance,
+          null,
+          null,
+        );
+      this.publishProgress(working, checkedAtMs);
+    }));
+
+    return this.commit(working, checkedAtMs, null);
+  }
+
+  /** Emit-only interim state. Coalesced so a burst of completions sends once. */
+  private publishProgress(agents: readonly AgentInventoryItem[], checkedAtMs: number): void {
+    const next = buildSnapshot(agents.map(copyAgent), checkedAtMs, null, false);
+    this.snapshot = next;
+    this.pendingPublish = next;
+    if (this.publishScheduled) return;
+    this.publishScheduled = true;
+    queueMicrotask(() => {
+      this.publishScheduled = false;
+      this.flushPublish();
+    });
+  }
+
+  private commit(
+    agents: readonly AgentInventoryItem[],
+    checkedAtMs: number,
+    refreshError: string | null,
+  ): AgentInventorySnapshot {
+    const next = buildSnapshot(agents.map(copyAgent), checkedAtMs, refreshError, true);
+    this.snapshot = next;
+    this.deps.write(toPersisted(next));
+    this.pendingPublish = next;
+    this.flushPublish();
     return this.snapshot;
   }
 
-  private async resolveAgents(rows: AgentInventoryProbeItem[]): Promise<AgentInventoryItem[]> {
-    const byKey = new Map(rows.map((row) => [row.key, row]));
-    const ordered = AGENT_INVENTORY_KEYS.map((key) => byKey.get(key) ?? null);
-    const currentVersions = await Promise.all(ordered.map(async (item) => {
-      if (!item || item.discoveryStatus !== "available") return null;
-      try {
-        return await this.deps.probeVersion(item);
-      } catch {
-        return null;
-      }
-    }));
-
-    return Promise.all(ordered.map(async (item, index) => {
-      if (!item) return unknownAgent(AGENT_INVENTORY_KEYS[index]);
-      if (item.discoveryStatus === "missing") return missingAgent(item);
-
-      const currentVersion = currentVersions[index];
-      const guidance = updateGuidance(item);
-      if (currentVersion === null) {
-        return installedAgent(item, currentVersion, null, "unknown", guidance, "version");
-      }
-
-      let latest: LatestVersionResult;
-      try {
-        latest = await this.deps.resolveLatest(item);
-      } catch {
-        latest = { version: null, packageName: null };
-      }
-      const resolvedGuidance = updateGuidance(item, latest.packageName);
-      if (latest.version === null) {
-        return installedAgent(item, currentVersion, null, "unknown", resolvedGuidance, "latest");
-      }
-      return installedAgent(
-        item,
-        currentVersion,
-        latest.version,
-        compareAgentVersions(item.key, currentVersion, latest.version),
-        resolvedGuidance,
-        null,
-      );
-    }));
+  private flushPublish(): void {
+    const next = this.pendingPublish;
+    this.pendingPublish = null;
+    if (!next || samePublishedContent(this.published, next)) return;
+    this.published = copySnapshot(next);
+    this.deps.emit(copySnapshot(next));
   }
 }
 
@@ -160,6 +215,7 @@ function missingAgent(item: AgentInventoryProbeItem): AgentInventoryItem {
     updateCommand: null,
     updateUrl: null,
     errorCode: null,
+    pendingPhase: null,
   };
 }
 
@@ -176,6 +232,7 @@ function unknownAgent(key: AgentInventoryKey): AgentInventoryItem {
     updateCommand: null,
     updateUrl: null,
     errorCode: "discovery",
+    pendingPhase: null,
   };
 }
 
@@ -186,6 +243,7 @@ function installedAgent(
   updateStatus: AgentInventoryItem["updateStatus"],
   guidance: Pick<AgentInventoryItem, "updateCommand" | "updateUrl">,
   errorCode: AgentInventoryItem["errorCode"],
+  pendingPhase: AgentInventoryItem["pendingPhase"],
 ): AgentInventoryItem {
   return {
     key: item.key,
@@ -198,13 +256,48 @@ function installedAgent(
     updateStatus,
     ...guidance,
     errorCode,
+    pendingPhase,
   };
 }
 
+function buildSnapshot(
+  agents: AgentInventoryItem[],
+  checkedAtMs: number,
+  refreshError: string | null,
+  complete: boolean,
+): AgentInventorySnapshot {
+  return {
+    schemaVersion: 1,
+    agents,
+    checkedAt: new Date(checkedAtMs).toISOString(),
+    expiresAt: new Date(checkedAtMs + INVENTORY_TTL_MS).toISOString(),
+    refreshError,
+    complete,
+  };
+}
+
+/** Timestamps alone are not worth waking the renderer for. */
 function samePublishedContent(previous: AgentInventorySnapshot | null, next: AgentInventorySnapshot): boolean {
   return previous !== null
     && previous.refreshError === next.refreshError
+    && previous.complete === next.complete
     && isDeepStrictEqual(previous.agents, next.agents);
+}
+
+function hydrate(snapshot: PersistedAgentInventorySnapshot): AgentInventorySnapshot {
+  return {
+    ...snapshot,
+    agents: snapshot.agents.map((agent) => ({ ...agent, pendingPhase: null })),
+    complete: true,
+  };
+}
+
+function toPersisted(snapshot: AgentInventorySnapshot): PersistedAgentInventorySnapshot {
+  const { complete: _complete, agents, ...rest } = snapshot;
+  return {
+    ...rest,
+    agents: agents.map(({ pendingPhase: _pendingPhase, ...agent }) => agent),
+  };
 }
 
 function copySnapshot(snapshot: AgentInventorySnapshot): AgentInventorySnapshot {

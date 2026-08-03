@@ -1,9 +1,11 @@
+import { isDeepStrictEqual } from "node:util";
 import { describe, expect, it, vi } from "vitest";
 import type {
   AgentInventoryItem,
   AgentInventoryKey,
   AgentInventoryProbeItem,
   AgentInventorySnapshot,
+  PersistedAgentInventorySnapshot,
 } from "../../../src/types/agentInventory";
 import type { LatestVersionResult } from "./latest";
 import { AgentInventoryService, INVENTORY_TTL_MS, type AgentInventoryServiceDeps } from "./service";
@@ -50,6 +52,7 @@ function missingItem(key: AgentInventoryKey): AgentInventoryItem {
     updateCommand: null,
     updateUrl: null,
     errorCode: null,
+    pendingPhase: null,
   };
 }
 
@@ -60,7 +63,14 @@ function snapshotAt(checkedAtMs: number, agents = AGENT_INVENTORY_KEYS.map(missi
     checkedAt: new Date(checkedAtMs).toISOString(),
     expiresAt: new Date(checkedAtMs + INVENTORY_TTL_MS).toISOString(),
     refreshError: null,
+    complete: true,
   };
+}
+
+/** The on-disk projection: no `complete`, no `pendingPhase`. */
+function persisted(snapshot: AgentInventorySnapshot): PersistedAgentInventorySnapshot {
+  const { complete: _complete, agents, ...rest } = snapshot;
+  return { ...rest, agents: agents.map(({ pendingPhase: _pendingPhase, ...agent }) => agent) };
 }
 
 function deferred<T>() {
@@ -71,6 +81,11 @@ function deferred<T>() {
     reject = rejectPromise;
   });
   return { promise, resolve, reject };
+}
+
+/** Drains queued microtasks so coalesced progress events have flushed. */
+async function flushMicrotasks(): Promise<void> {
+  for (let index = 0; index < 12; index += 1) await Promise.resolve();
 }
 
 function createService(overrides: Partial<AgentInventoryServiceDeps> & { cached?: AgentInventorySnapshot | null } = {}) {
@@ -177,7 +192,7 @@ describe("agent inventory service", () => {
     expect(deps.probe).toHaveBeenCalledTimes(calls);
   });
 
-  it("starts latest checks only after installed-version probes finish", async () => {
+  it("starts an agent's latest check only after its own version probe finishes", async () => {
     const versions = deferred<string | null>();
     const resolveLatest = vi.fn<AgentInventoryServiceDeps["resolveLatest"]>()
       .mockResolvedValue({ version: "1.0.0", packageName: null });
@@ -220,16 +235,22 @@ describe("agent inventory service", () => {
     expect(next.agents).toEqual(previous.agents);
     expect(next.refreshError).toBe("discovery");
     expect(Date.parse(next.expiresAt) - Date.parse(next.checkedAt)).toBe(3_600_000);
-    expect(deps.write).toHaveBeenCalledWith(next);
+    expect(deps.write).toHaveBeenCalledWith(persisted(next));
   });
 
-  it("suppresses timestamp-only events", async () => {
+  it("suppresses timestamp-only row changes across progress events", async () => {
     const previous = snapshotAt(NOW - INVENTORY_TTL_MS);
-    const { service, deps } = createService({ cached: previous });
+    const emitted: AgentInventorySnapshot[] = [];
+    const { service } = createService({
+      cached: previous,
+      emit: vi.fn((snapshot) => emitted.push(snapshot)),
+    });
 
     await service.refresh();
 
-    expect(deps.emit).not.toHaveBeenCalled();
+    // Rows never changed, so every event differs only by refresh progress.
+    expect(emitted.every((snapshot) => isDeepStrictEqual(snapshot.agents, previous.agents))).toBe(true);
+    expect(emitted.map((snapshot) => snapshot.complete)).toEqual([false, true]);
   });
 
   it("creates seven ordered unknown rows when first discovery fails", async () => {
@@ -282,7 +303,7 @@ describe("agent inventory service", () => {
     expect(Date.parse(next.expiresAt) - Date.parse(next.checkedAt)).toBe(INVENTORY_TTL_MS);
   });
 
-  it("emits when inventory content changes and persists before publication", async () => {
+  it("emits when inventory content changes and persists before final publication", async () => {
     const order: string[] = [];
     const { service, deps } = createService({
       cached: snapshotAt(NOW - INVENTORY_TTL_MS),
@@ -293,8 +314,11 @@ describe("agent inventory service", () => {
 
     const next = await service.refresh();
 
-    expect(order).toEqual(["write", "emit"]);
-    expect(deps.emit).toHaveBeenCalledWith(next);
+    // Progress events precede persistence; the completed snapshot never does.
+    expect(order.slice(-2)).toEqual(["write", "emit"]);
+    expect(order.filter((entry) => entry === "write")).toEqual(["write"]);
+    expect(deps.emit).toHaveBeenLastCalledWith(next);
+    expect(deps.write).toHaveBeenCalledWith(persisted(next));
     expect(service.get()).toEqual(next);
   });
 
@@ -332,6 +356,170 @@ describe("agent inventory service", () => {
 
     expect(second).toEqual(snapshotAt(NOW));
     expect(service.get()).toEqual(snapshotAt(NOW));
+  });
+
+  it("publishes discovered rows before any version resolves", async () => {
+    const versions = deferred<string | null>();
+    const emitted: AgentInventorySnapshot[] = [];
+    const { service } = createService({
+      probe: vi.fn().mockResolvedValue(probeRowsWithOnly("claude")),
+      probeVersion: vi.fn(() => versions.promise),
+      emit: vi.fn((snapshot) => emitted.push(snapshot)),
+    });
+
+    const refresh = service.refresh();
+    await flushMicrotasks();
+
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]!.complete).toBe(false);
+    expect(emitted[0]!.agents).toHaveLength(7);
+    expect(emitted[0]!.agents[0]).toMatchObject({
+      key: "claude",
+      discoveryStatus: "installed",
+      resolvedBinary: "/opt/tools/claude",
+      currentVersion: null,
+      pendingPhase: "version",
+    });
+    expect(emitted[0]!.agents[1]).toMatchObject({ key: "codex", discoveryStatus: "missing", pendingPhase: null });
+
+    versions.resolve("1.0.0");
+    await refresh;
+  });
+
+  it("advances one row's phases without waiting on a stalled sibling", async () => {
+    const stalled = deferred<string | null>();
+    const emitted: AgentInventorySnapshot[] = [];
+    const { service } = createService({
+      probe: vi.fn().mockResolvedValue(probeRowsWithOnly("claude", "codex")),
+      probeVersion: vi.fn((item: AgentInventoryProbeItem) =>
+        item.key === "claude" ? stalled.promise : Promise.resolve("2.0.0"),
+      ),
+      emit: vi.fn((snapshot) => emitted.push(snapshot)),
+    });
+
+    const refresh = service.refresh();
+    await flushMicrotasks();
+
+    const latest = emitted.at(-1)!;
+    expect(latest.complete).toBe(false);
+    expect(latest.agents[0]).toMatchObject({ key: "claude", currentVersion: null, pendingPhase: "version" });
+    expect(latest.agents[1]).toMatchObject({ key: "codex", currentVersion: "2.0.0", pendingPhase: null });
+
+    stalled.resolve("1.0.0");
+    const next = await refresh;
+    expect(next.complete).toBe(true);
+    expect(next.agents.every((agent) => agent.pendingPhase === null)).toBe(true);
+  });
+
+  it("coalesces rows that settle together into one event", async () => {
+    const emitted: AgentInventorySnapshot[] = [];
+    const { service } = createService({
+      probe: vi.fn().mockResolvedValue(probeRowsWithOnly("claude", "codex", "opencode")),
+      emit: vi.fn((snapshot) => emitted.push(snapshot)),
+    });
+
+    await service.refresh();
+
+    // Three rows × two phases plus discovery would be seven un-coalesced events.
+    expect(emitted.length).toBeLessThan(7);
+    expect(emitted.at(-1)!.complete).toBe(true);
+  });
+
+  it("clears the pending phase of a row whose version probe rejects", async () => {
+    const { service } = createService({
+      probe: vi.fn().mockResolvedValue(probeRowsWithOnly("claude", "codex")),
+      probeVersion: vi.fn((item: AgentInventoryProbeItem) =>
+        item.key === "claude" ? Promise.reject(new Error("exit 127")) : Promise.resolve("2.0.0"),
+      ),
+    });
+
+    const next = await service.refresh();
+
+    expect(next.agents[0]).toMatchObject({ key: "claude", errorCode: "version", pendingPhase: null });
+    expect(next.agents[1]).toMatchObject({ key: "codex", currentVersion: "2.0.0", errorCode: null });
+  });
+
+  it("keeps showing a cached version while it re-resolves, and drops a stale latest", async () => {
+    const cachedRow: AgentInventoryItem = {
+      ...missingItem("claude"),
+      discoveryStatus: "installed",
+      resolvedBinary: "/opt/tools/claude",
+      resolvedAlias: "claude",
+      currentVersion: "0.9.0",
+      latestVersion: "0.9.9",
+      updateStatus: "outdated",
+    };
+    const versions = deferred<string | null>();
+    const latest = deferred<LatestVersionResult>();
+    const emitted: AgentInventorySnapshot[] = [];
+    const { service } = createService({
+      cached: snapshotAt(NOW - INVENTORY_TTL_MS, [
+        cachedRow,
+        ...AGENT_INVENTORY_KEYS.slice(1).map(missingItem),
+      ]),
+      probe: vi.fn().mockResolvedValue(probeRowsWithOnly("claude")),
+      probeVersion: vi.fn(() => versions.promise),
+      resolveLatest: vi.fn(() => latest.promise),
+      emit: vi.fn((snapshot) => emitted.push(snapshot)),
+    });
+
+    const refresh = service.refresh();
+    await flushMicrotasks();
+
+    expect(emitted.at(-1)!.agents[0]).toMatchObject({
+      currentVersion: "0.9.0",
+      latestVersion: "0.9.9",
+      pendingPhase: "version",
+    });
+
+    versions.resolve("1.0.0");
+    await flushMicrotasks();
+
+    // The version moved, so the cached latest no longer describes this install.
+    expect(emitted.at(-1)!.agents[0]).toMatchObject({
+      currentVersion: "1.0.0",
+      latestVersion: null,
+      updateStatus: "unknown",
+      pendingPhase: "latest",
+    });
+
+    latest.resolve({ version: "1.1.0", packageName: null });
+    const next = await refresh;
+    expect(next.agents[0]).toMatchObject({ currentVersion: "1.0.0", latestVersion: "1.1.0", updateStatus: "outdated" });
+  });
+
+  it("never persists transient progress fields", async () => {
+    const { service, deps } = createService({
+      probe: vi.fn().mockResolvedValue(probeRowsWithOnly("claude")),
+    });
+
+    await service.refresh();
+
+    const written = vi.mocked(deps.write).mock.calls[0]![0] as Record<string, unknown>;
+    expect(written).not.toHaveProperty("complete");
+    expect(Object.keys(written.agents as object[])).toHaveLength(7);
+    for (const agent of written.agents as Record<string, unknown>[]) {
+      expect(agent).not.toHaveProperty("pendingPhase");
+    }
+  });
+
+  it("serves the in-flight partial rather than a stale cache once rows land", async () => {
+    const stale = snapshotAt(NOW - INVENTORY_TTL_MS);
+    const versions = deferred<string | null>();
+    const { service } = createService({
+      cached: stale,
+      probe: vi.fn().mockResolvedValue(probeRowsWithOnly("claude")),
+      probeVersion: vi.fn(() => versions.promise),
+    });
+
+    const refresh = service.refresh();
+    await flushMicrotasks();
+
+    expect(service.get()).toMatchObject({ complete: false });
+    expect(service.get()!.agents[0]).toMatchObject({ discoveryStatus: "installed", pendingPhase: "version" });
+
+    versions.resolve("1.0.0");
+    await refresh;
   });
 
   it("keeps failure replacements isolated from cached and persisted rows", async () => {
