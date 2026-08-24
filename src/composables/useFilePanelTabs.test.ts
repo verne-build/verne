@@ -64,6 +64,16 @@ describe("file panel persistence", () => {
     expect(state?.tabs.map((tab) => tab.id)).toEqual(["/repo/good.ts"]);
   });
 
+  it("skips historical diff rows without throwing", async () => {
+    rpc.getSidebarTabs.mockResolvedValue([
+      { directoryId: "dir-1", tabId: "diff:legacy", tabType: "diff" as never, label: "Legacy Diff", position: 0 },
+      { directoryId: "dir-1", tabId: "/repo/good.ts", tabType: "file", label: "good.ts", position: 1 },
+    ]);
+
+    const { state } = await loadedState();
+    expect(state?.tabs.map((tab) => tab.id)).toEqual(["/repo/good.ts"]);
+  });
+
   it.each([
     ["__sc__", "sourceControl", "__sc__"],
     ["__commits__", "commits", "__commits__"],

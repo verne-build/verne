@@ -95,4 +95,25 @@ describe("sidebar", () => {
       "file", "browser", "sourceControl", "commits", "search", "notes", "explorer",
     ]);
   });
+
+  it("reads retained metadata from a legacy diff row", () => {
+    const db = tmpDb();
+    db.prepare(
+      `INSERT INTO sidebar_tabs
+        (scope_type, directory_id, tab_id, tab_type, label, position,
+         diff_source, diff_rel_path, diff_staged, diff_commit_id, diff_commit_short_id, pinned)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run("directory", "dir-1", "diff:legacy", "diff", "Legacy Diff", 0, "commit", "src/foo.ts", 0, "abc123", "abc", 1);
+
+    expect(getSidebarTabs(db, "directory", "dir-1")).toEqual([expect.objectContaining({
+      tabId: "diff:legacy",
+      tabType: "diff",
+      diffSource: "commit",
+      diffRelPath: "src/foo.ts",
+      diffStaged: false,
+      diffCommitId: "abc123",
+      diffCommitShortId: "abc",
+      pinned: true,
+    })]);
+  });
 });
