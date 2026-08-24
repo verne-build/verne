@@ -771,10 +771,20 @@ onMounted(async () => {
   window.addEventListener("session-scope-changed", handleSessionScopeChanged as EventListener);
   window.addEventListener("directory-added", handleDirectoryAdded as EventListener);
   unlistenBrowserTabOpen = installBrowserTabOpenRequests({
-    activeScope: () => store.activeRoot,
-    tabs: () => filePanelTabs.tabs.value,
-    openBrowserTab: filePanelTabs.openBrowserTab,
-    setActiveId: filePanelTabs.setActiveId,
+    resolveScope: async (requested) => {
+      if (!store.directoriesLoaded) await store.fetchDirectories();
+      const directory = store.directories.find((candidate) => candidate.id === requested.scopeId);
+      if (!directory || directory.path !== requested.path || requested.scopeType !== "directory") return null;
+      return requested;
+    },
+    activateScope: async (scope) => {
+      const directory = store.directories.find(
+        (candidate) => candidate.id === scope.scopeId && candidate.path === scope.path,
+      );
+      if (!directory) throw new Error(`browser scope ${scope.scopeId} is no longer available`);
+      if (store.selectedDirectoryId !== directory.id) store.selectDirectory(directory);
+      await nextTick();
+    },
     revealPanel: () => { rightCollapsed.value = false; },
     acknowledge: (ack) => useRpc().request.browserTabOpenAck(ack),
   });

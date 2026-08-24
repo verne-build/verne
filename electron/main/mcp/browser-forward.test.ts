@@ -7,7 +7,11 @@ describe("browser request shaping", () => {
       { action: "navigate", tabId: "t1", url: "https://x" },
       "secret-x",
       "/ws",
+      "terminal:source",
     );
-    expect(req).toEqual({ action: "navigate", tabId: "t1", url: "https://x", secret: "secret-x", workspaceDir: "/ws" });
+    expect(req).toEqual({
+      action: "navigate", tabId: "t1", url: "https://x", secret: "secret-x",
+      workspaceDir: "/ws", sourceTabId: "terminal:source",
+    });
   });
 });

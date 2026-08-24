@@ -2,8 +2,13 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { connect } from "node:net";
 
-export function buildBrowserRequest(body: Record<string, unknown>, secret: string, workspaceDir: string) {
-  return { ...body, secret, workspaceDir };
+export function buildBrowserRequest(
+  body: Record<string, unknown>,
+  secret: string,
+  workspaceDir: string,
+  sourceTabId?: string,
+) {
+  return { ...body, secret, workspaceDir, ...(sourceTabId ? { sourceTabId } : {}) };
 }
 
 /** Forward a browser action to the Electron control server; resolve the {ok,...} response. */
@@ -11,6 +16,7 @@ export function browserControl(
   internalDataDir: string,
   workspaceDir: string,
   body: Record<string, unknown>,
+  sourceTabId?: string,
 ): Promise<Record<string, any>> {
   return new Promise((resolve, reject) => {
     let cfg: { port: number; secret: string };
@@ -24,7 +30,7 @@ export function browserControl(
     sock.setTimeout(30_000, () => sock.destroy(new Error("browser-control timeout")));
     let buf = "";
     sock.on("connect", () => {
-      sock.write(JSON.stringify(buildBrowserRequest(body, cfg.secret, workspaceDir)) + "\n");
+      sock.write(JSON.stringify(buildBrowserRequest(body, cfg.secret, workspaceDir, sourceTabId)) + "\n");
     });
     sock.on("data", (d) => {
       buf += d.toString("utf8");

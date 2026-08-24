@@ -408,7 +408,7 @@ export async function openBrowserTabForScope(
   const url = normalizeBrowserUrl(rawUrl);
   const candidate = state.tabs.find((tab) => tab.id === options.newTabId);
   if (candidate) {
-    if (candidate.kind !== "browser" || !candidate.browserUrl || !sameBrowserUrl(candidate.browserUrl, url)) {
+    if (candidate.kind !== "browser") {
       throw new Error(`browser tab id ${options.newTabId} is already in use`);
     }
     mutate(state, { type: "activate", id: candidate.id });
@@ -445,7 +445,7 @@ export async function openBrowserTabForScope(
 export async function rollbackBrowserTabForScope(
   scope: FpScope,
   newTabId: string,
-  rawUrl: string,
+  _rawUrl: string,
 ): Promise<boolean> {
   await ensureFilePanelLoaded(scope);
   const state = getOrCreate(scopeKey(scope));
@@ -453,8 +453,7 @@ export async function rollbackBrowserTabForScope(
   const tab = state.tabs.find(
     (candidate): candidate is FilePanelBrowserTab => candidate.kind === "browser" && candidate.id === newTabId,
   );
-  const url = normalizeBrowserUrl(rawUrl);
-  if (!tab?.browserUrl || !sameBrowserUrl(tab.browserUrl, url)) return false;
+  if (!tab) return false;
   if (!mutate(state, { type: "close", id: newTabId })) return false;
   trigger();
   debouncedSave(scope, state.tabs, state.activeId);

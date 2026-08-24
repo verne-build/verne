@@ -574,6 +574,7 @@ function revertScFile() {
         :new-tab-mode="tab.browserUrl === null"
         :workspace-dir="activeCwd"
         :directory-id="activeDirId"
+        :scope-type="store.activeRoot?.scopeType ?? 'directory'"
         :active="tab.id === activeTab?.id"
         class="absolute inset-0"
         @open-new-tab="(url) => openBrowserTab(url)"

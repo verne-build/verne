@@ -25,6 +25,7 @@ import type {
   ReviewComment,
   AgentInventorySnapshot,
   BrowserTabOpenRequest,
+  BrowserTabOpenCancel,
   BrowserTabOpenAck,
 } from "@/types";
 
@@ -113,11 +114,16 @@ listen<string>("file-deleted", (e) => {
     listen<BrowserTabOpenRequest>("browser-tab-open-request", (e) => {
       window.dispatchEvent(new CustomEvent("browser-tab-open-request", { detail: e.payload }));
     }),
+    listen<BrowserTabOpenCancel>("browser-tab-open-cancel", (e) => {
+      window.dispatchEvent(new CustomEvent("browser-tab-open-cancel", { detail: e.payload }));
+    }),
   ]);
   for (const r of results) {
     if (r.status === "fulfilled") unlistenFns.push(r.value);
     else console.error("initRpc listen() failed:", r.reason);
   }
+  const browserListenersReady = results.slice(-2).every((result) => result.status === "fulfilled");
+  if (browserListenersReady) await invoke("native_browser_relay_ready", {});
 }
 
 // ---- Commands (wrapping Tauri invoke) ----

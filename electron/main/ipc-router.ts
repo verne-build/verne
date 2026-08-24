@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow } from "electron";
+import { ipcMain, BrowserWindow, type IpcMainInvokeEvent } from "electron";
 import type { DaemonClient } from "./daemon-client";
 import { handleTabUpdate } from "./native/notifications";
 import { getDb } from "./db/connection";
@@ -7,7 +7,11 @@ import { stripSpinner } from "../../src/lib/agentStatus";
 import { canResumeAgent } from "./resume-registry";
 import { handleSessionCwd } from "./scope-repin";
 
-type Handler = (params: any, win: BrowserWindow) => Promise<unknown> | unknown;
+type Handler = (
+  params: any,
+  win: BrowserWindow,
+  event: IpcMainInvokeEvent,
+) => Promise<unknown> | unknown;
 
 const nativeHandlers = new Map<string, Handler>();
 export function registerNative(method: string, handler: Handler): void {
@@ -44,10 +48,10 @@ export function installRouter(
   sidecar: DaemonClient,
   getWindow: () => BrowserWindow,
 ): void {
-  ipcMain.handle("invoke", async (_e, method: string, params: unknown) => {
+  ipcMain.handle("invoke", async (event, method: string, params: unknown) => {
     try {
       const native = nativeHandlers.get(method);
-      if (native) return await native(params ?? {}, getWindow());
+      if (native) return await native(params ?? {}, getWindow(), event);
       const client = DAEMON_METHODS.has(method) ? daemon : sidecar;
       return await client.request(method, params ?? null);
     } catch (e) {

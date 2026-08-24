@@ -18,6 +18,7 @@ import { BrowserControlServer } from "./native/browser-control-server";
 import { createAutomationBrowserSession } from "./native/browser-automation-window";
 import { BrowserTabRelay } from "./native/browser-tab-relay";
 import { installGuestBrowserPopupRelay } from "./native/browser-popup";
+import { resolveBrowserScope } from "./native/browser-scope";
 import { registerReviewCommands } from "./native/review-cmds";
 import { registerSettingsCommands, currentSettings } from "./native/settings-cmds";
 import { pushTerminalColorsToDaemon } from "./native/terminal-colors";
@@ -528,6 +529,7 @@ app.whenReady().then(async () => {
     () => createWindow(startupSettings.appearance),
     agentInventory,
   );
+  browserTabRelay.attachWindow(win);
   console.log(`[main-startup] window created @+${since()}ms`);
 
   // Voice dictation: native sherpa-onnx STT + global-ish hotkey on the window.
@@ -539,6 +541,8 @@ app.whenReady().then(async () => {
   browserControl = new BrowserControlServer(browserRegistry, {
     createAutomationSession: createAutomationBrowserSession,
     openVisibleTab: (request) => browserTabRelay.open(request),
+    resolveScope: ({ workspaceDir, sourceTabId }) =>
+      resolveBrowserScope(getDb(), workspaceDir, sourceTabId),
   });
   browserControl.start().catch((e) => console.error("browser-control server failed:", e));
 
@@ -557,6 +561,7 @@ app.whenReady().then(async () => {
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       win = createWindow(currentSettings().appearance);
+      browserTabRelay.attachWindow(win);
       registerDictationHotkey(win);
       installGuestBrowserPopupRelay(win, browserRegistry, (request) => browserTabRelay.open(request));
     }
@@ -658,8 +663,8 @@ app.on("before-quit", () => {
   }
   // Detach all CDP sessions and tear down the control server (removes the
   // browser-control.json descriptor).
-  browserRegistry.dispose();
   browserTabRelay.dispose();
+  browserRegistry.dispose();
   void browserControl?.stop();
   // The sidecar is tied to this app's lifecycle — stop it cleanly and kill the
   // child as a backstop. The daemon is left running so PTY sessions survive.

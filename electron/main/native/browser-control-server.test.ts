@@ -150,7 +150,10 @@ describe("BrowserControlServer", () => {
     reg.list = vi.fn(() => []);
     let markReady!: () => void;
     const ready = new Promise<void>((resolve) => { markReady = resolve; });
-    const openVisibleTab = vi.fn(async (_request: Record<string, unknown>) => ready);
+    const openVisibleTab = vi.fn(async (request: Record<string, unknown>) => {
+      await ready;
+      return { tabId: request.newTabId as string, reused: false, created: true };
+    });
     srv = new BrowserControlServer(reg as any, { ...opts, openVisibleTab });
     const port = await srv.start();
     const response = rpc(port, {
@@ -163,11 +166,13 @@ describe("BrowserControlServer", () => {
     await vi.waitFor(() => expect(openVisibleTab).toHaveBeenCalled());
     const request = openVisibleTab.mock.calls[0][0];
     expect(request).toEqual({
-      tabId: expect.stringMatching(/^browser:/),
+      newTabId: expect.stringMatching(/^browser:/),
       url: "https://x.com",
       workspaceDir: "/ws",
+      scopeType: "directory",
+      scopeId: "/ws",
       source: "mcp",
-      focusExisting: false,
+      allowReuse: true,
     });
     let settled = false;
     void response.then(() => { settled = true; });
@@ -175,16 +180,18 @@ describe("BrowserControlServer", () => {
     expect(settled).toBe(false);
 
     markReady();
-    await expect(response).resolves.toEqual({ ok: true, tabId: request.tabId, reused: false });
+    await expect(response).resolves.toEqual({ ok: true, tabId: request.newTabId, reused: false });
     expect(reg.registerAutomation).not.toHaveBeenCalled();
   });
 
-  it("open focuses a matching visible tab instead of creating a hidden tab", async () => {
+  it("delegates reuse to renderer state instead of the mounted registry", async () => {
     const reg = fakeRegistry();
     reg.list = vi.fn(() => [
       { id: "browser:visible", url: "https://x.com/", active: false, owner: "ui" },
     ]);
-    const openVisibleTab = vi.fn(async (_request: Record<string, unknown>) => {});
+    const openVisibleTab = vi.fn(async () => ({
+      tabId: "browser:persisted", reused: true, created: false,
+    }));
     srv = new BrowserControlServer(reg as any, { ...opts, openVisibleTab });
     const port = await srv.start();
 
@@ -195,15 +202,99 @@ describe("BrowserControlServer", () => {
       workspaceDir: "/ws",
     });
 
-    expect(resp).toEqual({ ok: true, tabId: "browser:visible", reused: true });
+    expect(resp).toEqual({ ok: true, tabId: "browser:persisted", reused: true });
     expect(openVisibleTab).toHaveBeenCalledWith({
-      tabId: "browser:visible",
+      newTabId: expect.stringMatching(/^browser:/),
       url: "https://x.com",
       workspaceDir: "/ws",
+      scopeType: "directory",
+      scopeId: "/ws",
       source: "mcp",
-      focusExisting: true,
+      allowReuse: true,
     });
+    expect(reg.list).not.toHaveBeenCalled();
     expect(reg.registerAutomation).not.toHaveBeenCalled();
+  });
+
+  it("routes a root-scoped MCP request through its authoritative source worktree", async () => {
+    const reg = fakeRegistry();
+    const resolveScope = vi.fn(() => ({
+      path: "/worktrees/feature", scopeType: "directory" as const, scopeId: "worktree-1",
+    }));
+    const openVisibleTab = vi.fn(async (request: Record<string, unknown>) => ({
+      tabId: request.newTabId as string, reused: false, created: true,
+    }));
+    srv = new BrowserControlServer(reg as any, { ...opts, resolveScope, openVisibleTab });
+    const port = await srv.start();
+
+    const resp = await rpc(port, {
+      action: "open", url: "https://x.com", sourceTabId: "terminal:worktree",
+      secret: "good", workspaceDir: "/repo",
+    });
+
+    expect(resp).toMatchObject({ ok: true, reused: false, tabId: expect.stringMatching(/^browser:/) });
+    expect(resolveScope).toHaveBeenCalledWith({
+      workspaceDir: "/repo", sourceTabId: "terminal:worktree",
+    });
+    expect(openVisibleTab).toHaveBeenCalledWith({
+      newTabId: expect.stringMatching(/^browser:/),
+      url: "https://x.com",
+      workspaceDir: "/worktrees/feature",
+      scopeType: "directory",
+      scopeId: "worktree-1",
+      source: "mcp",
+      allowReuse: true,
+    });
+  });
+
+  it("lets persisted renderer state choose reuse when no BrowserRegistry entry is mounted", async () => {
+    const reg = fakeRegistry();
+    reg.list = vi.fn(() => []);
+    const openVisibleTab = vi.fn(async () => ({
+      tabId: "browser:persisted", reused: true, created: false,
+    }));
+    srv = new BrowserControlServer(reg as any, {
+      ...opts,
+      resolveScope: () => ({ path: "/ws", scopeType: "directory", scopeId: "dir-1" }),
+      openVisibleTab,
+    });
+    const port = await srv.start();
+
+    const resp = await rpc(port, {
+      action: "open", url: "example.com/#hash", secret: "good", workspaceDir: "/ws",
+    });
+
+    expect(resp).toEqual({ ok: true, tabId: "browser:persisted", reused: true });
+    expect(openVisibleTab).toHaveBeenCalledWith(expect.objectContaining({
+      url: "https://example.com/#hash", allowReuse: true,
+    }));
+  });
+
+  it("coalesces concurrent opens for the same scope and normalized URL", async () => {
+    const reg = fakeRegistry();
+    let resolveOpen!: (value: { tabId: string; reused: boolean; created: boolean }) => void;
+    const opened = new Promise<{ tabId: string; reused: boolean; created: boolean }>((resolve) => {
+      resolveOpen = resolve;
+    });
+    const openVisibleTab = vi.fn(() => opened);
+    srv = new BrowserControlServer(reg as any, {
+      ...opts,
+      resolveScope: () => ({ path: "/ws", scopeType: "directory", scopeId: "dir-1" }),
+      openVisibleTab,
+    });
+    const port = await srv.start();
+
+    const first = rpc(port, {
+      action: "open", url: "example.com", secret: "good", workspaceDir: "/ws",
+    });
+    const second = rpc(port, {
+      action: "open", url: "https://example.com/", secret: "good", workspaceDir: "/ws",
+    });
+    await vi.waitFor(() => expect(openVisibleTab).toHaveBeenCalledTimes(1));
+    resolveOpen({ tabId: "browser:one", reused: false, created: true });
+
+    await expect(first).resolves.toEqual({ ok: true, tabId: "browser:one", reused: false });
+    await expect(second).resolves.toEqual({ ok: true, tabId: "browser:one", reused: true });
   });
 
   it("open reports a clean error when automation is unavailable", async () => {

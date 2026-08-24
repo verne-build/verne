@@ -2,8 +2,9 @@ import crypto from "node:crypto";
 import type { BrowserWindow } from "electron";
 import type { BrowserRegistry } from "./browser-registry";
 import type { BrowserTabRelayOpenRequest } from "./browser-tab-relay";
+import type { BrowserTabOpenResult } from "../../../src/types/shared";
 
-type OpenVisibleTab = (request: BrowserTabRelayOpenRequest) => Promise<string>;
+type OpenVisibleTab = (request: BrowserTabRelayOpenRequest) => Promise<BrowserTabOpenResult>;
 
 export function installGuestBrowserPopupRelay(
   win: BrowserWindow,
@@ -18,11 +19,13 @@ export function installGuestBrowserPopupRelay(
         console.error(`[browser-popup] guest ${guest.id} is not registered to a visible browser tab`);
       } else {
         void openVisibleTab({
-          tabId: createTabId(),
+          newTabId: createTabId(),
           url,
-          workspaceDir: owner.workspaceDir,
+          workspaceDir: owner.scope.path,
+          scopeType: owner.scope.scopeType,
+          scopeId: owner.scope.scopeId,
           source: "popup",
-          focusExisting: false,
+          allowReuse: false,
         }).catch((error) => {
           console.error("[browser-popup] open sibling failed:", error instanceof Error ? error.message : error);
         });

@@ -477,6 +477,47 @@ describe("file panel tabs", () => {
     ]);
   });
 
+  it("recognizes an explicit request-owned tab after its page redirects", async () => {
+    const { mod, panel } = await loadedTabs();
+    await mod.openBrowserTabForScope(scope, "https://example.com/start", {
+      newTabId: "browser:request-owned",
+      allowReuse: true,
+    });
+    mod.updateBrowserTab("browser:request-owned", {
+      browserUrl: "https://example.com/landed",
+    });
+
+    await expect(mod.openBrowserTabForScope(scope, "https://example.com/start", {
+      newTabId: "browser:request-owned",
+      allowReuse: true,
+    })).resolves.toEqual({
+      tabId: "browser:request-owned", reused: false, created: true,
+    });
+    expect(panel.tabs.value).toEqual([
+      expect.objectContaining({
+        id: "browser:request-owned", browserUrl: "https://example.com/landed",
+      }),
+    ]);
+  });
+
+  it("rolls back a request-owned tab even if it navigated before cancellation", async () => {
+    const { mod, panel } = await loadedTabs();
+    await mod.openBrowserTabForScope(scope, "https://example.com/start", {
+      newTabId: "browser:request-owned",
+      allowReuse: true,
+    });
+    mod.updateBrowserTab("browser:request-owned", {
+      browserUrl: "https://example.com/landed",
+    });
+
+    await expect(mod.rollbackBrowserTabForScope(
+      scope,
+      "browser:request-owned",
+      "https://example.com/start",
+    )).resolves.toBe(true);
+    expect(panel.tabs.value).toEqual([]);
+  });
+
   it("drops queued mutations with a stale load instead of merging them into a fresh scope", async () => {
     const staleRows = deferred<SidebarTabRow[]>();
     rpc.getSidebarTabs.mockReturnValueOnce(staleRows.promise);

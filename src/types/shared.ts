@@ -148,20 +148,42 @@ export interface BrowserHistoryItem {
   visitedAt: number;
 }
 
+export interface BrowserTabScope {
+  path: string;
+  scopeType: "directory" | "agent_worktree";
+  scopeId: string;
+}
+
 export interface BrowserTabOpenRequest {
   requestId: string;
-  tabId: string;
+  generation: number;
+  newTabId: string;
   url: string;
   workspaceDir: string;
+  scopeType: BrowserTabScope["scopeType"];
+  scopeId: string;
   source: "mcp" | "popup";
-  focusExisting: boolean;
+  allowReuse: boolean;
+}
+
+export type BrowserTabOpenCancel = BrowserTabOpenRequest;
+
+export interface BrowserTabOpenResult {
+  tabId: string;
+  reused: boolean;
+  created: boolean;
 }
 
 export interface BrowserTabOpenAck {
   requestId: string;
-  tabId: string;
+  generation: number;
   workspaceDir: string;
+  scopeType: BrowserTabScope["scopeType"];
+  scopeId: string;
   ok: boolean;
+  tabId?: string;
+  reused?: boolean;
+  created?: boolean;
   error?: string;
 }
 

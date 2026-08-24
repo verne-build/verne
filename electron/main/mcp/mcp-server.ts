@@ -25,10 +25,12 @@ const jsonText = (v: unknown) => text(JSON.stringify(v));
 
 async function main() {
   const root = resolveWorkspace();
+  const sourceTabId = process.env.VERNE_TAB_ID;
   const automationOwner = resolveAutomationOwner(root);
   const idd = internalDataDir();
   const notes = makeNotesStore(notesDir(idd, root));
-  const bc = (body: Record<string, unknown>) => browserControl(idd, root, { ...body, automationOwner });
+  const bc = (body: Record<string, unknown>) =>
+    browserControl(idd, root, { ...body, automationOwner }, sourceTabId);
 
   const server = new McpServer({ name: "verne", version: "1.0.0" });
 

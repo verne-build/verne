@@ -394,7 +394,7 @@ watch(() => store.directories.map((d) => d.id).join(","), () => {
               <span>Archived</span>
               <ChevronRight
                 :stroke-width="2.5"
-                class="size-3 shrink-0 transition-all duration-150 group-hover:opacity-100 group-focus-visible:opacity-100"
+                class="size-3 shrink-0 transition-[transform,opacity] duration-150 group-hover:opacity-100 group-focus-visible:opacity-100"
                 :class="archivedOpen ? 'rotate-90 opacity-0' : 'opacity-100'"
               />
             </CollapsibleTrigger>

@@ -26,7 +26,15 @@ import {
 } from "@/components/ui/dropdown-menu";
 import BrowserSidebar from "@/components/browser/BrowserSidebar.vue";
 
-const props = defineProps<{ tabId: string; url: string | null; workspaceDir: string; directoryId?: string; active?: boolean; newTabMode?: boolean }>();
+const props = defineProps<{
+  tabId: string;
+  url: string | null;
+  workspaceDir: string;
+  directoryId: string;
+  scopeType: "directory" | "agent_worktree";
+  active?: boolean;
+  newTabMode?: boolean;
+}>();
 
 const emit = defineEmits<{ "open-new-tab": [url: string] }>();
 
@@ -112,6 +120,8 @@ watch(() => props.directoryId, (id) => { if (id) browserData.load(id).catch(() =
 
 // WebContents id of the guest, captured on dom-ready; null until ready.
 let wcId: number | null = null;
+let registrationGeneration = 0;
+let mounted = true;
 let pendingNavigationUrl: string | null = null;
 let boundWebview: WebviewEl | null = null;
 let currentTitle = "";
@@ -352,9 +362,22 @@ function onDomReady() {
   // Register this tab with main so the CDP browser-control server can attach a
   // debugger and drive it for agent automation. Idempotent on refire.
   if (wcId !== null) {
-    invoke("native_browser_register", { tabId: props.tabId, wcId, workspaceDir: props.workspaceDir })
-      .then(() => { if (props.active) reportActive(); })
-      .catch((e) => { toast.error(String(e)); });
+    const registeredWcId = wcId;
+    const generation = ++registrationGeneration;
+    invoke("native_browser_register", {
+      tabId: props.tabId,
+      wcId: registeredWcId,
+      workspaceDir: props.workspaceDir,
+      scopeType: props.scopeType,
+      scopeId: props.directoryId,
+    })
+      .then(() => {
+        if (!mounted || generation !== registrationGeneration || wcId !== registeredWcId) return;
+        if (props.active) reportActive();
+      })
+      .catch((e) => {
+        if (mounted && generation === registrationGeneration) toast.error(String(e));
+      });
     const pendingUrl = pendingNavigationUrl;
     if (pendingUrl !== null) {
       pendingNavigationUrl = null;
@@ -478,6 +501,8 @@ function onStopLoading() {
 urlInput.value = (props.url === "about:blank" || !props.url) ? "" : props.url;
 
 onBeforeUnmount(() => {
+  mounted = false;
+  registrationGeneration++;
   const wv = boundWebview;
   if (wv) {
     wv.removeEventListener("dom-ready", onDomReady);
@@ -500,7 +525,9 @@ onBeforeUnmount(() => {
   stopProgressAnimation();
   if (progressDoneTimer) clearTimeout(progressDoneTimer);
   // Detach the CDP session for this tab (main drops the registry entry).
-  invoke("native_browser_unregister", { tabId: props.tabId }).catch(() => {});
+  if (wcId !== null) {
+    invoke("native_browser_unregister", { tabId: props.tabId, wcId }).catch(() => {});
+  }
   window.removeEventListener("keydown", onKeydown);
 });
 

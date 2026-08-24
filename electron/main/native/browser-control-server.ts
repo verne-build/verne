@@ -11,6 +11,7 @@ import type { BrowserRegistry } from "./browser-registry";
 import { normalizeBrowserUrl, sameBrowserUrl } from "../../../src/lib/browserTabs";
 import type { AutomationBrowserSession } from "./browser-automation-window";
 import type { BrowserTabRelayOpenRequest } from "./browser-tab-relay";
+import type { BrowserTabOpenResult, BrowserTabScope } from "../../../src/types/shared";
 
 // PATH PARITY: must equal Rust crate::paths::browser_control_file()
 // = internal_data_dir()/browser-control.json. The agent's `verne mcp` inherits
@@ -24,7 +25,8 @@ interface Options {
   secret?: string;
   writeDescriptor?: boolean;
   createAutomationSession?: (tabId: string, url: string, workspaceDir: string) => Promise<AutomationBrowserSession>;
-  openVisibleTab?: (request: BrowserTabRelayOpenRequest) => Promise<unknown>;
+  openVisibleTab?: (request: BrowserTabRelayOpenRequest) => Promise<BrowserTabOpenResult>;
+  resolveScope?: (source: { workspaceDir: string; sourceTabId?: string }) => Promise<BrowserTabScope> | BrowserTabScope;
 }
 
 export class BrowserControlServer {
@@ -33,6 +35,8 @@ export class BrowserControlServer {
   private writeDescriptor: boolean;
   private createAutomationSession?: Options["createAutomationSession"];
   private openVisibleTab?: Options["openVisibleTab"];
+  private resolveScope?: Options["resolveScope"];
+  private visibleOpens = new Map<string, Promise<BrowserTabOpenResult>>();
 
   constructor(
     private registry: BrowserRegistry,
@@ -42,6 +46,7 @@ export class BrowserControlServer {
     this.writeDescriptor = opts.writeDescriptor ?? true;
     this.createAutomationSession = opts.createAutomationSession;
     this.openVisibleTab = opts.openVisibleTab;
+    this.resolveScope = opts.resolveScope;
   }
 
   start(): Promise<number> {
@@ -83,8 +88,10 @@ export class BrowserControlServer {
     let req: any;
     try { req = JSON.parse(line); } catch { return { ok: false, error: "bad json" }; }
     if (req.secret !== this.secret) return { ok: false, error: "auth failed" };
-    const ws = req.workspaceDir as string;
+    const rawWorkspaceDir = req.workspaceDir as string;
     try {
+      const scope = await this.scopeForRequest(rawWorkspaceDir, req.sourceTabId);
+      const ws = scope.path;
       switch (req.action) {
         case "list":
           return { ok: true, browsers: this.registry.list(ws) };
@@ -93,18 +100,28 @@ export class BrowserControlServer {
         case "open": {
           const target = normalizeBrowserUrl(req.url);
           if (this.openVisibleTab) {
-            const existing = this.registry.list(ws).find(
-              (tab) => tab.owner === "ui" && sameBrowserUrl(tab.url, target),
-            );
-            const tabId = existing?.id ?? `browser:${crypto.randomUUID()}`;
-            await this.openVisibleTab({
-              tabId,
+            const key = `${scope.scopeType}:${scope.scopeId}:${this.urlKey(target)}`;
+            const concurrent = this.visibleOpens.get(key);
+            if (concurrent) {
+              const result = await concurrent;
+              return { ok: true, tabId: result.tabId, reused: true };
+            }
+            const opening = this.openVisibleTab({
+              newTabId: `browser:${crypto.randomUUID()}`,
               url: target,
-              workspaceDir: ws,
+              workspaceDir: scope.path,
+              scopeType: scope.scopeType,
+              scopeId: scope.scopeId,
               source: "mcp",
-              focusExisting: Boolean(existing),
+              allowReuse: true,
             });
-            return { ok: true, tabId, reused: Boolean(existing) };
+            this.visibleOpens.set(key, opening);
+            try {
+              const result = await opening;
+              return { ok: true, tabId: result.tabId, reused: result.reused };
+            } finally {
+              if (this.visibleOpens.get(key) === opening) this.visibleOpens.delete(key);
+            }
           }
 
           // Headless fallback for hosts without a renderer relay. The Electron
@@ -175,6 +192,23 @@ export class BrowserControlServer {
 
   private automationOwner(raw: unknown, ws: string): string {
     return typeof raw === "string" && raw.trim() ? raw.trim() : `workspace:${ws}`;
+  }
+
+  private scopeForRequest(workspaceDir: string, rawSourceTabId: unknown): Promise<BrowserTabScope> {
+    const sourceTabId = typeof rawSourceTabId === "string" && rawSourceTabId ? rawSourceTabId : undefined;
+    if (this.resolveScope) return Promise.resolve(this.resolveScope({ workspaceDir, sourceTabId }));
+    return Promise.resolve({ path: workspaceDir, scopeType: "directory", scopeId: workspaceDir });
+  }
+
+  private urlKey(url: string): string {
+    try {
+      const parsed = new URL(url);
+      parsed.hash = "";
+      parsed.pathname = parsed.pathname.replace(/\/+$/, "") || "/";
+      return parsed.href;
+    } catch {
+      return url;
+    }
   }
 
   private async openAutomationTab(url: string, ws: string, automationOwner: string): Promise<string> {

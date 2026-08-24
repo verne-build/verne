@@ -38,6 +38,7 @@ describe("BrowserView", () => {
     mocks.invoke.mockReset();
     mocks.updateBrowserTab.mockReset();
     mocks.invoke.mockImplementation(async (method: string, params?: unknown) => {
+      if (method === "browser_favorites_list" || method === "browser_history_list") return [];
       if (method === "native_browser_can_go") return { back: false, forward: false };
       if (method === "native_browser_navigate") return (params as { url: string }).url;
       return undefined;
@@ -58,6 +59,8 @@ describe("BrowserView", () => {
         tabId: "browser:1",
         url: null,
         workspaceDir: "/repo",
+        directoryId: "dir-1",
+        scopeType: "directory",
         active: true,
         newTabMode: true,
       }),
@@ -109,6 +112,8 @@ describe("BrowserView", () => {
         tabId: "browser:2",
         url: null,
         workspaceDir: "/repo",
+        directoryId: "dir-1",
+        scopeType: "directory",
         active: active.value,
         newTabMode: true,
       }),
@@ -123,5 +128,47 @@ describe("BrowserView", () => {
     await flush();
 
     expect(document.activeElement).toBe(input);
+  });
+
+  it("unregisters the exact guest and ignores a stale registration continuation after unmount", async () => {
+    let finishRegistration!: () => void;
+    const registration = new Promise<void>((resolve) => { finishRegistration = resolve; });
+    mocks.invoke.mockImplementation(async (method: string, params?: unknown) => {
+      if (method === "native_browser_register") return registration;
+      if (method === "browser_favorites_list" || method === "browser_history_list") return [];
+      if (method === "native_browser_can_go") return { back: false, forward: false };
+      if (method === "native_browser_navigate") return (params as { url: string }).url;
+      return undefined;
+    });
+    app = createApp({
+      render: () => h(BrowserView, {
+        tabId: "browser:stale",
+        url: "https://example.com",
+        workspaceDir: "/repo",
+        directoryId: "dir-1",
+        scopeType: "directory",
+        active: true,
+        newTabMode: false,
+      }),
+    });
+    app.mount(host);
+    await flush();
+    const webview = host.querySelector("webview") as TestWebview;
+    webview.getWebContentsId = () => 81;
+    webview.getURL = () => "https://example.com";
+    webview.openDevTools = vi.fn();
+    webview.closeDevTools = vi.fn();
+    webview.isDevToolsOpened = () => false;
+    webview.dispatchEvent(new Event("dom-ready"));
+    await flush();
+
+    app.unmount();
+    finishRegistration();
+    await flush();
+
+    expect(mocks.invoke).toHaveBeenCalledWith("native_browser_unregister", {
+      tabId: "browser:stale", wcId: 81,
+    });
+    expect(mocks.invoke.mock.calls.filter(([method]) => method === "native_browser_set_active")).toEqual([]);
   });
 });
