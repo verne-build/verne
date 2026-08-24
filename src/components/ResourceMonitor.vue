@@ -24,13 +24,10 @@ import { Button } from "./ui/button";
 import { Popover, PopoverTrigger, PopoverContent } from "./ui/popover";
 
 const store = useWorkspaceStore();
-const { allTabs } = useFilePanelTabs(() => store.activeRoot);
+const { tabs } = useFilePanelTabs(() => store.activeRoot);
 
-// Tabs = the file panel's file + browser tabs. The fixed rows (source control,
-// search, notes, …) are chrome, not open documents.
-const panelTabCount = computed(
-  () => allTabs.value.filter((t) => t.kind === "file" || t.kind === "browser").length,
-);
+// Every entry is now a real right-panel tab.
+const panelTabCount = computed(() => tabs.value.length);
 
 // Sessions = live center sessions (what the sessions sidebar lists). Agents are
 // not a separate population — every agent runs in a session.

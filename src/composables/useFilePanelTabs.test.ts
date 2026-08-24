@@ -27,6 +27,12 @@ async function loadedState() {
   return { persistence, state: await persistence.ensureFilePanelLoaded(scope) };
 }
 
+async function loadedTabs() {
+  const mod = await import("./useFilePanelTabs");
+  await mod.ensureFilePanelLoaded(scope);
+  return { mod, panel: mod.useFilePanelTabs(() => scope) };
+}
+
 describe("file panel persistence", () => {
   it("seeds and persists History from a legacy rightSidebarView marker", async () => {
     rpc.getSidebarState.mockResolvedValue({
@@ -208,5 +214,77 @@ describe("file panel persistence", () => {
     expect(state).toBeUndefined();
     await persistence.ensureFilePanelLoaded(scope);
     expect(rpc.getSidebarTabs).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("file panel tabs", () => {
+  it("opens a singleton once and focuses it on the second request", async () => {
+    const { panel } = await loadedTabs();
+    const first = panel.openTabOfKind("sourceControl");
+    panel.openTabOfKind("notes");
+    const second = panel.openTabOfKind("sourceControl");
+    expect(second).toBe(first);
+    expect(panel.tabs.value.filter((tab) => tab.kind === "sourceControl")).toHaveLength(1);
+    expect(panel.activeId.value).toBe("__sc__");
+  });
+
+  it("opens a fresh explorer for every request", async () => {
+    const { panel } = await loadedTabs();
+    const first = panel.openTabOfKind("explorer");
+    const second = panel.openTabOfKind("explorer");
+    expect(first).not.toBe(second);
+    expect(panel.tabs.value.map((tab) => tab.id)).toEqual([first, second]);
+  });
+
+  it("opens a blank browser tab labeled New Tab", async () => {
+    const { panel } = await loadedTabs();
+    const id = panel.openTabOfKind("browser");
+    expect(panel.tabs.value).toEqual([
+      expect.objectContaining({ kind: "browser", id, label: "New Tab", browserUrl: null }),
+    ]);
+  });
+
+  it("updates a blank browser in place", async () => {
+    const { mod, panel } = await loadedTabs();
+    const id = panel.openTabOfKind("browser");
+    mod.updateBrowserTab(id, { browserUrl: "https://example.com" });
+    expect(panel.tabs.value).toHaveLength(1);
+    expect(panel.tabs.value[0]).toMatchObject({ id, browserUrl: "https://example.com" });
+  });
+
+  it("opens a file beside its explorer without removing the explorer", async () => {
+    const { panel } = await loadedTabs();
+    const explorerId = panel.openTabOfKind("explorer");
+    panel.openFile("/repo/src/main.ts");
+    expect(panel.tabs.value.map((tab) => tab.id)).toEqual([explorerId, "/repo/src/main.ts"]);
+  });
+
+  it("closing the last tab leaves the picker state", async () => {
+    const { panel } = await loadedTabs();
+    const id = panel.openTabOfKind("notes");
+    panel.closeTab(id);
+    expect(panel.tabs.value).toEqual([]);
+    expect(panel.activeId.value).toBeNull();
+  });
+
+  it("reorders browser and file tabs in one index space", async () => {
+    const { panel } = await loadedTabs();
+    panel.openFile("/repo/a.ts", undefined, { permanent: true });
+    const browserId = panel.openBrowserTab("https://example.com");
+    panel.openFile("/repo/b.ts", undefined, { permanent: true });
+    panel.reorderTabs(["/repo/a.ts", "/repo/b.ts", browserId]);
+    expect(panel.tabs.value.map((tab) => tab.id)).toEqual(["/repo/a.ts", "/repo/b.ts", browserId]);
+  });
+
+  it("focuses the most recently activated file or explorer", async () => {
+    const { panel } = await loadedTabs();
+    const firstExplorer = panel.openTabOfKind("explorer");
+    panel.openFile("/repo/a.ts", undefined, { permanent: true });
+    panel.openTabOfKind("explorer");
+    panel.setActiveId(firstExplorer);
+    panel.openTabOfKind("sourceControl");
+
+    expect(panel.focusMostRecentFileOrExplorer()).toBe(firstExplorer);
+    expect(panel.activeId.value).toBe(firstExplorer);
   });
 });
