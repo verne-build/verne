@@ -15,10 +15,10 @@ export interface LoadedFilePanelState {
 const PERSISTED_KINDS = new Set<SidebarTabRow["tabType"]>([
   "file", "browser", "sourceControl", "commits", "search", "notes", "explorer",
 ]);
-const SINGLETON_IDS = new Set<string>([SC_TAB_ID, COMMITS_TAB_ID, NOTES_TAB_ID, SEARCH_TAB_ID]);
 
 const loaded = new Set<string>();
-const loading = new Set<string>();
+const loading = new Map<string, number>();
+const epochs = new Map<string, number>();
 const saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 function isPersistedKind(value: string): value is SidebarTabRow["tabType"] {
@@ -102,23 +102,22 @@ function addIfAbsent(tabs: FilePanelTab[], tab: FilePanelTab): void {
 export async function ensureFilePanelLoaded(scope: FpScope): Promise<LoadedFilePanelState | undefined> {
   const key = scopeKey(scope);
   if (loaded.has(key) || loading.has(key)) return undefined;
-  loading.add(key);
+  const epoch = epochs.get(key) ?? 0;
+  loading.set(key, epoch);
   try {
     const { request } = useRpc();
     const [rows, sidebarState] = await Promise.all([
       request.getSidebarTabs({ directoryId: scope.scopeId, scopeType: scope.scopeType }),
       request.getSidebarState({ directoryId: scope.scopeId, scopeType: scope.scopeType }),
     ]);
-    const seenSingletons = new Set<string>();
+    if ((epochs.get(key) ?? 0) !== epoch) return undefined;
+    const seenTabIds = new Set<string>();
     const tabs = [...rows]
       .sort((a, b) => a.position - b.position)
       .flatMap((row) => {
         const tab = rowToTab(row);
-        if (!tab) return [];
-        if (SINGLETON_IDS.has(tab.id)) {
-          if (seenSingletons.has(tab.id)) return [];
-          seenSingletons.add(tab.id);
-        }
+        if (!tab || seenTabIds.has(tab.id)) return [];
+        seenTabIds.add(tab.id);
         return [tab];
       });
 
@@ -141,7 +140,7 @@ export async function ensureFilePanelLoaded(scope: FpScope): Promise<LoadedFileP
     loaded.delete(key);
     return undefined;
   } finally {
-    loading.delete(key);
+    if (loading.get(key) === epoch) loading.delete(key);
   }
 }
 
@@ -176,5 +175,6 @@ export function dropFilePanelPersistence(scopeId: string): void {
     saveTimers.delete(key);
     loaded.delete(key);
     loading.delete(key);
+    epochs.set(key, (epochs.get(key) ?? 0) + 1);
   }
 }

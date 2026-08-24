@@ -151,6 +151,42 @@ describe("file panel persistence", () => {
     expect(rpc.getSidebarTabs).toHaveBeenCalledTimes(1);
   });
 
+  it("dedupes all hydrated tab ids while preserving the first persisted row", async () => {
+    rpc.getSidebarTabs.mockResolvedValue([
+      { directoryId: "dir-1", tabId: "/repo/a.ts", tabType: "file", label: "First file", position: 0 },
+      { directoryId: "dir-1", tabId: "/repo/a.ts", tabType: "file", label: "Second file", position: 1 },
+      { directoryId: "dir-1", tabId: "browser:1", tabType: "browser", label: "First browser", position: 2, browserUrl: "https://first.test" },
+      { directoryId: "dir-1", tabId: "browser:1", tabType: "browser", label: "Second browser", position: 3, browserUrl: "https://second.test" },
+      { directoryId: "dir-1", tabId: "explorer:1", tabType: "explorer", label: "Files", position: 4 },
+      { directoryId: "dir-1", tabId: "explorer:1", tabType: "explorer", label: "Files", position: 5 },
+    ]);
+
+    const { state } = await loadedState();
+    expect(state?.tabs.map((tab) => tab.id)).toEqual(["/repo/a.ts", "browser:1", "explorer:1"]);
+    expect(state?.tabs[0]).toMatchObject({ label: "First file" });
+    expect(state?.tabs[1]).toMatchObject({ label: "First browser", browserUrl: "https://first.test" });
+  });
+
+  it("ignores an in-flight load completed after its scope is dropped", async () => {
+    let resolveRows!: (rows: SidebarTabRow[]) => void;
+    rpc.getSidebarTabs.mockImplementationOnce(() => new Promise((resolve) => { resolveRows = resolve; }));
+    rpc.getSidebarState.mockResolvedValueOnce({
+      directoryId: "dir-1", activeTabId: "", listColumnWidth: 250, rightSidebarView: "commits",
+    });
+    const persistence = await import("./filePanelPersistence");
+    const staleLoad = persistence.ensureFilePanelLoaded(scope);
+
+    persistence.dropFilePanelPersistence(scope.scopeId);
+    resolveRows([]);
+    await expect(staleLoad).resolves.toBeUndefined();
+    await vi.runAllTimersAsync();
+    expect(rpc.saveSidebarTabs).not.toHaveBeenCalled();
+
+    const freshState = await persistence.ensureFilePanelLoaded(scope);
+    expect(freshState).toEqual({ tabs: [], activeId: null, needsSave: false });
+    expect(rpc.getSidebarTabs).toHaveBeenCalledTimes(2);
+  });
+
   it("retries a rejected load", async () => {
     rpc.getSidebarTabs.mockRejectedValueOnce(new Error("offline"));
     const { persistence, state } = await loadedState();
