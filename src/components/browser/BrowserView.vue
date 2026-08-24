@@ -26,7 +26,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import BrowserSidebar from "@/components/browser/BrowserSidebar.vue";
 
-const props = defineProps<{ tabId: string; url: string; workspaceDir: string; directoryId?: string; active?: boolean; newTabMode?: boolean }>();
+const props = defineProps<{ tabId: string; url: string | null; workspaceDir: string; directoryId?: string; active?: boolean; newTabMode?: boolean }>();
 
 // In new-tab mode this pane is the synthetic "new tab page": the webview stays
 // blank and committing the address bar spawns a real browser tab instead of

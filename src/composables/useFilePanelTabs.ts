@@ -129,7 +129,6 @@ function debouncedSave(scope: FpScope, state: DirState) {
       label: t.label,
       position: offset + i,
       browserUrl: t.browserUrl,
-      pinned: !!t.pinned,
     }));
     const rows = [...fileRows, ...browserRows];
     const persistedIds = new Set(rows.map(r => r.tabId));
@@ -150,7 +149,7 @@ function debouncedSave(scope: FpScope, state: DirState) {
 
 /// Update a browser tab's mutable metadata (label, faviconUrl, browserUrl)
 /// across all scopes. Triggers reactivity and persists whichever scope owns the tab.
-export function updateBrowserTab(id: string, patch: { label?: string; faviconUrl?: string; browserUrl?: string }) {
+export function updateBrowserTab(id: string, patch: { label?: string; faviconUrl?: string; browserUrl?: string | null }) {
   for (const [key, state] of dirState.value.entries()) {
     const tab = state.browserTabs.find(t => t.id === id);
     if (!tab) continue;
@@ -215,7 +214,6 @@ export async function ensureFilePanelLoaded(scope: FpScope) {
         id: r.tabId,
         label: r.label,
         browserUrl: r.browserUrl!,
-        pinned: r.pinned,
       }));
 
     let rightView = sidebarState?.rightSidebarView;

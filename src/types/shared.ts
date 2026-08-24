@@ -15,10 +15,20 @@ export interface WorkingDirectory {
   parentDirectoryId?: string;
 }
 
+export type SidebarTabType =
+  | "file"
+  | "diff" // legacy compatibility until Task 7 narrows the union
+  | "browser"
+  | "sourceControl"
+  | "commits"
+  | "search"
+  | "notes"
+  | "explorer";
+
 export interface SidebarTabRow {
   directoryId: string;
   tabId: string;
-  tabType: "file" | "diff" | "browser";
+  tabType: SidebarTabType;
   label: string;
   position: number;
   cursorLine?: number;
@@ -29,7 +39,7 @@ export interface SidebarTabRow {
   diffStaged?: boolean;
   diffCommitId?: string;
   diffCommitShortId?: string;
-  browserUrl?: string;
+  browserUrl?: string | null;
   pinned?: boolean;
 }
 
@@ -67,7 +77,7 @@ export interface FilePanelCommitsTab {
 
 export interface FilePanelExplorerTab {
   kind: "explorer";
-  id: "__explorer__";
+  id: string; // explorer:<uuid>
 }
 
 export interface FilePanelNotesTab {
@@ -91,8 +101,7 @@ export interface FilePanelBrowserTab {
   kind: "browser";
   id: string;          // stable per browser tab, e.g. `browser:<uuid>`
   label: string;       // page title or host
-  browserUrl: string;
-  pinned?: boolean;
+  browserUrl: string | null;
   faviconUrl?: string; // derived from origin on navigate, not persisted
 }
 
@@ -106,8 +115,17 @@ export type FilePanelTab =
   | FilePanelNewTab
   | FilePanelBrowserTab;
 
+export type OpenableTabKind =
+  | "sourceControl"
+  | "commits"
+  | "search"
+  | "notes"
+  | "explorer"
+  | "browser";
+
 export const SC_TAB_ID = "__sc__" as const;
 export const COMMITS_TAB_ID = "__commits__" as const;
+/** Legacy migration marker, not a live explorer id. */
 export const EXPLORER_TAB_ID = "__explorer__" as const;
 export const NOTES_TAB_ID = "__notes__" as const;
 export const SEARCH_TAB_ID = "__search__" as const;
