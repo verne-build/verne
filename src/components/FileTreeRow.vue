@@ -61,6 +61,11 @@ function onRenameKeydown(e: KeyboardEvent) {
   if (e.key === "Enter") { e.preventDefault(); emit("commitRename"); }
   else if (e.key === "Escape") { e.preventDefault(); emit("cancelRename"); }
 }
+
+function onRowClick(e: MouseEvent) {
+  emit("rowClick", e);
+  if (e.detail === 2) emit("rowDblClick", e);
+}
 </script>
 
 <template>
@@ -77,8 +82,7 @@ function onRenameKeydown(e: KeyboardEvent) {
     :data-item-path="node.path"
     :data-item-type="node.isDir ? 'directory' : 'file'"
     draggable="true"
-    @click="emit('rowClick', $event)"
-    @dblclick="emit('rowDblClick', $event)"
+    @click="onRowClick"
     @contextmenu.prevent="emit('contextmenu', $event)"
     @dragstart="onDragStart"
     @dragend="emit('dragend', $event)"

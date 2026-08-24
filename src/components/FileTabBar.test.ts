@@ -125,7 +125,9 @@ async function mountTabBar() {
   const events = {
     close: vi.fn(),
     openKind: vi.fn(),
+    promote: vi.fn(),
     reorder: vi.fn(),
+    select: vi.fn(),
   };
   document.body.append(host);
   const app = createApp({
@@ -136,7 +138,9 @@ async function mountTabBar() {
       rootDir: "/repo",
       onClose: events.close,
       onOpenKind: events.openKind,
+      onPromote: events.promote,
       onReorder: events.reorder,
+      onSelect: events.select,
     }),
   });
   app.mount(host);
@@ -190,6 +194,21 @@ describe("FileTabBar", () => {
       );
       expect(leading).toHaveLength(1);
     }
+  });
+
+  it("promotes a file tab on the second click", async () => {
+    const mounted = await mountTabBar();
+    app = mounted.app;
+    const file = mounted.host.querySelector<HTMLButtonElement>('button[data-tab-id="/repo/a.ts"]');
+    expect(file).not.toBeNull();
+
+    file?.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+    expect(mounted.events.promote).not.toHaveBeenCalled();
+
+    file?.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 2 }));
+    expect(mounted.events.select).toHaveBeenCalledTimes(2);
+    expect(mounted.events.promote).toHaveBeenCalledOnce();
+    expect(mounted.events.promote).toHaveBeenCalledWith("/repo/a.ts");
   });
 
   it("reorders every tab kind in the shared index space", async () => {

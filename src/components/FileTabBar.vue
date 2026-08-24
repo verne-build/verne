@@ -58,6 +58,11 @@ function isDirty(t: FilePanelTab) {
   return t.kind === "file" && props.isFileDirty(t.filePath);
 }
 
+function handleTabClick(tab: FilePanelTab, event: MouseEvent) {
+  emit("select", tab.id);
+  if (event.detail === 2 && tab.kind === "file") emit("promote", tab.id);
+}
+
 function closeIds(ids: string[]) {
   for (const id of ids) emit("close", id);
 }
@@ -345,8 +350,7 @@ function onDragEnd(e: DragEndPayload) {
                       variant="pill"
                       class="gap-1.5 pl-1.5 pr-1.5 transition-none overflow-hidden data-[dragging=true]:opacity-50"
                       :data-tab-id="item.tab.id"
-                      @click="emit('select', item.tab.id)"
-                      @dblclick="item.tab.kind === 'file' && emit('promote', item.tab.id)"
+                      @click="handleTabClick(item.tab, $event)"
                     >
                       <FileIcon v-if="item.tab.kind === 'file'" :name="item.tab.label" :size="14" />
                       <img
