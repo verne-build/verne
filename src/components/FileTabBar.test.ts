@@ -203,6 +203,8 @@ describe("FileTabBar", () => {
 
     const openButton = mounted.host.querySelector<HTMLButtonElement>('button[title="Open Tab"]');
     expect(openButton).not.toBeNull();
+    expect(openButton?.className).toContain("size-6");
+    expect(openButton?.className).not.toContain("size-10");
     const browserEntry = Array.from(mounted.host.querySelectorAll<HTMLButtonElement>("[data-dropdown-item]"))
       .find((item) => item.textContent?.includes("Browser"));
     browserEntry?.click();
@@ -220,5 +222,17 @@ describe("FileTabBar", () => {
       .find((item) => item.textContent?.trim() === "Close All");
     closeAll?.click();
     expect(mounted.events.close.mock.calls.map(([id]) => id)).toEqual(tabs.map((tab) => tab.id));
+  });
+
+  it("names every close control and reveals it for keyboard focus", async () => {
+    const mounted = await mountTabBar();
+    app = mounted.app;
+
+    for (const label of ["Source Control", "Example", "History", "a.ts", "Search", "Files", "Notes"]) {
+      const close = mounted.host.querySelector<HTMLButtonElement>(`button[aria-label="Close ${label}"]`);
+      expect(close, label).not.toBeNull();
+      expect(close?.tabIndex).toBe(0);
+      expect(close?.className).toContain("group-focus-within:inline-flex");
+    }
   });
 });

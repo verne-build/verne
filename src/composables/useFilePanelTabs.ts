@@ -446,6 +446,12 @@ export function useFilePanelTabs(scope: () => FpScope | null) {
       triggerAndPersist();
       return id;
     }
+    const fallback = state.tabs.find((tab) => tab.kind === "file" || tab.kind === "explorer");
+    if (fallback) {
+      activate(state, fallback.id);
+      triggerAndPersist();
+      return fallback.id;
+    }
     return null;
   }
 

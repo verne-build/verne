@@ -369,7 +369,8 @@ function onDragEnd(e: DragEndPayload) {
                       size="icon-xs"
                       variant="ghost"
                       data-no-drag
-                      class="size-5 hidden group-hover:inline-flex absolute right-1 top-1/2 z-10 -translate-y-1/2 transition-none"
+                      :aria-label="`Close ${item.label}`"
+                      class="size-5 hidden group-hover:inline-flex group-focus-within:inline-flex absolute right-1 top-1/2 z-10 -translate-y-1/2 transition-none"
                       tabindex="0"
                       @click.stop="emit('close', item.tab.id)"
                     >
@@ -418,7 +419,7 @@ function onDragEnd(e: DragEndPayload) {
         <Button
           size="icon-xs"
           variant="ghost"
-          class="mx-0.5 size-10 shrink-0 transition-none"
+          class="mx-1 shrink-0 transition-none"
           title="Open Tab"
         >
           <Plus class="size-3.5" />

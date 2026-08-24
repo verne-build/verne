@@ -288,6 +288,21 @@ describe("file panel tabs", () => {
     expect(panel.activeId.value).toBe(firstExplorer);
   });
 
+  it("focuses an existing hydrated explorer when activation history has only a static tab", async () => {
+    rpc.getSidebarTabs.mockResolvedValue([
+      { directoryId: "dir-1", tabId: "__sc__", tabType: "sourceControl", label: "Source Control", position: 0 },
+      { directoryId: "dir-1", tabId: "explorer:hydrated", tabType: "explorer", label: "Files", position: 1 },
+    ]);
+    rpc.getSidebarState.mockResolvedValue({
+      directoryId: "dir-1", activeTabId: "", listColumnWidth: 250, filePanelActiveId: "__sc__",
+    });
+    const { panel } = await loadedTabs();
+
+    expect(panel.focusMostRecentFileOrExplorer()).toBe("explorer:hydrated");
+    expect(panel.activeId.value).toBe("explorer:hydrated");
+    expect(panel.tabs.value.filter((tab) => tab.kind === "explorer")).toHaveLength(1);
+  });
+
   it("does not reopen a closed file after its scope is dropped", async () => {
     const { mod, panel } = await loadedTabs();
     panel.openFile("/repo/removed.ts", undefined, { permanent: true });
