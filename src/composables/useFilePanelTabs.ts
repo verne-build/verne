@@ -207,6 +207,9 @@ function applyMutation(state: DirState, mutation: TabMutation): boolean {
       return true;
     }
     case "open-file": {
+      const activeExplorerIndex = state.tabs.findIndex(
+        (tab) => tab.id === state.activeId && tab.kind === "explorer",
+      );
       const existing = state.tabs.find(
         (tab): tab is FilePanelFileTab => tab.kind === "file" && tab.filePath === mutation.filePath,
       );
@@ -220,6 +223,11 @@ function applyMutation(state: DirState, mutation: TabMutation): boolean {
         // Hydrated rows are permanent (ephemeral is intentionally not persisted).
         // A preview open must never downgrade an already-permanent row.
         if (mutation.permanent) existing.ephemeral = false;
+        if (activeExplorerIndex !== -1) {
+          const explorerId = state.tabs[activeExplorerIndex].id;
+          state.tabs = state.tabs.filter((_, index) => index !== activeExplorerIndex);
+          state.activationHistory = state.activationHistory.filter((id) => id !== explorerId);
+        }
         activate(state, existing.id);
         return true;
       }
@@ -232,6 +240,26 @@ function applyMutation(state: DirState, mutation: TabMutation): boolean {
         cursorColumn: mutation.position?.column,
         ephemeral: !mutation.permanent,
       };
+      if (activeExplorerIndex !== -1) {
+        const replacedIndices = new Set([activeExplorerIndex]);
+        if (tab.ephemeral) {
+          const previewIndex = state.tabs.findIndex(
+            (candidate) => candidate.kind === "file" && candidate.ephemeral,
+          );
+          if (previewIndex !== -1) replacedIndices.add(previewIndex);
+        }
+        const replacedIds = new Set(
+          [...replacedIndices].map((index) => state.tabs[index].id),
+        );
+        const insertIndex = activeExplorerIndex
+          - [...replacedIndices].filter((index) => index < activeExplorerIndex).length;
+        const next = state.tabs.filter((_, index) => !replacedIndices.has(index));
+        next.splice(insertIndex, 0, tab);
+        state.tabs = next;
+        state.activationHistory = state.activationHistory.filter((id) => !replacedIds.has(id));
+        activate(state, tab.id);
+        return true;
+      }
       const slotIndex = tab.ephemeral
         ? state.tabs.findIndex((candidate) => candidate.kind === "file" && candidate.ephemeral)
         : -1;

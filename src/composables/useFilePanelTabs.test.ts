@@ -573,11 +573,44 @@ describe("file panel tabs", () => {
     expect(panel.tabs.value[0]).toMatchObject({ id, browserUrl: "https://example.com" });
   });
 
-  it("opens a file beside its explorer without removing the explorer", async () => {
+  it("replaces the active empty explorer with the selected file", async () => {
+    const { panel } = await loadedTabs();
+    panel.openTabOfKind("explorer");
+    panel.openFile("/repo/src/main.ts");
+    expect(panel.tabs.value.map((tab) => tab.id)).toEqual(["/repo/src/main.ts"]);
+    expect(panel.activeId.value).toBe("/repo/src/main.ts");
+  });
+
+  it("removes the active empty explorer when the selected file is already open", async () => {
+    const { panel } = await loadedTabs();
+    panel.openFile("/repo/src/main.ts", undefined, { permanent: true });
+    panel.openTabOfKind("explorer");
+
+    panel.openFile("/repo/src/main.ts");
+
+    expect(panel.tabs.value.map((tab) => tab.id)).toEqual(["/repo/src/main.ts"]);
+    expect(panel.activeId.value).toBe("/repo/src/main.ts");
+  });
+
+  it("keeps a single preview slot when an empty explorer is replaced", async () => {
+    const { panel } = await loadedTabs();
+    panel.openFile("/repo/old.ts");
+    panel.openTabOfKind("explorer");
+
+    panel.openFile("/repo/new.ts");
+
+    expect(panel.tabs.value.map((tab) => tab.id)).toEqual(["/repo/new.ts"]);
+    expect(panel.tabs.value[0]).toMatchObject({ ephemeral: true });
+  });
+
+  it("keeps an inactive explorer when opening a file from another tab", async () => {
     const { panel } = await loadedTabs();
     const explorerId = panel.openTabOfKind("explorer");
+    panel.openTabOfKind("notes");
+
     panel.openFile("/repo/src/main.ts");
-    expect(panel.tabs.value.map((tab) => tab.id)).toEqual([explorerId, "/repo/src/main.ts"]);
+
+    expect(panel.tabs.value.map((tab) => tab.id)).toEqual([explorerId, "__notes__", "/repo/src/main.ts"]);
   });
 
   it("closing the last tab leaves the picker state", async () => {
@@ -599,14 +632,14 @@ describe("file panel tabs", () => {
 
   it("focuses the most recently activated file or explorer", async () => {
     const { panel } = await loadedTabs();
-    const firstExplorer = panel.openTabOfKind("explorer");
+    panel.openTabOfKind("explorer");
     panel.openFile("/repo/a.ts", undefined, { permanent: true });
     panel.openTabOfKind("explorer");
-    panel.setActiveId(firstExplorer);
+    panel.setActiveId("/repo/a.ts");
     panel.openTabOfKind("sourceControl");
 
-    expect(panel.focusMostRecentFileOrExplorer()).toBe(firstExplorer);
-    expect(panel.activeId.value).toBe(firstExplorer);
+    expect(panel.focusMostRecentFileOrExplorer()).toBe("/repo/a.ts");
+    expect(panel.activeId.value).toBe("/repo/a.ts");
   });
 
   it("focuses an existing hydrated explorer when activation history has only a static tab", async () => {
