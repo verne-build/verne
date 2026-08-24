@@ -187,6 +187,21 @@ describe("file panel persistence", () => {
     expect(rpc.getSidebarTabs).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps a fresh loaded scope when a dropped load rejects later", async () => {
+    let rejectOldLoad!: (error: Error) => void;
+    rpc.getSidebarTabs.mockImplementationOnce(() => new Promise((_, reject) => { rejectOldLoad = reject; }));
+    const persistence = await import("./filePanelPersistence");
+    const oldLoad = persistence.ensureFilePanelLoaded(scope);
+
+    persistence.dropFilePanelPersistence(scope.scopeId);
+    await expect(persistence.ensureFilePanelLoaded(scope)).resolves.toEqual({ tabs: [], activeId: null, needsSave: false });
+
+    rejectOldLoad(new Error("offline"));
+    await expect(oldLoad).resolves.toBeUndefined();
+    await expect(persistence.ensureFilePanelLoaded(scope)).resolves.toBeUndefined();
+    expect(rpc.getSidebarTabs).toHaveBeenCalledTimes(2);
+  });
+
   it("retries a rejected load", async () => {
     rpc.getSidebarTabs.mockRejectedValueOnce(new Error("offline"));
     const { persistence, state } = await loadedState();

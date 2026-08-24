@@ -137,7 +137,7 @@ export async function ensureFilePanelLoaded(scope: FpScope): Promise<LoadedFileP
     if (state.needsSave) debouncedSave(scope, state.tabs, state.activeId);
     return state;
   } catch {
-    loaded.delete(key);
+    if ((epochs.get(key) ?? 0) === epoch) loaded.delete(key);
     return undefined;
   } finally {
     if (loading.get(key) === epoch) loading.delete(key);
