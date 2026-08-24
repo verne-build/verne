@@ -41,6 +41,7 @@ import { useChordHint } from "./composables/useChordHint";
 import { useFpsMeter } from "./composables/useFpsMeter";
 import FpsMeter from "./components/FpsMeter.vue";
 import { useFilePanelTabs } from "./composables/useFilePanelTabs";
+import { installBrowserTabOpenRequests } from "@/lib/browserTabOpenRequests";
 import { useDiffHighlighter } from "./composables/useDiffHighlighter";
 import {
   readCachedPanelState,
@@ -729,6 +730,7 @@ const bottomPanelOpen = computed(() => {
 let unlistenNotification: (() => void) | null = null;
 let unlistenSettings: (() => void) | null = null;
 let unlistenPlaySound: (() => void) | null = null;
+let unlistenBrowserTabOpen: (() => void) | null = null;
 // Reused across notifications; main sends the resolved wav path (dev vs packaged).
 let notifAudio: HTMLAudioElement | null = null;
 
@@ -768,6 +770,14 @@ onMounted(async () => {
   window.addEventListener("tab-exited", handleTabExited as EventListener);
   window.addEventListener("session-scope-changed", handleSessionScopeChanged as EventListener);
   window.addEventListener("directory-added", handleDirectoryAdded as EventListener);
+  unlistenBrowserTabOpen = installBrowserTabOpenRequests({
+    activeScope: () => store.activeRoot,
+    tabs: () => filePanelTabs.tabs.value,
+    openBrowserTab: filePanelTabs.openBrowserTab,
+    setActiveId: filePanelTabs.setActiveId,
+    revealPanel: () => { rightCollapsed.value = false; },
+    acknowledge: (ack) => useRpc().request.browserTabOpenAck(ack),
+  });
 
   // Voice dictation: subscribe to speech events / hotkey, and push the current
   // hotkey config to the main process.
@@ -901,6 +911,8 @@ onUnmounted(() => {
   window.removeEventListener("tab-exited", handleTabExited as EventListener);
   window.removeEventListener("session-scope-changed", handleSessionScopeChanged as EventListener);
   window.removeEventListener("directory-added", handleDirectoryAdded as EventListener);
+  unlistenBrowserTabOpen?.();
+  unlistenBrowserTabOpen = null;
   window.removeEventListener("show-bttf", handleShowBttf);
   for (const timer of Object.values(panelSaveTimers)) clearTimeout(timer);
   if (collapseTimer) clearTimeout(collapseTimer);

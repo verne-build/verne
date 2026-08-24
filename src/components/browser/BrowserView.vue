@@ -377,7 +377,6 @@ async function focusBlankAddress() {
 
 watch(() => props.active, (active) => {
   if (!active) return;
-  reportActive();
   void focusBlankAddress();
 });
 

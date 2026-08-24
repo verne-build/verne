@@ -133,7 +133,6 @@ export async function ensureFilePanelLoaded(scope: FpScope): Promise<LoadedFileP
     const activeId = matchingActive ?? syntheticActive?.id ?? viewTab?.id ?? tabs[0]?.id ?? null;
     const state = { tabs, activeId, needsSave: sawLegacyMarker };
     loaded.add(key);
-    if (state.needsSave) debouncedSave(scope, state.tabs, state.activeId);
     return state;
   } catch {
     if ((epochs.get(key) ?? 0) === epoch) loaded.delete(key);

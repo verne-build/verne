@@ -148,6 +148,23 @@ export interface BrowserHistoryItem {
   visitedAt: number;
 }
 
+export interface BrowserTabOpenRequest {
+  requestId: string;
+  tabId: string;
+  url: string;
+  workspaceDir: string;
+  source: "mcp" | "popup";
+  focusExisting: boolean;
+}
+
+export interface BrowserTabOpenAck {
+  requestId: string;
+  tabId: string;
+  workspaceDir: string;
+  ok: boolean;
+  error?: string;
+}
+
 /** Per-agent MCP registration status for the Settings section. */
 export interface McpAgentInfo {
   key: string;

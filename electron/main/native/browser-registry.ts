@@ -19,6 +19,12 @@ interface RegistryEntry {
   automationOwner?: string;
   dispose?: () => void;
 }
+interface UiWaiter {
+  workspaceDir: string;
+  resolve: (session: CdpSession) => void;
+  reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
 
 function defaultFactory(tabId: string, wcId: number, workspaceDir: string): CdpSession {
   const wc = webContents.fromId(wcId);
@@ -33,11 +39,13 @@ export class BrowserRegistry {
   // Active browser tab per workspace, reported by the renderer when the user
   // switches tabs. Lets browser_list flag which tab the user is looking at.
   private activeByWorkspace = new Map<string, string>();
+  private uiWaiters = new Map<string, Set<UiWaiter>>();
 
   constructor(private factory: SessionFactory = defaultFactory) {}
 
-  setActive(tabId: string, workspaceDir: string): void {
-    this.activeByWorkspace.set(workspaceDir, tabId);
+  setActive(tabId: string | null, workspaceDir: string): void {
+    if (tabId) this.activeByWorkspace.set(workspaceDir, tabId);
+    else this.activeByWorkspace.delete(workspaceDir);
   }
 
   async register(tabId: string, wcId: number, workspaceDir: string): Promise<void> {
@@ -47,6 +55,7 @@ export class BrowserRegistry {
     const s = this.factory(tabId, wcId, workspaceDir);
     await s.attach();
     this.tabs.set(tabId, { session: s, owner: "ui" });
+    this.resolveUiWaiters(tabId, s);
   }
 
   registerAutomation(tabId: string, session: CdpSession, automationOwner: string, dispose: () => void): void {
@@ -57,7 +66,13 @@ export class BrowserRegistry {
 
   unregister(tabId: string): void {
     const entry = this.tabs.get(tabId);
-    if (entry) { this.disposeEntry(entry); this.tabs.delete(tabId); }
+    if (entry) {
+      if (this.activeByWorkspace.get(entry.session.workspaceDir) === tabId) {
+        this.activeByWorkspace.delete(entry.session.workspaceDir);
+      }
+      this.disposeEntry(entry);
+      this.tabs.delete(tabId);
+    }
   }
 
   get(tabId: string, workspaceDir: string): CdpSession {
@@ -98,15 +113,71 @@ export class BrowserRegistry {
 
   has(tabId: string): boolean { return this.tabs.has(tabId); }
 
+  uiOwnerForWebContents(wcId: number): { tabId: string; workspaceDir: string } | null {
+    for (const entry of this.tabs.values()) {
+      if (entry.owner !== "ui" || entry.session.wcId !== wcId) continue;
+      return { tabId: entry.session.tabId, workspaceDir: entry.session.workspaceDir };
+    }
+    return null;
+  }
+
+  waitForUi(tabId: string, workspaceDir: string, timeoutMs: number): Promise<CdpSession> {
+    const entry = this.tabs.get(tabId);
+    if (entry?.owner === "ui" && entry.session.workspaceDir === workspaceDir) {
+      return Promise.resolve(entry.session);
+    }
+    return new Promise((resolve, reject) => {
+      const waiter: UiWaiter = {
+        workspaceDir,
+        resolve,
+        reject,
+        timer: setTimeout(() => {
+          this.removeUiWaiter(tabId, waiter);
+          reject(new Error(`visible browser tab ${tabId} was not ready within ${timeoutMs}ms`));
+        }, timeoutMs),
+      };
+      const waiters = this.uiWaiters.get(tabId) ?? new Set<UiWaiter>();
+      waiters.add(waiter);
+      this.uiWaiters.set(tabId, waiters);
+    });
+  }
+
   private disposeEntry(entry: RegistryEntry): void {
     entry.session.detach();
     entry.dispose?.();
+  }
+
+  private resolveUiWaiters(tabId: string, session: CdpSession): void {
+    const waiters = this.uiWaiters.get(tabId);
+    if (!waiters) return;
+    for (const waiter of [...waiters]) {
+      if (waiter.workspaceDir !== session.workspaceDir) continue;
+      clearTimeout(waiter.timer);
+      waiters.delete(waiter);
+      waiter.resolve(session);
+    }
+    if (waiters.size === 0) this.uiWaiters.delete(tabId);
+  }
+
+  private removeUiWaiter(tabId: string, waiter: UiWaiter): void {
+    const waiters = this.uiWaiters.get(tabId);
+    if (!waiters) return;
+    waiters.delete(waiter);
+    if (waiters.size === 0) this.uiWaiters.delete(tabId);
   }
 
   // Detach every session (called on app quit).
   dispose(): void {
     for (const entry of this.tabs.values()) this.disposeEntry(entry);
     this.tabs.clear();
+    this.activeByWorkspace.clear();
+    for (const waiters of this.uiWaiters.values()) {
+      for (const waiter of waiters) {
+        clearTimeout(waiter.timer);
+        waiter.reject(new Error("browser registry disposed"));
+      }
+    }
+    this.uiWaiters.clear();
   }
 
   installIpc(): void {
@@ -118,7 +189,7 @@ export class BrowserRegistry {
       this.unregister(p.tabId);
       return true;
     });
-    registerNative("native_browser_set_active", (p: { tabId: string; workspaceDir: string }) => {
+    registerNative("native_browser_set_active", (p: { tabId: string | null; workspaceDir: string }) => {
       this.setActive(p.tabId, p.workspaceDir);
       return true;
     });

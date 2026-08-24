@@ -10,6 +10,7 @@ import { internalDataDir } from "../paths";
 import type { BrowserRegistry } from "./browser-registry";
 import { normalizeBrowserUrl, sameBrowserUrl } from "../../../src/lib/browserTabs";
 import type { AutomationBrowserSession } from "./browser-automation-window";
+import type { BrowserTabRelayOpenRequest } from "./browser-tab-relay";
 
 // PATH PARITY: must equal Rust crate::paths::browser_control_file()
 // = internal_data_dir()/browser-control.json. The agent's `verne mcp` inherits
@@ -23,6 +24,7 @@ interface Options {
   secret?: string;
   writeDescriptor?: boolean;
   createAutomationSession?: (tabId: string, url: string, workspaceDir: string) => Promise<AutomationBrowserSession>;
+  openVisibleTab?: (request: BrowserTabRelayOpenRequest) => Promise<unknown>;
 }
 
 export class BrowserControlServer {
@@ -30,6 +32,7 @@ export class BrowserControlServer {
   private secret: string;
   private writeDescriptor: boolean;
   private createAutomationSession?: Options["createAutomationSession"];
+  private openVisibleTab?: Options["openVisibleTab"];
 
   constructor(
     private registry: BrowserRegistry,
@@ -38,6 +41,7 @@ export class BrowserControlServer {
     this.secret = opts.secret ?? crypto.randomBytes(24).toString("hex");
     this.writeDescriptor = opts.writeDescriptor ?? true;
     this.createAutomationSession = opts.createAutomationSession;
+    this.openVisibleTab = opts.openVisibleTab;
   }
 
   start(): Promise<number> {
@@ -88,6 +92,23 @@ export class BrowserControlServer {
           return { ok: true, browser: this.registry.currentUi(ws) };
         case "open": {
           const target = normalizeBrowserUrl(req.url);
+          if (this.openVisibleTab) {
+            const existing = this.registry.list(ws).find(
+              (tab) => tab.owner === "ui" && sameBrowserUrl(tab.url, target),
+            );
+            const tabId = existing?.id ?? `browser:${crypto.randomUUID()}`;
+            await this.openVisibleTab({
+              tabId,
+              url: target,
+              workspaceDir: ws,
+              source: "mcp",
+              focusExisting: Boolean(existing),
+            });
+            return { ok: true, tabId, reused: Boolean(existing) };
+          }
+
+          // Headless fallback for hosts without a renderer relay. The Electron
+          // app always supplies openVisibleTab, so normal MCP opens are visible.
           const automationOwner = this.automationOwner(req.automationOwner, ws);
           const owned = this.registry.findAutomationByOwner(ws, automationOwner);
           if (owned) {

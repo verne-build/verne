@@ -8,7 +8,9 @@ const rpc = vi.hoisted(() => ({
   gitDiff: vi.fn().mockResolvedValue({ original: "old", modified: "new" }),
   gitCommitFileDiff: vi.fn().mockResolvedValue({ original: "old", modified: "new" }),
   shadowRemove: vi.fn().mockResolvedValue(true),
+  browserSetActive: vi.fn().mockResolvedValue(true),
 }));
+const platform = vi.hoisted(() => ({ ask: vi.fn().mockResolvedValue(true) }));
 
 vi.mock("@/stores/workspace", () => ({
   useWorkspaceStore: () => ({
@@ -45,7 +47,7 @@ vi.mock("@/composables/useFilePanelTabs", async () => {
 });
 
 vi.mock("@/composables/useRpc", () => ({ useRpc: () => ({ request: rpc }) }));
-vi.mock("@/platform", () => ({ ask: vi.fn().mockResolvedValue(true) }));
+vi.mock("@/platform", () => ({ ask: platform.ask }));
 vi.mock("@/composables/useDiffReview", () => ({
   useDiffReview: () => ({
     loadScope: vi.fn(),
@@ -223,5 +225,46 @@ describe("RightPanel routing", () => {
     await nextTick();
     window.dispatchEvent(new CustomEvent("close-active-file-tab"));
     expect(panel.api.closeTab).toHaveBeenCalledWith("/repo/a.ts");
+  });
+
+  it("keeps a dirty file open on cancel and discards it only after confirmation", async () => {
+    const mounted = await mountRightPanel();
+    app = mounted.app;
+    panel.api.tabs.value = [{ kind: "file", id: "/repo/a.ts", filePath: "/repo/a.ts", label: "a.ts" }];
+    panel.api.activeId.value = "/repo/a.ts";
+    panel.api.isFileDirty.mockReturnValue(true);
+    platform.ask.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    await nextTick();
+
+    window.dispatchEvent(new CustomEvent("close-active-file-tab"));
+    await vi.waitFor(() => expect(platform.ask).toHaveBeenCalledTimes(1));
+    expect(panel.api.closeTab).not.toHaveBeenCalledWith("/repo/a.ts");
+    expect(rpc.shadowRemove).not.toHaveBeenCalled();
+
+    window.dispatchEvent(new CustomEvent("close-active-file-tab"));
+    await vi.waitFor(() => expect(panel.api.closeTab).toHaveBeenCalledWith("/repo/a.ts"));
+    expect(panel.api.setFileDirty).toHaveBeenCalledWith("/repo/a.ts", false);
+    expect(rpc.shadowRemove).toHaveBeenCalledWith({ dir: "/repo", relPath: "a.ts" });
+  });
+
+  it("clears the current browser when the active right-panel tab becomes static", async () => {
+    const mounted = await mountRightPanel();
+    app = mounted.app;
+
+    panel.api.tabs.value = [{
+      kind: "browser",
+      id: "browser:1",
+      label: "Example",
+      browserUrl: "https://example.com",
+    }];
+    panel.api.activeId.value = "browser:1";
+    await nextTick();
+    expect(rpc.browserSetActive).toHaveBeenLastCalledWith({ tabId: "browser:1", workspaceDir: "/repo" });
+
+    panel.api.tabs.value = [{ kind: "notes", id: "__notes__" }];
+    panel.api.activeId.value = "__notes__";
+    await nextTick();
+
+    expect(rpc.browserSetActive).toHaveBeenLastCalledWith({ tabId: null, workspaceDir: "/repo" });
   });
 });

@@ -33,8 +33,18 @@ async function loadedTabs() {
   return { mod, panel: mod.useFilePanelTabs(() => scope) };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 describe("file panel persistence", () => {
-  it("seeds and persists History from a legacy rightSidebarView marker", async () => {
+  it("flags a seeded History migration for persistence after state merge", async () => {
     rpc.getSidebarState.mockResolvedValue({
       directoryId: "dir-1",
       activeTabId: "sc",
@@ -45,13 +55,10 @@ describe("file panel persistence", () => {
     const { state } = await loadedState();
     expect(state?.tabs.map((tab) => tab.kind)).toEqual(["commits"]);
     expect(state?.activeId).toBe("__commits__");
+    expect(state?.needsSave).toBe(true);
 
     await vi.runAllTimersAsync();
-    expect(rpc.saveSidebarTabs).toHaveBeenCalledWith(expect.objectContaining({
-      tabs: [expect.objectContaining({ tabType: "commits", position: 0 })],
-      filePanelActiveId: "__commits__",
-      rightSidebarView: undefined,
-    }));
+    expect(rpc.saveSidebarTabs).not.toHaveBeenCalled();
   });
 
   it("skips unknown persisted tab types without throwing", async () => {
@@ -87,8 +94,9 @@ describe("file panel persistence", () => {
     const { state } = await loadedState();
     expect(state?.tabs).toEqual([expect.objectContaining({ kind, id })]);
     expect(state?.activeId).toBe(id);
+    expect(state?.needsSave).toBe(true);
     await vi.runAllTimersAsync();
-    expect(rpc.saveSidebarTabs).toHaveBeenCalledTimes(1);
+    expect(rpc.saveSidebarTabs).not.toHaveBeenCalled();
   });
 
   it("prefers filePanelActiveId over a legacy rightSidebarView", async () => {
@@ -124,7 +132,7 @@ describe("file panel persistence", () => {
     const { state } = await loadedState();
     expect(state).toEqual({ tabs: [], activeId: null, needsSave: true });
     await vi.runAllTimersAsync();
-    expect(rpc.saveSidebarTabs).toHaveBeenCalledWith(expect.objectContaining({ filePanelActiveId: null, rightSidebarView: undefined }));
+    expect(rpc.saveSidebarTabs).not.toHaveBeenCalled();
   });
 
   it("retains browser rows without URLs as New Tab", async () => {
@@ -228,6 +236,128 @@ describe("file panel persistence", () => {
 });
 
 describe("file panel tabs", () => {
+  it("persists a legacy migration after composable hydration settles", async () => {
+    rpc.getSidebarState.mockResolvedValueOnce({
+      directoryId: "dir-1",
+      activeTabId: "",
+      listColumnWidth: 250,
+      rightSidebarView: "commits",
+    });
+
+    const { panel } = await loadedTabs();
+    expect(panel.tabs.value).toEqual([{ kind: "commits", id: "__commits__" }]);
+
+    await vi.runAllTimersAsync();
+    expect(rpc.saveSidebarTabs).toHaveBeenCalledWith(expect.objectContaining({
+      tabs: [expect.objectContaining({ tabType: "commits", position: 0 })],
+      filePanelActiveId: "__commits__",
+      rightSidebarView: undefined,
+    }));
+  });
+
+  it("merges an open during hydration and never saves the temporary snapshot", async () => {
+    const rows = deferred<SidebarTabRow[]>();
+    rpc.getSidebarTabs.mockReturnValueOnce(rows.promise);
+    rpc.getSidebarState.mockResolvedValueOnce({
+      directoryId: "dir-1",
+      activeTabId: "",
+      listColumnWidth: 250,
+      filePanelActiveId: "__notes__",
+    });
+
+    const mod = await import("./useFilePanelTabs");
+    const hydration = mod.ensureFilePanelLoaded(scope);
+    const panel = mod.useFilePanelTabs(() => scope);
+    const openedId = panel.openBrowserTab("https://new.example", undefined, "browser:during-load");
+
+    await vi.advanceTimersByTimeAsync(500);
+    expect(rpc.saveSidebarTabs).not.toHaveBeenCalled();
+
+    rows.resolve([
+      { directoryId: "dir-1", tabId: "__notes__", tabType: "notes", label: "Notes", position: 0 },
+    ]);
+    await hydration;
+
+    expect(panel.tabs.value.map((tab) => tab.id)).toEqual(["__notes__", openedId]);
+    expect(panel.activeId.value).toBe(openedId);
+
+    await vi.runAllTimersAsync();
+    expect(rpc.saveSidebarTabs).toHaveBeenCalledTimes(1);
+    expect(rpc.saveSidebarTabs).toHaveBeenCalledWith(expect.objectContaining({
+      tabs: [
+        expect.objectContaining({ tabId: "__notes__", position: 0 }),
+        expect.objectContaining({ tabId: openedId, position: 1 }),
+      ],
+      filePanelActiveId: openedId,
+    }));
+  });
+
+  it("shares concurrent hydration and applies queued mutations once", async () => {
+    const rows = deferred<SidebarTabRow[]>();
+    rpc.getSidebarTabs.mockReturnValueOnce(rows.promise);
+
+    const mod = await import("./useFilePanelTabs");
+    const first = mod.ensureFilePanelLoaded(scope);
+    const second = mod.ensureFilePanelLoaded(scope);
+    const panel = mod.useFilePanelTabs(() => scope);
+    const openedId = panel.openTabOfKind("explorer");
+
+    rows.resolve([
+      { directoryId: "dir-1", tabId: "/repo/persisted.ts", tabType: "file", label: "persisted.ts", position: 0 },
+    ]);
+    await Promise.all([first, second]);
+    await vi.runAllTimersAsync();
+
+    expect(rpc.getSidebarTabs).toHaveBeenCalledTimes(1);
+    expect(panel.tabs.value.map((tab) => tab.id)).toEqual(["/repo/persisted.ts", openedId]);
+    expect(rpc.saveSidebarTabs).toHaveBeenCalledTimes(1);
+  });
+
+  it("replays an open then close during hydration over the persisted row", async () => {
+    const rows = deferred<SidebarTabRow[]>();
+    rpc.getSidebarTabs.mockReturnValueOnce(rows.promise);
+
+    const mod = await import("./useFilePanelTabs");
+    const hydration = mod.ensureFilePanelLoaded(scope);
+    const panel = mod.useFilePanelTabs(() => scope);
+    const notesId = panel.openTabOfKind("notes");
+    panel.closeTab(notesId);
+
+    rows.resolve([
+      { directoryId: "dir-1", tabId: "__notes__", tabType: "notes", label: "Notes", position: 0 },
+    ]);
+    await hydration;
+    await vi.runAllTimersAsync();
+
+    expect(panel.tabs.value).toEqual([]);
+    expect(panel.activeId.value).toBeNull();
+    expect(rpc.saveSidebarTabs).toHaveBeenCalledWith(expect.objectContaining({
+      tabs: [],
+      filePanelActiveId: null,
+    }));
+  });
+
+  it("drops queued mutations with a stale load instead of merging them into a fresh scope", async () => {
+    const staleRows = deferred<SidebarTabRow[]>();
+    rpc.getSidebarTabs.mockReturnValueOnce(staleRows.promise);
+
+    const mod = await import("./useFilePanelTabs");
+    const staleHydration = mod.ensureFilePanelLoaded(scope);
+    const panel = mod.useFilePanelTabs(() => scope);
+    panel.openTabOfKind("browser");
+
+    mod.dropFilePanelScope(scope.scopeId);
+    await mod.ensureFilePanelLoaded(scope);
+    staleRows.resolve([
+      { directoryId: "dir-1", tabId: "__notes__", tabType: "notes", label: "Notes", position: 0 },
+    ]);
+    await staleHydration;
+    await vi.runAllTimersAsync();
+
+    expect(panel.tabs.value).toEqual([]);
+    expect(rpc.saveSidebarTabs).not.toHaveBeenCalled();
+  });
+
   it("opens a singleton once and focuses it on the second request", async () => {
     const { panel } = await loadedTabs();
     const first = panel.openTabOfKind("sourceControl");

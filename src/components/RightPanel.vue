@@ -96,6 +96,17 @@ const reviewSummary = computed(() => (scopeKey.value ? review.scopeSummary(scope
 const fileCommentCounts = computed(() => (scopeKey.value ? review.fileCommentCounts(scopeKey.value) : {}));
 const activeDirId = computed(() => store.activeRoot?.scopeId ?? "");
 const activeCwd = computed(() => store.activeRoot?.path ?? "");
+watch(
+  [activeTab, activeCwd],
+  ([tab, workspaceDir]) => {
+    if (!workspaceDir) return;
+    void useRpc().request.browserSetActive({
+      tabId: tab?.kind === "browser" ? tab.id : null,
+      workspaceDir,
+    }).catch(() => {});
+  },
+  { immediate: true },
+);
 const {
   gitStatus: scGitStatus,
   gitBusy: scGitBusy,

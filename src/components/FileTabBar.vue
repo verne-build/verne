@@ -188,6 +188,10 @@ onBeforeUnmount(() => {
   scrollEl.value?.removeEventListener("scroll", updateFades);
   resizeObs?.disconnect();
   resizeObs = null;
+  window.removeEventListener("pointermove", trackPointer, { capture: true });
+  clearHoverTerminal();
+  setDraggedPath(null);
+  lastPointer = null;
 });
 
 const FADE_PX = 32;
@@ -335,36 +339,38 @@ function onDragEnd(e: DragEndPayload) {
             >
               <ContextMenu>
                 <ContextMenuTrigger as-child>
-                  <TabBarTrigger
-                    :active="activeId === item.tab.id"
-                    variant="pill"
-                    class="group gap-1.5 pl-1.5 pr-1.5 transition-none overflow-hidden data-[dragging=true]:opacity-50"
-                    :data-tab-id="item.tab.id"
-                    @click="emit('select', item.tab.id)"
-                    @dblclick="item.tab.kind === 'file' && emit('promote', item.tab.id)"
-                  >
-                    <FileIcon v-if="item.tab.kind === 'file'" :name="item.tab.label" :size="14" />
-                    <img
-                      v-else-if="item.tab.kind === 'browser' && hasFavicon(item.tab)"
-                      :src="item.tab.faviconUrl"
-                      class="size-3.5 shrink-0 object-contain outline outline-1 outline-black/10 dark:outline-white/10"
-                      alt=""
-                      @error="onFaviconError(item.tab.id)"
-                    />
-                    <Asterisk v-else-if="item.tab.kind === 'browser'" class="size-3.5 shrink-0" />
-                    <component v-else :is="item.icon" class="size-3.5 shrink-0" />
-                    <span
-                      class="overflow-clip text-ellipsis whitespace-nowrap max-w-[166px]"
-                      :class="{ italic: item.tab.kind === 'file' && item.tab.ephemeral }"
-                      :title="item.label"
-                    >{{ item.label }}</span>
-                    <span
-                      v-if="item.tab.kind === 'file' && isFileDirty(item.tab.filePath)"
-                      class="size-1.5 rounded-full bg-muted-foreground shrink-0"
-                    />
-                    <span
-                      class="pointer-events-none hidden group-hover:block absolute right-0 top-0 bottom-0 w-12 bg-linear-to-r from-transparent via-tab-active-bg to-tab-active-bg"
-                    />
+                  <div class="group relative inline-flex items-center overflow-hidden rounded-sm">
+                    <TabBarTrigger
+                      :active="activeId === item.tab.id"
+                      variant="pill"
+                      class="gap-1.5 pl-1.5 pr-1.5 transition-none overflow-hidden data-[dragging=true]:opacity-50"
+                      :data-tab-id="item.tab.id"
+                      @click="emit('select', item.tab.id)"
+                      @dblclick="item.tab.kind === 'file' && emit('promote', item.tab.id)"
+                    >
+                      <FileIcon v-if="item.tab.kind === 'file'" :name="item.tab.label" :size="14" />
+                      <img
+                        v-else-if="item.tab.kind === 'browser' && hasFavicon(item.tab)"
+                        :src="item.tab.faviconUrl"
+                        class="size-3.5 shrink-0 object-contain outline outline-1 outline-black/10 dark:outline-white/10"
+                        alt=""
+                        @error="onFaviconError(item.tab.id)"
+                      />
+                      <Asterisk v-else-if="item.tab.kind === 'browser'" class="size-3.5 shrink-0" />
+                      <component v-else :is="item.icon" class="size-3.5 shrink-0" />
+                      <span
+                        class="overflow-clip text-ellipsis whitespace-nowrap max-w-[166px]"
+                        :class="{ italic: item.tab.kind === 'file' && item.tab.ephemeral }"
+                        :title="item.label"
+                      >{{ item.label }}</span>
+                      <span
+                        v-if="item.tab.kind === 'file' && isFileDirty(item.tab.filePath)"
+                        class="size-1.5 rounded-full bg-muted-foreground shrink-0"
+                      />
+                      <span
+                        class="pointer-events-none hidden group-hover:block absolute right-0 top-0 bottom-0 w-12 bg-linear-to-r from-transparent via-tab-active-bg to-tab-active-bg"
+                      />
+                    </TabBarTrigger>
                     <Button
                       size="icon-xs"
                       variant="ghost"
@@ -376,7 +382,7 @@ function onDragEnd(e: DragEndPayload) {
                     >
                       <X />
                     </Button>
-                  </TabBarTrigger>
+                  </div>
                 </ContextMenuTrigger>
                 <ContextMenuContent @close-auto-focus.prevent>
                   <ContextMenuItem @select="emit('close', item.tab.id)">Close</ContextMenuItem>

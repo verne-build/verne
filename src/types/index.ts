@@ -31,6 +31,8 @@ export type {
   NoteContent,
   BrowserFavorite,
   BrowserHistoryItem,
+  BrowserTabOpenRequest,
+  BrowserTabOpenAck,
   McpAgentInfo,
   McpAgentStatus,
   Tab,

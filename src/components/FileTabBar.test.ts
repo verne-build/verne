@@ -2,8 +2,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp, h, nextTick, type App, type Component } from "vue";
 import type { FilePanelTab } from "@/types";
+import { getDraggedPath, PASTE_PATH_EVENT } from "@/lib/dropPath";
 
 const dnd = vi.hoisted(() => ({
+  dragStart: null as null | ((event: unknown) => void),
   dragEnd: null as null | ((event: unknown) => void),
 }));
 
@@ -14,6 +16,7 @@ vi.mock("@dnd-kit/vue", async () => {
       inheritAttrs: false,
       setup(_, { attrs, slots }) {
         return () => {
+          dnd.dragStart = attrs.onDragStart as typeof dnd.dragStart;
           dnd.dragEnd = attrs.onDragEnd as typeof dnd.dragEnd;
           return h("div", { "data-drag-provider": "" }, slots.default?.());
         };
@@ -151,13 +154,19 @@ describe("FileTabBar", () => {
     }
     vi.stubGlobal("ResizeObserver", ResizeObserverStub);
     vi.stubGlobal("CSS", { escape: (value: string) => value });
+    Object.defineProperty(document, "elementsFromPoint", {
+      configurable: true,
+      value: vi.fn(() => []),
+    });
   });
 
   afterEach(() => {
     app?.unmount();
     app = null;
+    dnd.dragStart = null;
     dnd.dragEnd = null;
     document.body.replaceChildren();
+    Reflect.deleteProperty(document, "elementsFromPoint");
     vi.unstubAllGlobals();
   });
 
@@ -234,5 +243,55 @@ describe("FileTabBar", () => {
       expect(close?.tabIndex).toBe(0);
       expect(close?.className).toContain("group-focus-within:inline-flex");
     }
+    expect(mounted.host.querySelector("button button")).toBeNull();
+  });
+
+  it("dispatches terminal drops for file tabs and rejects non-file tabs", async () => {
+    const mounted = await mountTabBar();
+    app = mounted.app;
+    const terminal = document.createElement("div");
+    terminal.dataset.terminalDrop = "";
+    document.body.append(terminal);
+    const paste = vi.fn();
+    terminal.addEventListener(PASTE_PATH_EVENT, paste);
+    vi.mocked(document.elementsFromPoint).mockReturnValue([terminal]);
+
+    dnd.dragStart?.({ operation: { source: { id: "/repo/a.ts" } } });
+    window.dispatchEvent(new MouseEvent("pointermove", { clientX: 12, clientY: 34 }));
+    dnd.dragEnd?.({
+      canceled: false,
+      operation: { source: { id: "/repo/a.ts", initialIndex: 3, index: 3 } },
+    });
+
+    expect(paste).toHaveBeenCalledTimes(1);
+    expect((paste.mock.calls[0][0] as CustomEvent).detail).toBe("/repo/a.ts");
+    expect(mounted.events.reorder).not.toHaveBeenCalled();
+
+    paste.mockClear();
+    dnd.dragStart?.({ operation: { source: { id: "browser:1" } } });
+    window.dispatchEvent(new MouseEvent("pointermove", { clientX: 12, clientY: 34 }));
+    dnd.dragEnd?.({
+      canceled: false,
+      operation: { source: { id: "browser:1", initialIndex: 1, index: 1 } },
+    });
+
+    expect(paste).not.toHaveBeenCalled();
+  });
+
+  it("cleans up an in-progress tab drag when unmounted", async () => {
+    const mounted = await mountTabBar();
+    app = mounted.app;
+    const hitTest = vi.mocked(document.elementsFromPoint);
+
+    dnd.dragStart?.({ operation: { source: { id: "/repo/a.ts" } } });
+    expect(getDraggedPath()).toBe("/repo/a.ts");
+    const callsBeforeUnmount = hitTest.mock.calls.length;
+
+    app.unmount();
+    app = null;
+    window.dispatchEvent(new MouseEvent("pointermove", { clientX: 12, clientY: 34 }));
+
+    expect(getDraggedPath()).toBeNull();
+    expect(hitTest).toHaveBeenCalledTimes(callsBeforeUnmount);
   });
 });

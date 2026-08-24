@@ -32,6 +32,11 @@ interface DirState {
   activeId: string | null;
   // Activation history is most-recent-last.
   activationHistory: string[];
+  hydration: "idle" | "loading" | "loaded";
+  hydrationPromise: Promise<void> | null;
+  pendingPersistence: boolean;
+  pendingActivation: boolean;
+  pendingClosedIds: Set<string>;
 }
 
 export type FpScope = { path: string; scopeType: "directory" | "agent_worktree"; scopeId: string };
@@ -57,7 +62,18 @@ function scopeKey(scope: FpScope): string {
 }
 
 function makeDefault(): DirState {
-  return { tabs: [], scSelection: null, commitsSelection: null, activeId: null, activationHistory: [] };
+  return {
+    tabs: [],
+    scSelection: null,
+    commitsSelection: null,
+    activeId: null,
+    activationHistory: [],
+    hydration: "idle",
+    hydrationPromise: null,
+    pendingPersistence: false,
+    pendingActivation: false,
+    pendingClosedIds: new Set(),
+  };
 }
 
 function trigger(): void {
@@ -77,6 +93,7 @@ function recordActivation(state: DirState, id: string | null): void {
 
 function activate(state: DirState, id: string): void {
   state.activeId = id;
+  if (state.hydration !== "loaded") state.pendingActivation = true;
   recordActivation(state, id);
 }
 
@@ -120,7 +137,10 @@ export function updateBrowserTab(
     if (patch.browserUrl !== undefined) tab.browserUrl = patch.browserUrl;
     trigger();
     const scope = scopeFromKey(key);
-    if (scope) debouncedSave(scope, state.tabs, state.activeId);
+    if (scope) {
+      if (state.hydration === "loaded") debouncedSave(scope, state.tabs, state.activeId);
+      else state.pendingPersistence = true;
+    }
     return;
   }
 }
@@ -146,16 +166,67 @@ export function dropFilePanelScope(scopeId: string): void {
   if (dirtyChanged) triggerDirty();
 }
 
-export async function ensureFilePanelLoaded(scope: FpScope): Promise<void> {
-  const loaded = await loadPersistedFilePanel(scope);
-  if (!loaded) return;
-  dirState.value.set(scopeKey(scope), {
-    ...makeDefault(),
-    tabs: loaded.tabs,
-    activeId: loaded.activeId,
-    activationHistory: loaded.activeId ? [loaded.activeId] : [],
+function mergeHydratedTabs(
+  persisted: FilePanelTab[],
+  pending: FilePanelTab[],
+  pendingClosedIds: ReadonlySet<string>,
+): FilePanelTab[] {
+  const pendingById = new Map(pending.map((tab) => [tab.id, tab]));
+  const merged = persisted.filter((tab) => !pendingClosedIds.has(tab.id)).map((tab) => {
+    const local = pendingById.get(tab.id);
+    if (!local) return tab;
+    pendingById.delete(tab.id);
+    if (local.kind !== tab.kind) return local;
+    const definedLocal = Object.fromEntries(
+      Object.entries(local).filter(([, value]) => value !== undefined),
+    );
+    return { ...tab, ...definedLocal } as FilePanelTab;
   });
-  trigger();
+  return [...merged, ...pending.filter((tab) => pendingById.has(tab.id))];
+}
+
+export function ensureFilePanelLoaded(scope: FpScope): Promise<void> {
+  const key = scopeKey(scope);
+  const state = getOrCreate(key);
+  if (state.hydration === "loaded") return Promise.resolve();
+  if (state.hydration === "loading" && state.hydrationPromise) return state.hydrationPromise;
+
+  state.hydration = "loading";
+  const hydration = (async () => {
+    const loaded = await loadPersistedFilePanel(scope);
+    if (dirState.value.get(key) !== state) return;
+    if (!loaded) {
+      state.hydration = "idle";
+      state.hydrationPromise = null;
+      return;
+    }
+
+    const pendingTabs = state.tabs;
+    const pendingActiveId = state.activeId;
+    const pendingActivation = state.pendingActivation;
+    const needsSave = state.pendingPersistence || loaded.needsSave;
+    state.tabs = mergeHydratedTabs(loaded.tabs, pendingTabs, state.pendingClosedIds);
+    const liveIds = new Set(state.tabs.map((tab) => tab.id));
+    const preferredActive = pendingActivation && pendingActiveId && liveIds.has(pendingActiveId)
+      ? pendingActiveId
+      : loaded.activeId;
+    state.activeId = preferredActive && liveIds.has(preferredActive)
+      ? preferredActive
+      : state.tabs[0]?.id ?? null;
+    state.activationHistory = [
+      ...state.activationHistory.filter((id) => liveIds.has(id) && id !== state.activeId),
+      ...(state.activeId ? [state.activeId] : []),
+    ];
+    state.hydration = "loaded";
+    state.hydrationPromise = null;
+    state.pendingPersistence = false;
+    state.pendingActivation = false;
+    state.pendingClosedIds.clear();
+    trigger();
+    if (needsSave) debouncedSave(scope, state.tabs, state.activeId);
+  })();
+  state.hydrationPromise = hydration;
+  return hydration;
 }
 
 export function syncFilePanelFilePath(oldPath: string, newPath: string): void {
@@ -187,7 +258,14 @@ export function syncFilePanelFilePath(oldPath: string, newPath: string): void {
     }
     trigger();
     const scope = scopeFromKey(key);
-    if (scope) debouncedSave(scope, state.tabs, state.activeId);
+    if (scope) {
+      if (state.hydration === "loaded") debouncedSave(scope, state.tabs, state.activeId);
+      else {
+        state.pendingClosedIds.add(oldPath);
+        state.pendingClosedIds.delete(newPath);
+        state.pendingPersistence = true;
+      }
+    }
   }
 }
 
@@ -208,7 +286,12 @@ export function useFilePanelTabs(scope: () => FpScope | null) {
   function persist(): void {
     const currentScope = scope();
     const state = resolve();
-    if (currentScope && state) debouncedSave(currentScope, state.tabs, state.activeId);
+    if (!currentScope || !state) return;
+    if (state.hydration !== "loaded") {
+      state.pendingPersistence = true;
+      return;
+    }
+    debouncedSave(currentScope, state.tabs, state.activeId);
   }
 
   function triggerAndPersist(): void {
@@ -256,6 +339,7 @@ export function useFilePanelTabs(scope: () => FpScope | null) {
     const singletonId = kind in SINGLETON_IDS
       ? SINGLETON_IDS[kind as keyof typeof SINGLETON_IDS]
       : null;
+    if (singletonId) state.pendingClosedIds.delete(singletonId);
     if (singletonId && state.tabs.some((tab) => tab.id === singletonId)) {
       activate(state, singletonId);
       triggerAndPersist();
@@ -263,6 +347,7 @@ export function useFilePanelTabs(scope: () => FpScope | null) {
     }
 
     const id = singletonId ?? `${kind}:${crypto.randomUUID()}`;
+    state.pendingClosedIds.delete(id);
     state.tabs = [...state.tabs, makeTabOfKind(kind, id)];
     activate(state, id);
     triggerAndPersist();
@@ -278,6 +363,7 @@ export function useFilePanelTabs(scope: () => FpScope | null) {
     const currentScope = scope();
     const state = resolve();
     if (!state || !currentScope) return;
+    state.pendingClosedIds.delete(filePath);
     const existing = state.tabs.find(
       (tab): tab is FilePanelFileTab => tab.kind === "file" && tab.filePath === filePath,
     );
@@ -340,6 +426,7 @@ export function useFilePanelTabs(scope: () => FpScope | null) {
     const tabId = state.tabs.some((tab) => tab.id === requestedId)
       ? `browser:${crypto.randomUUID()}`
       : requestedId;
+    state.pendingClosedIds.delete(tabId);
     state.tabs = [...state.tabs, {
       kind: "browser",
       id: tabId,
@@ -358,6 +445,7 @@ export function useFilePanelTabs(scope: () => FpScope | null) {
     const index = state.tabs.findIndex((tab) => tab.id === id);
     if (index === -1) return;
     const closed = state.tabs[index];
+    if (state.hydration !== "loaded") state.pendingClosedIds.add(id);
     if (closed.kind === "file") {
       if (currentScope) {
         closedTabStack.push({
@@ -376,6 +464,7 @@ export function useFilePanelTabs(scope: () => FpScope | null) {
       const liveIds = new Set(state.tabs.map((tab) => tab.id));
       const recentId = [...state.activationHistory].reverse().find((activeTabId) => liveIds.has(activeTabId));
       state.activeId = recentId ?? state.tabs.at(-1)?.id ?? null;
+      if (state.hydration !== "loaded") state.pendingActivation = true;
     }
     triggerAndPersist();
   }

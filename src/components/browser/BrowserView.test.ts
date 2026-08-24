@@ -94,6 +94,11 @@ describe("BrowserView", () => {
     expect(mocks.invoke.mock.calls.filter(([method]) => method === "native_browser_navigate")).toEqual([
       ["native_browser_navigate", { id: 71, url: "https://example.com" }],
     ]);
+    const activeReports = mocks.invoke.mock.calls.filter(([method]) => method === "native_browser_set_active");
+    expect(activeReports).toEqual([
+      ["native_browser_set_active", { tabId: "browser:1", workspaceDir: "/repo" }],
+      ["native_browser_set_active", { tabId: "browser:1", workspaceDir: "/repo" }],
+    ]);
     expect(input.value).toBe("https://example.com");
   });
 

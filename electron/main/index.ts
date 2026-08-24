@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell, dialog } from "electron";
+import { app, BrowserWindow, dialog } from "electron";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { ensureDaemon, ensureSidecar, killSidecar, restartDaemon } from "./daemon-supervisor";
@@ -16,6 +16,8 @@ import { registerBrowserCommands } from "./native/browser";
 import { BrowserRegistry } from "./native/browser-registry";
 import { BrowserControlServer } from "./native/browser-control-server";
 import { createAutomationBrowserSession } from "./native/browser-automation-window";
+import { BrowserTabRelay } from "./native/browser-tab-relay";
+import { installGuestBrowserPopupRelay } from "./native/browser-popup";
 import { registerReviewCommands } from "./native/review-cmds";
 import { registerSettingsCommands, currentSettings } from "./native/settings-cmds";
 import { pushTerminalColorsToDaemon } from "./native/terminal-colors";
@@ -121,6 +123,7 @@ const getWindow = (): BrowserWindow => {
   if (!win) throw new Error("no window");
   return win;
 };
+const browserTabRelay = new BrowserTabRelay(browserRegistry, getWindow);
 
 // Confirm (terminals will die), then hard-restart the daemon in place. Used by
 // the menu "Restart Daemon" item.
@@ -370,6 +373,7 @@ app.whenReady().then(async () => {
   registerMenuCommands();
   registerBrowserCommands();
   browserRegistry.installIpc();
+  browserTabRelay.installIpc();
   registerReviewCommands();
   registerDbCommands(getWindow, () => sidecar);
   registerLspCommands(join(app.getAppPath(), "resources"));
@@ -534,6 +538,7 @@ app.whenReady().then(async () => {
   // browser-control.json so `verne mcp` can connect.
   browserControl = new BrowserControlServer(browserRegistry, {
     createAutomationSession: createAutomationBrowserSession,
+    openVisibleTab: (request) => browserTabRelay.open(request),
   });
   browserControl.start().catch((e) => console.error("browser-control server failed:", e));
 
@@ -547,18 +552,13 @@ app.whenReady().then(async () => {
   // Auto-update (macOS): check on launch + every 6h, background-download, prompt.
   initAutoUpdater(getWindow);
 
-  // Belt-and-suspenders for <webview> guests: deny popups / external open.
-  win.webContents.on("did-attach-webview", (_e, guest) => {
-    guest.setWindowOpenHandler(({ url }) => {
-      void shell.openExternal(url);
-      return { action: "deny" };
-    });
-  });
+  installGuestBrowserPopupRelay(win, browserRegistry, (request) => browserTabRelay.open(request));
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       win = createWindow(currentSettings().appearance);
       registerDictationHotkey(win);
+      installGuestBrowserPopupRelay(win, browserRegistry, (request) => browserTabRelay.open(request));
     }
   });
 
@@ -659,6 +659,7 @@ app.on("before-quit", () => {
   // Detach all CDP sessions and tear down the control server (removes the
   // browser-control.json descriptor).
   browserRegistry.dispose();
+  browserTabRelay.dispose();
   void browserControl?.stop();
   // The sidecar is tied to this app's lifecycle — stop it cleanly and kill the
   // child as a backstop. The daemon is left running so PTY sessions survive.

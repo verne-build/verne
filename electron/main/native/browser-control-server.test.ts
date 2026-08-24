@@ -145,6 +145,67 @@ describe("BrowserControlServer", () => {
     expect(reg.registerAutomation).toHaveBeenCalledWith(resp.tabId, expect.anything(), "workspace:/ws", expect.any(Function));
   });
 
+  it("open creates a visible scoped tab and waits for renderer readiness", async () => {
+    const reg = fakeRegistry();
+    reg.list = vi.fn(() => []);
+    let markReady!: () => void;
+    const ready = new Promise<void>((resolve) => { markReady = resolve; });
+    const openVisibleTab = vi.fn(async (_request: Record<string, unknown>) => ready);
+    srv = new BrowserControlServer(reg as any, { ...opts, openVisibleTab });
+    const port = await srv.start();
+    const response = rpc(port, {
+      action: "open",
+      url: "https://x.com",
+      secret: "good",
+      workspaceDir: "/ws",
+    });
+
+    await vi.waitFor(() => expect(openVisibleTab).toHaveBeenCalled());
+    const request = openVisibleTab.mock.calls[0][0];
+    expect(request).toEqual({
+      tabId: expect.stringMatching(/^browser:/),
+      url: "https://x.com",
+      workspaceDir: "/ws",
+      source: "mcp",
+      focusExisting: false,
+    });
+    let settled = false;
+    void response.then(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    markReady();
+    await expect(response).resolves.toEqual({ ok: true, tabId: request.tabId, reused: false });
+    expect(reg.registerAutomation).not.toHaveBeenCalled();
+  });
+
+  it("open focuses a matching visible tab instead of creating a hidden tab", async () => {
+    const reg = fakeRegistry();
+    reg.list = vi.fn(() => [
+      { id: "browser:visible", url: "https://x.com/", active: false, owner: "ui" },
+    ]);
+    const openVisibleTab = vi.fn(async (_request: Record<string, unknown>) => {});
+    srv = new BrowserControlServer(reg as any, { ...opts, openVisibleTab });
+    const port = await srv.start();
+
+    const resp = await rpc(port, {
+      action: "open",
+      url: "https://x.com",
+      secret: "good",
+      workspaceDir: "/ws",
+    });
+
+    expect(resp).toEqual({ ok: true, tabId: "browser:visible", reused: true });
+    expect(openVisibleTab).toHaveBeenCalledWith({
+      tabId: "browser:visible",
+      url: "https://x.com",
+      workspaceDir: "/ws",
+      source: "mcp",
+      focusExisting: true,
+    });
+    expect(reg.registerAutomation).not.toHaveBeenCalled();
+  });
+
   it("open reports a clean error when automation is unavailable", async () => {
     const reg = fakeRegistry();
     srv = new BrowserControlServer(reg as any, opts);

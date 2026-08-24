@@ -55,6 +55,38 @@ describe("BrowserRegistry", () => {
     expect(reg.currentUi("/ws")).toEqual({ id: "browser:b", url: "http://site/browser:b", active: true, owner: "ui" });
   });
 
+  it("clears the current browser when the right panel activates a static tab", async () => {
+    const reg = new BrowserRegistry((tabId, wcId, ws) => fakeSession(tabId, wcId, ws, "https://example.com"));
+    await reg.register("browser:a", 1, "/ws");
+    reg.setActive("browser:a", "/ws");
+
+    reg.setActive(null, "/ws");
+
+    expect(reg.currentUi("/ws")).toBeNull();
+    expect(reg.list("/ws")[0].active).toBe(false);
+  });
+
+  it("does not let an old browser unregister clear a newer active browser", async () => {
+    const reg = new BrowserRegistry((tabId, wcId, ws) => fakeSession(tabId, wcId, ws));
+    await reg.register("browser:old", 1, "/ws");
+    await reg.register("browser:new", 2, "/ws");
+    reg.setActive("browser:new", "/ws");
+
+    reg.unregister("browser:old");
+
+    expect(reg.currentUi("/ws")?.id).toBe("browser:new");
+  });
+
+  it("resolves UI ownership and readiness from the guest webContents id", async () => {
+    const reg = new BrowserRegistry((tabId, wcId, ws) => fakeSession(tabId, wcId, ws));
+    const ready = reg.waitForUi("browser:a", "/ws", 100);
+
+    await reg.register("browser:a", 42, "/ws");
+
+    await expect(ready).resolves.toMatchObject({ tabId: "browser:a", wcId: 42, workspaceDir: "/ws" });
+    expect(reg.uiOwnerForWebContents(42)).toEqual({ tabId: "browser:a", workspaceDir: "/ws" });
+  });
+
   it("register is idempotent for the same wcId and re-attaches on a new wcId", async () => {
     const sessions: CdpSession[] = [];
     const reg = new BrowserRegistry((tabId, wcId, ws) => {

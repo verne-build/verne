@@ -24,6 +24,8 @@ import type {
   TabGroup,
   ReviewComment,
   AgentInventorySnapshot,
+  BrowserTabOpenRequest,
+  BrowserTabOpenAck,
 } from "@/types";
 
 export interface ContentSearchMatch {
@@ -108,6 +110,9 @@ listen<string>("file-deleted", (e) => {
     listen<{ directory: WorkingDirectory }>("directory-added", (e) =>
       window.dispatchEvent(new CustomEvent("directory-added", { detail: e.payload })),
     ),
+    listen<BrowserTabOpenRequest>("browser-tab-open-request", (e) => {
+      window.dispatchEvent(new CustomEvent("browser-tab-open-request", { detail: e.payload }));
+    }),
   ]);
   for (const r of results) {
     if (r.status === "fulfilled") unlistenFns.push(r.value);
@@ -434,6 +439,10 @@ const request = {
     invoke("browser_favorite_rename", p),
   browserHistoryRemove: (p: { directoryId: string; url: string }): Promise<boolean> =>
     invoke("browser_history_remove", p),
+  browserSetActive: (p: { tabId: string | null; workspaceDir: string }): Promise<boolean> =>
+    invoke("native_browser_set_active", p),
+  browserTabOpenAck: (p: BrowserTabOpenAck): Promise<boolean> =>
+    invoke("native_browser_tab_open_ack", p),
 
   // MCP agent registration (Settings → MCP)
   mcpSupportedAgents: (_p: object): Promise<import("@/types").McpAgentInfo[]> =>
