@@ -4,6 +4,7 @@ import { useWorkspaceStore } from "@/stores/workspace";
 import { useFilePanelTabs, type ScSelection, type CommitsSelection } from "@/composables/useFilePanelTabs";
 import { useRpc } from "@/composables/useRpc";
 import FileTabBar from "./FileTabBar.vue";
+import RightPanelPicker from "./RightPanelPicker.vue";
 import SearchPreview from "./SearchPreview.vue";
 import SearchPreviewHeader from "./SearchPreviewHeader.vue";
 // Async so Milkdown/ProseMirror only loads when the notes tab is opened.
@@ -22,7 +23,6 @@ import { useGitOperations } from "@/composables/useGitOperations";
 import { usePanelResizeState } from "@/composables/usePanelResizeState";
 import { judgedWidth } from "@/lib/overlaySidebar";
 import { panelsAnimating } from "@/lib/panelAnimationState";
-import { Button } from "./ui/button";
 import { useDiffReview } from "@/composables/useDiffReview";
 import { useSearchPanelState } from "@/composables/useSearchPanelState";
 import type { ReviewContext, ReviewComment } from "@/types/shared";
@@ -46,7 +46,7 @@ import type { GitStatus } from "@/types";
 
 const store = useWorkspaceStore();
 const {
-  allTabs,
+  tabs,
   activeId,
   activeTab,
   setActiveId,
@@ -56,6 +56,7 @@ const {
   setFileDirty,
   isFileDirty,
   updateTabViewState,
+  openTabOfKind,
   openFile,
   openBrowserTab,
   promoteTab,
@@ -110,7 +111,7 @@ const {
 // tabs only toggles visibility, so the <webview>'s WebContents (and thus page
 // state, scroll, history) survives instead of being torn down and reloaded.
 const browserTabs = computed<FilePanelBrowserTab[]>(
-  () => allTabs.value.filter((t): t is FilePanelBrowserTab => t.kind === "browser"),
+  () => tabs.value.filter((t): t is FilePanelBrowserTab => t.kind === "browser"),
 );
 
 // Background browser tabs are display:none, so their hidden <webview>s don't
@@ -238,7 +239,7 @@ function revealExplorer() {
   explorer.open.value = true;
   const t = activeTab.value;
   if (t?.kind === "file" || t?.kind === "explorer") return;
-  const lastFile = [...allTabs.value].reverse().find((x) => x.kind === "file");
+  const lastFile = [...tabs.value].reverse().find((x) => x.kind === "file");
   setActiveId(lastFile ? lastFile.id : EXPLORER_TAB_ID);
 }
 
@@ -417,7 +418,7 @@ function revertScFile() {
 <template>
   <div ref="panelEl" data-file-panel class="h-full flex flex-col overflow-hidden bg-sidebar">
     <FileTabBar
-      :tabs="allTabs"
+      :tabs="tabs"
       :active-id="activeId"
       :is-file-dirty="isFileDirty"
       :root-dir="rootDir"
@@ -428,13 +429,15 @@ function revertScFile() {
       @promote="promoteTab"
     />
 
-    <template v-if="activeTab?.kind === 'notes' && store.activeRoot">
+    <RightPanelPicker v-if="tabs.length === 0" @open="openTabOfKind" />
+
+    <template v-if="tabs.length > 0 && activeTab?.kind === 'notes' && store.activeRoot">
       <div class="h-full flex flex-col overflow-hidden flex-1 min-h-0">
         <NotesPanel :directory-id="store.activeRoot.scopeId" class="flex-1 min-h-0" />
       </div>
     </template>
 
-    <template v-else-if="activeTab?.kind === 'search' && rootDir && scopeKey">
+    <template v-else-if="tabs.length > 0 && activeTab?.kind === 'search' && rootDir && scopeKey">
       <div class="h-full flex flex-col overflow-hidden flex-1 min-h-0">
         <div class="flex-1 min-h-0">
           <OverlaySidebarGroup :state="search" :container-width="panelWidth">
@@ -476,25 +479,6 @@ function revertScFile() {
         </div>
       </div>
     </template>
-
-    <div
-      v-else-if="activeTab?.kind !== 'browser' && activeTab?.kind !== 'file' && activeTab?.kind !== 'explorer' && activeTab?.kind !== 'sourceControl' && activeTab?.kind !== 'commits'"
-      class="flex h-full items-center justify-center bg-sidebar"
-    >
-      <Empty>
-        <EmptyHeader>
-          <EmptyMedia variant="icon"><Files /></EmptyMedia>
-          <EmptyTitle>No Files Open</EmptyTitle>
-          <EmptyDescription>Open an existing file or create a new one.</EmptyDescription>
-        </EmptyHeader>
-        <EmptyContent>
-          <div class="flex gap-2">
-            <Button size="sm" variant="outline" @click="handleOpenFileSearch">Open File</Button>
-            <Button size="sm" variant="outline" @click="handleNewFile">New File</Button>
-          </div>
-        </EmptyContent>
-      </Empty>
-    </div>
 
     <!-- Source control views: live outside the v-if chain (like FileEditorTab) so
          both sub-views (Changes, History) stay cached simultaneously. KeepAlive
