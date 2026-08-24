@@ -112,6 +112,7 @@ watch(() => props.directoryId, (id) => { if (id) browserData.load(id).catch(() =
 
 // WebContents id of the guest, captured on dom-ready; null until ready.
 let wcId: number | null = null;
+let pendingNavigationUrl: string | null = null;
 let boundWebview: WebviewEl | null = null;
 let currentTitle = "";
 let progressRaf: ReturnType<typeof requestAnimationFrame> | null = null;
@@ -193,6 +194,17 @@ function currentWebContentsId(): number | null {
   return wcId;
 }
 
+async function navigateWebview(id: number, url: string) {
+  // Kick a fresh progress cycle now so loading a new page mid-load restarts the
+  // bar cleanly instead of parking the previous trickle near 90%.
+  onStartLoading();
+  try {
+    urlInput.value = await invoke<string>("native_browser_navigate", { id, url });
+  } catch (e) {
+    toast.error(String(e));
+  }
+}
+
 async function go(v: string) {
   const url = normalizeBrowserUrl(v);
   if (!url) return;
@@ -205,15 +217,12 @@ async function go(v: string) {
     });
   }
   const id = currentWebContentsId();
-  if (id === null) return;
-  // Kick a fresh progress cycle now so loading a new page mid-load restarts the
-  // bar cleanly instead of parking the previous trickle near 90%.
-  onStartLoading();
-  try {
-    urlInput.value = await invoke<string>("native_browser_navigate", { id, url });
-  } catch (e) {
-    toast.error(String(e));
+  if (id === null) {
+    pendingNavigationUrl = url;
+    return;
   }
+  pendingNavigationUrl = null;
+  await navigateWebview(id, url);
 }
 
 function onAddressKey(e: KeyboardEvent) {
@@ -346,6 +355,11 @@ function onDomReady() {
     invoke("native_browser_register", { tabId: props.tabId, wcId, workspaceDir: props.workspaceDir })
       .then(() => { if (props.active) reportActive(); })
       .catch((e) => { toast.error(String(e)); });
+    const pendingUrl = pendingNavigationUrl;
+    if (pendingUrl !== null) {
+      pendingNavigationUrl = null;
+      void navigateWebview(wcId, pendingUrl);
+    }
   }
 }
 
@@ -354,16 +368,25 @@ function onDomReady() {
 function reportActive() {
   invoke("native_browser_set_active", { tabId: props.tabId, workspaceDir: props.workspaceDir }).catch(() => {});
 }
-watch(() => props.active, (a) => { if (a) reportActive(); });
+
+async function focusBlankAddress() {
+  if (!props.active || !props.newTabMode) return;
+  await nextTick();
+  if (props.active && props.newTabMode) addressInput.value?.$el?.focus();
+}
+
+watch(() => props.active, (active) => {
+  if (!active) return;
+  reportActive();
+  void focusBlankAddress();
+});
 
 function onKeydown(e: KeyboardEvent) { if (e.key === "Escape" && sidebarOpen.value) sidebarOpen.value = false; }
 
 // Focus a blank tab's address bar on mount so the user can type immediately.
 onMounted(async () => {
   window.addEventListener("keydown", onKeydown);
-  if (!props.newTabMode) return;
-  await nextTick();
-  addressInput.value?.$el?.focus();
+  await focusBlankAddress();
 });
 
 // ---- load progress ----
