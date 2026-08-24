@@ -1,7 +1,7 @@
 import { computed, shallowRef, triggerRef, watch } from "vue";
 import type { FilePanelBrowserTab, FilePanelFileTab, FilePanelTab, OpenableTabKind } from "@/types";
 import { COMMITS_TAB_ID, NOTES_TAB_ID, SC_TAB_ID, SEARCH_TAB_ID } from "@/types";
-import { labelForUrl, normalizeBrowserUrl } from "@/lib/browserTabs";
+import { labelForUrl, normalizeBrowserUrl, sameBrowserUrl } from "@/lib/browserTabs";
 import { reorderById } from "@/lib/reorderTabs";
 import {
   debouncedSave,
@@ -35,9 +35,24 @@ interface DirState {
   hydration: "idle" | "loading" | "loaded";
   hydrationPromise: Promise<void> | null;
   pendingPersistence: boolean;
-  pendingActivation: boolean;
-  pendingClosedIds: Set<string>;
+  pendingMutations: TabMutation[];
+  mutationVersion: number;
+  retryVersion: number;
 }
+
+type BrowserPatch = { label?: string; faviconUrl?: string; browserUrl?: string | null };
+type FileViewPatch = { scrollTop?: number; cursorLine?: number; cursorColumn?: number };
+type TabMutation =
+  | { type: "activate"; id: string }
+  | { type: "open-kind"; tab: FilePanelTab; singleton: boolean }
+  | { type: "open-file"; filePath: string; position?: { line: number; column: number }; permanent: boolean }
+  | { type: "open-browser"; tab: FilePanelBrowserTab }
+  | { type: "close"; id: string }
+  | { type: "promote"; id: string }
+  | { type: "update-browser"; id: string; patch: BrowserPatch }
+  | { type: "update-view"; id: string; view: FileViewPatch }
+  | { type: "reorder"; ids: string[] }
+  | { type: "sync-path"; oldPath: string; newPath: string };
 
 export type FpScope = { path: string; scopeType: "directory" | "agent_worktree"; scopeId: string };
 
@@ -71,8 +86,9 @@ function makeDefault(): DirState {
     hydration: "idle",
     hydrationPromise: null,
     pendingPersistence: false,
-    pendingActivation: false,
-    pendingClosedIds: new Set(),
+    pendingMutations: [],
+    mutationVersion: 0,
+    retryVersion: 0,
   };
 }
 
@@ -93,7 +109,6 @@ function recordActivation(state: DirState, id: string | null): void {
 
 function activate(state: DirState, id: string): void {
   state.activeId = id;
-  if (state.hydration !== "loaded") state.pendingActivation = true;
   recordActivation(state, id);
 }
 
@@ -125,21 +140,18 @@ function makeTabOfKind(kind: OpenableTabKind, id: string): FilePanelTab {
 
 export function updateBrowserTab(
   id: string,
-  patch: { label?: string; faviconUrl?: string; browserUrl?: string | null },
+  patch: BrowserPatch,
 ): void {
   for (const [key, state] of dirState.value.entries()) {
-    const tab = state.tabs.find(
-      (candidate): candidate is FilePanelBrowserTab => candidate.kind === "browser" && candidate.id === id,
-    );
-    if (!tab) continue;
-    if (patch.label !== undefined) tab.label = patch.label;
-    if (patch.faviconUrl !== undefined) tab.faviconUrl = patch.faviconUrl;
-    if (patch.browserUrl !== undefined) tab.browserUrl = patch.browserUrl;
+    if (!mutate(state, { type: "update-browser", id, patch: { ...patch } })) continue;
     trigger();
     const scope = scopeFromKey(key);
     if (scope) {
       if (state.hydration === "loaded") debouncedSave(scope, state.tabs, state.activeId);
-      else state.pendingPersistence = true;
+      else {
+        state.pendingPersistence = true;
+        retryHydrationForMutation(scope, state);
+      }
     }
     return;
   }
@@ -166,23 +178,169 @@ export function dropFilePanelScope(scopeId: string): void {
   if (dirtyChanged) triggerDirty();
 }
 
-function mergeHydratedTabs(
-  persisted: FilePanelTab[],
-  pending: FilePanelTab[],
-  pendingClosedIds: ReadonlySet<string>,
-): FilePanelTab[] {
-  const pendingById = new Map(pending.map((tab) => [tab.id, tab]));
-  const merged = persisted.filter((tab) => !pendingClosedIds.has(tab.id)).map((tab) => {
-    const local = pendingById.get(tab.id);
-    if (!local) return tab;
-    pendingById.delete(tab.id);
-    if (local.kind !== tab.kind) return local;
-    const definedLocal = Object.fromEntries(
-      Object.entries(local).filter(([, value]) => value !== undefined),
-    );
-    return { ...tab, ...definedLocal } as FilePanelTab;
+function reorderSubset(tabs: FilePanelTab[], ids: readonly string[]): FilePanelTab[] | null {
+  const requested = new Set(ids);
+  const slots = tabs.flatMap((tab, index) => requested.has(tab.id) ? [index] : []);
+  const byId = new Map(tabs.map((tab) => [tab.id, tab]));
+  const ordered = ids.flatMap((id) => {
+    const tab = byId.get(id);
+    return tab ? [tab] : [];
   });
-  return [...merged, ...pending.filter((tab) => pendingById.has(tab.id))];
+  if (ordered.length !== slots.length || ordered.length === 0) return null;
+  const next = [...tabs];
+  slots.forEach((slot, index) => { next[slot] = ordered[index]; });
+  return next;
+}
+
+function applyMutation(state: DirState, mutation: TabMutation): boolean {
+  switch (mutation.type) {
+    case "activate":
+      if (!state.tabs.some((tab) => tab.id === mutation.id)) return false;
+      activate(state, mutation.id);
+      return true;
+    case "open-kind": {
+      const existing = mutation.singleton
+        ? state.tabs.find((tab) => tab.id === mutation.tab.id)
+        : undefined;
+      if (!existing) state.tabs = [...state.tabs, { ...mutation.tab } as FilePanelTab];
+      activate(state, existing?.id ?? mutation.tab.id);
+      return true;
+    }
+    case "open-file": {
+      const existing = state.tabs.find(
+        (tab): tab is FilePanelFileTab => tab.kind === "file" && tab.filePath === mutation.filePath,
+      );
+      if (existing) {
+        if (mutation.position) {
+          existing.cursorLine = mutation.position.line;
+          existing.cursorColumn = mutation.position.column;
+          existing.scrollTop = undefined;
+          existing.positionVersion = (existing.positionVersion ?? 0) + 1;
+        }
+        // Hydrated rows are permanent (ephemeral is intentionally not persisted).
+        // A preview open must never downgrade an already-permanent row.
+        if (mutation.permanent) existing.ephemeral = false;
+        activate(state, existing.id);
+        return true;
+      }
+      const tab: FilePanelFileTab = {
+        kind: "file",
+        id: mutation.filePath,
+        filePath: mutation.filePath,
+        label: mutation.filePath.split("/").pop() || mutation.filePath,
+        cursorLine: mutation.position?.line,
+        cursorColumn: mutation.position?.column,
+        ephemeral: !mutation.permanent,
+      };
+      const slotIndex = tab.ephemeral
+        ? state.tabs.findIndex((candidate) => candidate.kind === "file" && candidate.ephemeral)
+        : -1;
+      if (slotIndex === -1) state.tabs = [...state.tabs, tab];
+      else {
+        const previousId = state.tabs[slotIndex].id;
+        state.activationHistory = state.activationHistory.filter((id) => id !== previousId);
+        const next = [...state.tabs];
+        next.splice(slotIndex, 1, tab);
+        state.tabs = next;
+      }
+      activate(state, tab.id);
+      return true;
+    }
+    case "open-browser": {
+      const existing = state.tabs.find((tab) => tab.id === mutation.tab.id);
+      if (existing) {
+        if (existing.kind !== "browser") return false;
+        existing.label = mutation.tab.label;
+        existing.browserUrl = mutation.tab.browserUrl;
+        activate(state, existing.id);
+        return true;
+      }
+      state.tabs = [...state.tabs, { ...mutation.tab }];
+      activate(state, mutation.tab.id);
+      return true;
+    }
+    case "close": {
+      const index = state.tabs.findIndex((tab) => tab.id === mutation.id);
+      if (index === -1) return false;
+      state.tabs = state.tabs.filter((_, tabIndex) => tabIndex !== index);
+      state.activationHistory = state.activationHistory.filter((id) => id !== mutation.id);
+      if (state.activeId === mutation.id) {
+        const liveIds = new Set(state.tabs.map((tab) => tab.id));
+        const recentId = [...state.activationHistory].reverse().find((id) => liveIds.has(id));
+        state.activeId = recentId ?? state.tabs.at(-1)?.id ?? null;
+        recordActivation(state, state.activeId);
+      }
+      return true;
+    }
+    case "promote": {
+      const tab = state.tabs.find(
+        (candidate): candidate is FilePanelFileTab => candidate.kind === "file" && candidate.id === mutation.id,
+      );
+      if (!tab?.ephemeral) return false;
+      tab.ephemeral = false;
+      return true;
+    }
+    case "update-browser": {
+      const tab = state.tabs.find(
+        (candidate): candidate is FilePanelBrowserTab => candidate.kind === "browser" && candidate.id === mutation.id,
+      );
+      if (!tab) return false;
+      if (mutation.patch.label !== undefined) tab.label = mutation.patch.label;
+      if (mutation.patch.faviconUrl !== undefined) tab.faviconUrl = mutation.patch.faviconUrl;
+      if (mutation.patch.browserUrl !== undefined) tab.browserUrl = mutation.patch.browserUrl;
+      return true;
+    }
+    case "update-view": {
+      const tab = state.tabs.find(
+        (candidate): candidate is FilePanelFileTab => candidate.kind === "file" && candidate.id === mutation.id,
+      );
+      if (!tab) return false;
+      tab.scrollTop = mutation.view.scrollTop;
+      tab.cursorLine = mutation.view.cursorLine;
+      tab.cursorColumn = mutation.view.cursorColumn;
+      return true;
+    }
+    case "reorder": {
+      const reordered = reorderSubset(state.tabs, mutation.ids);
+      if (!reordered) return false;
+      state.tabs = reordered;
+      return true;
+    }
+    case "sync-path": {
+      const index = state.tabs.findIndex(
+        (tab) => tab.kind === "file" && tab.filePath === mutation.oldPath,
+      );
+      if (index === -1) return false;
+      const destinationIndex = state.tabs.findIndex(
+        (tab, tabIndex) => tabIndex !== index && tab.kind === "file" && tab.filePath === mutation.newPath,
+      );
+      if (destinationIndex === -1) {
+        const newLabel = mutation.newPath.split("/").pop() || mutation.newPath;
+        state.tabs = state.tabs.map((tab, tabIndex) =>
+          tabIndex === index && tab.kind === "file"
+            ? { ...tab, id: mutation.newPath, filePath: mutation.newPath, label: newLabel }
+            : tab,
+        );
+      } else state.tabs = state.tabs.filter((_, tabIndex) => tabIndex !== index);
+      if (state.activeId === mutation.oldPath) state.activeId = mutation.newPath;
+      const remappedHistory = state.activationHistory.map(
+        (id) => id === mutation.oldPath ? mutation.newPath : id,
+      );
+      state.activationHistory = remappedHistory.filter(
+        (id, historyIndex) => remappedHistory.lastIndexOf(id) === historyIndex,
+      );
+      return true;
+    }
+  }
+}
+
+function mutate(state: DirState, mutation: TabMutation): boolean {
+  const changed = applyMutation(state, mutation);
+  if (changed && state.hydration !== "loaded") {
+    state.pendingMutations.push(mutation);
+    state.mutationVersion++;
+  }
+  return changed;
 }
 
 export function ensureFilePanelLoaded(scope: FpScope): Promise<void> {
@@ -198,30 +356,21 @@ export function ensureFilePanelLoaded(scope: FpScope): Promise<void> {
     if (!loaded) {
       state.hydration = "idle";
       state.hydrationPromise = null;
+      retryHydrationForMutation(scope, state);
       return;
     }
 
-    const pendingTabs = state.tabs;
-    const pendingActiveId = state.activeId;
-    const pendingActivation = state.pendingActivation;
-    const needsSave = state.pendingPersistence || loaded.needsSave;
-    state.tabs = mergeHydratedTabs(loaded.tabs, pendingTabs, state.pendingClosedIds);
-    const liveIds = new Set(state.tabs.map((tab) => tab.id));
-    const preferredActive = pendingActivation && pendingActiveId && liveIds.has(pendingActiveId)
-      ? pendingActiveId
-      : loaded.activeId;
-    state.activeId = preferredActive && liveIds.has(preferredActive)
-      ? preferredActive
-      : state.tabs[0]?.id ?? null;
-    state.activationHistory = [
-      ...state.activationHistory.filter((id) => liveIds.has(id) && id !== state.activeId),
-      ...(state.activeId ? [state.activeId] : []),
-    ];
+    const pendingMutations = [...state.pendingMutations];
+    const needsSave = state.pendingPersistence || pendingMutations.length > 0 || loaded.needsSave;
+    state.tabs = loaded.tabs;
+    state.activeId = loaded.activeId;
+    state.activationHistory = loaded.activeId ? [loaded.activeId] : [];
+    for (const mutation of pendingMutations) applyMutation(state, mutation);
     state.hydration = "loaded";
     state.hydrationPromise = null;
     state.pendingPersistence = false;
-    state.pendingActivation = false;
-    state.pendingClosedIds.clear();
+    state.pendingMutations = [];
+    state.retryVersion = state.mutationVersion;
     trigger();
     if (needsSave) debouncedSave(scope, state.tabs, state.activeId);
   })();
@@ -229,28 +378,92 @@ export function ensureFilePanelLoaded(scope: FpScope): Promise<void> {
   return hydration;
 }
 
-export function syncFilePanelFilePath(oldPath: string, newPath: string): void {
-  const newLabel = newPath.split("/").pop() || newPath;
-  for (const [key, state] of dirState.value.entries()) {
-    const index = state.tabs.findIndex((tab) => tab.kind === "file" && tab.filePath === oldPath);
-    if (index === -1) continue;
-    const destinationIndex = state.tabs.findIndex(
-      (tab, tabIndex) => tabIndex !== index && tab.kind === "file" && tab.filePath === newPath,
-    );
-    if (destinationIndex === -1) {
-      state.tabs = state.tabs.map((tab, tabIndex) =>
-        tabIndex === index && tab.kind === "file"
-          ? { ...tab, id: newPath, filePath: newPath, label: newLabel }
-          : tab,
-      );
-    } else {
-      state.tabs = state.tabs.filter((_, tabIndex) => tabIndex !== index);
+function retryHydrationForMutation(scope: FpScope, state: DirState): void {
+  if (
+    state.hydration !== "idle"
+    || !state.pendingPersistence
+    || state.retryVersion >= state.mutationVersion
+  ) return;
+  state.retryVersion = state.mutationVersion;
+  queueMicrotask(() => {
+    if (dirState.value.get(scopeKey(scope)) !== state || state.hydration !== "idle") return;
+    void ensureFilePanelLoaded(scope);
+  });
+}
+
+export interface ScopedBrowserOpenResult {
+  tabId: string;
+  reused: boolean;
+  created: boolean;
+}
+
+export async function openBrowserTabForScope(
+  scope: FpScope,
+  rawUrl: string,
+  options: { newTabId: string; allowReuse: boolean },
+): Promise<ScopedBrowserOpenResult> {
+  await ensureFilePanelLoaded(scope);
+  const state = getOrCreate(scopeKey(scope));
+  if (state.hydration !== "loaded") throw new Error(`browser tab scope ${scope.scopeId} failed to load`);
+  const url = normalizeBrowserUrl(rawUrl);
+  const candidate = state.tabs.find((tab) => tab.id === options.newTabId);
+  if (candidate) {
+    if (candidate.kind !== "browser" || !candidate.browserUrl || !sameBrowserUrl(candidate.browserUrl, url)) {
+      throw new Error(`browser tab id ${options.newTabId} is already in use`);
     }
-    if (state.activeId === oldPath) state.activeId = newPath;
-    const remappedHistory = state.activationHistory.map((id) => id === oldPath ? newPath : id);
-    state.activationHistory = remappedHistory.filter(
-      (id, historyIndex) => remappedHistory.lastIndexOf(id) === historyIndex,
+    mutate(state, { type: "activate", id: candidate.id });
+    trigger();
+    debouncedSave(scope, state.tabs, state.activeId);
+    return { tabId: candidate.id, reused: false, created: true };
+  }
+  if (options.allowReuse) {
+    const existing = state.tabs.find(
+      (tab): tab is FilePanelBrowserTab =>
+        tab.kind === "browser" && Boolean(tab.browserUrl) && sameBrowserUrl(tab.browserUrl!, url),
     );
+    if (existing) {
+      mutate(state, { type: "activate", id: existing.id });
+      trigger();
+      debouncedSave(scope, state.tabs, state.activeId);
+      return { tabId: existing.id, reused: true, created: false };
+    }
+  }
+  mutate(state, {
+    type: "open-browser",
+    tab: {
+      kind: "browser",
+      id: options.newTabId,
+      label: labelForUrl(url),
+      browserUrl: url,
+    },
+  });
+  trigger();
+  debouncedSave(scope, state.tabs, state.activeId);
+  return { tabId: options.newTabId, reused: false, created: true };
+}
+
+export async function rollbackBrowserTabForScope(
+  scope: FpScope,
+  newTabId: string,
+  rawUrl: string,
+): Promise<boolean> {
+  await ensureFilePanelLoaded(scope);
+  const state = getOrCreate(scopeKey(scope));
+  if (state.hydration !== "loaded") return false;
+  const tab = state.tabs.find(
+    (candidate): candidate is FilePanelBrowserTab => candidate.kind === "browser" && candidate.id === newTabId,
+  );
+  const url = normalizeBrowserUrl(rawUrl);
+  if (!tab?.browserUrl || !sameBrowserUrl(tab.browserUrl, url)) return false;
+  if (!mutate(state, { type: "close", id: newTabId })) return false;
+  trigger();
+  debouncedSave(scope, state.tabs, state.activeId);
+  return true;
+}
+
+export function syncFilePanelFilePath(oldPath: string, newPath: string): void {
+  for (const [key, state] of dirState.value.entries()) {
+    if (!mutate(state, { type: "sync-path", oldPath, newPath })) continue;
     if (dirtyFiles.has(oldPath)) {
       dirtyFiles.delete(oldPath);
       dirtyFiles.add(newPath);
@@ -261,9 +474,8 @@ export function syncFilePanelFilePath(oldPath: string, newPath: string): void {
     if (scope) {
       if (state.hydration === "loaded") debouncedSave(scope, state.tabs, state.activeId);
       else {
-        state.pendingClosedIds.add(oldPath);
-        state.pendingClosedIds.delete(newPath);
         state.pendingPersistence = true;
+        retryHydrationForMutation(scope, state);
       }
     }
   }
@@ -289,6 +501,7 @@ export function useFilePanelTabs(scope: () => FpScope | null) {
     if (!currentScope || !state) return;
     if (state.hydration !== "loaded") {
       state.pendingPersistence = true;
+      retryHydrationForMutation(currentScope, state);
       return;
     }
     debouncedSave(currentScope, state.tabs, state.activeId);
@@ -328,8 +541,7 @@ export function useFilePanelTabs(scope: () => FpScope | null) {
 
   function setActiveId(id: string): void {
     const state = resolve();
-    if (!state?.tabs.some((tab) => tab.id === id)) return;
-    activate(state, id);
+    if (!state || !mutate(state, { type: "activate", id })) return;
     triggerAndPersist();
   }
 
@@ -339,17 +551,12 @@ export function useFilePanelTabs(scope: () => FpScope | null) {
     const singletonId = kind in SINGLETON_IDS
       ? SINGLETON_IDS[kind as keyof typeof SINGLETON_IDS]
       : null;
-    if (singletonId) state.pendingClosedIds.delete(singletonId);
-    if (singletonId && state.tabs.some((tab) => tab.id === singletonId)) {
-      activate(state, singletonId);
-      triggerAndPersist();
-      return singletonId;
-    }
-
     const id = singletonId ?? `${kind}:${crypto.randomUUID()}`;
-    state.pendingClosedIds.delete(id);
-    state.tabs = [...state.tabs, makeTabOfKind(kind, id)];
-    activate(state, id);
+    mutate(state, {
+      type: "open-kind",
+      tab: makeTabOfKind(kind, id),
+      singleton: singletonId !== null,
+    });
     triggerAndPersist();
     return id;
   }
@@ -363,43 +570,12 @@ export function useFilePanelTabs(scope: () => FpScope | null) {
     const currentScope = scope();
     const state = resolve();
     if (!state || !currentScope) return;
-    state.pendingClosedIds.delete(filePath);
-    const existing = state.tabs.find(
-      (tab): tab is FilePanelFileTab => tab.kind === "file" && tab.filePath === filePath,
-    );
-    if (existing) {
-      if (position) {
-        existing.cursorLine = position.line;
-        existing.cursorColumn = position.column;
-        existing.scrollTop = undefined;
-        existing.positionVersion = (existing.positionVersion ?? 0) + 1;
-      }
-      if (opts?.permanent) existing.ephemeral = false;
-      activate(state, existing.id);
-    } else {
-      const tab: FilePanelFileTab = {
-        kind: "file",
-        id: filePath,
-        filePath,
-        label: filePath.split("/").pop() || filePath,
-        cursorLine: position?.line,
-        cursorColumn: position?.column,
-        ephemeral: !opts?.permanent,
-      };
-      const slotIndex = tab.ephemeral
-        ? state.tabs.findIndex((candidate) => candidate.kind === "file" && candidate.ephemeral)
-        : -1;
-      if (slotIndex === -1) {
-        state.tabs = [...state.tabs, tab];
-      } else {
-        const previousId = state.tabs[slotIndex].id;
-        state.activationHistory = state.activationHistory.filter((id) => id !== previousId);
-        const next = [...state.tabs];
-        next.splice(slotIndex, 1, tab);
-        state.tabs = next;
-      }
-      activate(state, tab.id);
-    }
+    mutate(state, {
+      type: "open-file",
+      filePath,
+      position: position ? { ...position } : undefined,
+      permanent: Boolean(opts?.permanent),
+    });
     triggerAndPersist();
     request.touchRecentFile({
       directoryId: currentScope.scopeId,
@@ -410,11 +586,7 @@ export function useFilePanelTabs(scope: () => FpScope | null) {
 
   function promoteTab(id: string): void {
     const state = resolve();
-    const tab = state?.tabs.find(
-      (candidate): candidate is FilePanelFileTab => candidate.kind === "file" && candidate.id === id,
-    );
-    if (!tab?.ephemeral) return;
-    tab.ephemeral = false;
+    if (!state || !mutate(state, { type: "promote", id })) return;
     triggerAndPersist();
   }
 
@@ -426,14 +598,10 @@ export function useFilePanelTabs(scope: () => FpScope | null) {
     const tabId = state.tabs.some((tab) => tab.id === requestedId)
       ? `browser:${crypto.randomUUID()}`
       : requestedId;
-    state.pendingClosedIds.delete(tabId);
-    state.tabs = [...state.tabs, {
-      kind: "browser",
-      id: tabId,
-      label: label || labelForUrl(url),
-      browserUrl: url,
-    }];
-    activate(state, tabId);
+    mutate(state, {
+      type: "open-browser",
+      tab: { kind: "browser", id: tabId, label: label || labelForUrl(url), browserUrl: url },
+    });
     triggerAndPersist();
     return tabId;
   }
@@ -445,7 +613,6 @@ export function useFilePanelTabs(scope: () => FpScope | null) {
     const index = state.tabs.findIndex((tab) => tab.id === id);
     if (index === -1) return;
     const closed = state.tabs[index];
-    if (state.hydration !== "loaded") state.pendingClosedIds.add(id);
     if (closed.kind === "file") {
       if (currentScope) {
         closedTabStack.push({
@@ -458,14 +625,7 @@ export function useFilePanelTabs(scope: () => FpScope | null) {
       }
       if (dirtyFiles.delete(closed.filePath)) triggerDirty();
     }
-    state.tabs = state.tabs.filter((_, tabIndex) => tabIndex !== index);
-    state.activationHistory = state.activationHistory.filter((activeTabId) => activeTabId !== id);
-    if (state.activeId === id) {
-      const liveIds = new Set(state.tabs.map((tab) => tab.id));
-      const recentId = [...state.activationHistory].reverse().find((activeTabId) => liveIds.has(activeTabId));
-      state.activeId = recentId ?? state.tabs.at(-1)?.id ?? null;
-      if (state.hydration !== "loaded") state.pendingActivation = true;
-    }
+    mutate(state, { type: "close", id });
     triggerAndPersist();
   }
 
@@ -504,13 +664,7 @@ export function useFilePanelTabs(scope: () => FpScope | null) {
     view: { scrollTop?: number; cursorLine?: number; cursorColumn?: number },
   ): void {
     const state = resolve();
-    const tab = state?.tabs.find(
-      (candidate): candidate is FilePanelFileTab => candidate.kind === "file" && candidate.id === id,
-    );
-    if (!tab) return;
-    tab.scrollTop = view.scrollTop;
-    tab.cursorLine = view.cursorLine;
-    tab.cursorColumn = view.cursorColumn;
+    if (!state || !mutate(state, { type: "update-view", id, view: { ...view } })) return;
     persist();
   }
 
@@ -519,7 +673,7 @@ export function useFilePanelTabs(scope: () => FpScope | null) {
     if (!state) return;
     const reordered = reorderById(state.tabs, ids);
     if (!reordered) return;
-    state.tabs = reordered;
+    mutate(state, { type: "reorder", ids: [...ids] });
     triggerAndPersist();
   }
 
@@ -531,13 +685,13 @@ export function useFilePanelTabs(scope: () => FpScope | null) {
       const id = state.activationHistory[index];
       const tab = liveById.get(id);
       if (tab?.kind !== "file" && tab?.kind !== "explorer") continue;
-      activate(state, id);
+      mutate(state, { type: "activate", id });
       triggerAndPersist();
       return id;
     }
     const fallback = state.tabs.find((tab) => tab.kind === "file" || tab.kind === "explorer");
     if (fallback) {
-      activate(state, fallback.id);
+      mutate(state, { type: "activate", id: fallback.id });
       triggerAndPersist();
       return fallback.id;
     }
@@ -551,13 +705,8 @@ export function useFilePanelTabs(scope: () => FpScope | null) {
     else dirtyFiles.delete(filePath);
     if (wasDirty !== isDirty) triggerDirty();
     if (isDirty) {
-      const tab = resolve()?.tabs.find(
-        (candidate): candidate is FilePanelFileTab => candidate.kind === "file" && candidate.filePath === filePath,
-      );
-      if (tab?.ephemeral) {
-        tab.ephemeral = false;
-        trigger();
-      }
+      const state = resolve();
+      if (state && mutate(state, { type: "promote", id: filePath })) trigger();
     }
     persist();
   }

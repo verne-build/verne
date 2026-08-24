@@ -337,6 +337,146 @@ describe("file panel tabs", () => {
     }));
   });
 
+  it("replays a mixed reorder after persisted tabs hydrate", async () => {
+    const rows = deferred<SidebarTabRow[]>();
+    rpc.getSidebarTabs.mockReturnValueOnce(rows.promise);
+
+    const mod = await import("./useFilePanelTabs");
+    const hydration = mod.ensureFilePanelLoaded(scope);
+    const panel = mod.useFilePanelTabs(() => scope);
+    panel.openFile("/repo/local.ts", undefined, { permanent: true });
+    const browserId = panel.openBrowserTab("https://example.com", undefined, "browser:local");
+    const notesId = panel.openTabOfKind("notes");
+    panel.reorderTabs([browserId, notesId, "/repo/local.ts"]);
+
+    rows.resolve([
+      { directoryId: "dir-1", tabId: "__notes__", tabType: "notes", label: "Notes", position: 0 },
+    ]);
+    await hydration;
+    await vi.runAllTimersAsync();
+
+    expect(panel.tabs.value.map((tab) => tab.id)).toEqual([
+      browserId, notesId, "/repo/local.ts",
+    ]);
+    expect(rpc.saveSidebarTabs).toHaveBeenCalledWith(expect.objectContaining({
+      tabs: [
+        expect.objectContaining({ tabId: browserId, position: 0 }),
+        expect.objectContaining({ tabId: notesId, position: 1 }),
+        expect.objectContaining({ tabId: "/repo/local.ts", position: 2 }),
+      ],
+    }));
+  });
+
+  it("replays preview A then B over persisted A without downgrading or losing A's update", async () => {
+    const rows = deferred<SidebarTabRow[]>();
+    rpc.getSidebarTabs.mockReturnValueOnce(rows.promise);
+
+    const mod = await import("./useFilePanelTabs");
+    const hydration = mod.ensureFilePanelLoaded(scope);
+    const panel = mod.useFilePanelTabs(() => scope);
+    panel.openFile("/repo/a.ts", { line: 12, column: 4 });
+    panel.openFile("/repo/b.ts", { line: 20, column: 2 });
+
+    rows.resolve([
+      {
+        directoryId: "dir-1", tabId: "/repo/a.ts", tabType: "file", label: "a.ts", position: 0,
+        cursorLine: 2, cursorColumn: 1,
+      },
+    ]);
+    await hydration;
+    await vi.runAllTimersAsync();
+
+    expect(panel.tabs.value).toEqual([
+      expect.objectContaining({
+        id: "/repo/a.ts", cursorLine: 12, cursorColumn: 4,
+      }),
+      expect.objectContaining({ id: "/repo/b.ts", cursorLine: 20, cursorColumn: 2, ephemeral: true }),
+    ]);
+    expect(panel.tabs.value[0].kind === "file" && panel.tabs.value[0].ephemeral).not.toBe(true);
+    expect(panel.activeId.value).toBe("/repo/b.ts");
+    expect(rpc.saveSidebarTabs).toHaveBeenCalledWith(expect.objectContaining({
+      tabs: [
+        expect.objectContaining({ tabId: "/repo/a.ts", cursorLine: 12, cursorColumn: 4, position: 0 }),
+        expect.objectContaining({ tabId: "/repo/b.ts", cursorLine: 20, cursorColumn: 2, position: 1 }),
+      ],
+      filePanelActiveId: "/repo/b.ts",
+    }));
+  });
+
+  it("retries hydration on the next mutation and flushes queued state after recovery", async () => {
+    rpc.getSidebarTabs
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce([
+        { directoryId: "dir-1", tabId: "/repo/persisted.ts", tabType: "file", label: "persisted.ts", position: 0 },
+      ]);
+
+    const mod = await import("./useFilePanelTabs");
+    const panel = mod.useFilePanelTabs(() => scope);
+    for (let index = 0; index < 4; index++) await Promise.resolve();
+    expect(rpc.getSidebarTabs).toHaveBeenCalledTimes(1);
+
+    const notesId = panel.openTabOfKind("notes");
+    for (let index = 0; index < 4; index++) await Promise.resolve();
+    await vi.runAllTimersAsync();
+
+    expect(rpc.getSidebarTabs).toHaveBeenCalledTimes(2);
+    expect(panel.tabs.value.map((tab) => tab.id)).toEqual(["/repo/persisted.ts", notesId]);
+    expect(rpc.saveSidebarTabs).toHaveBeenCalledWith(expect.objectContaining({
+      tabs: [
+        expect.objectContaining({ tabId: "/repo/persisted.ts", position: 0 }),
+        expect.objectContaining({ tabId: notesId, position: 1 }),
+      ],
+      filePanelActiveId: notesId,
+    }));
+  });
+
+  it("reuses a persisted browser by normalized URL before any panel mounts", async () => {
+    const rows = deferred<SidebarTabRow[]>();
+    rpc.getSidebarTabs.mockReturnValueOnce(rows.promise);
+    const mod = await import("./useFilePanelTabs");
+
+    const opening = mod.openBrowserTabForScope(scope, "example.com/#section", {
+      newTabId: "browser:new",
+      allowReuse: true,
+    });
+    rows.resolve([
+      {
+        directoryId: "dir-1", tabId: "browser:persisted", tabType: "browser",
+        label: "Example", position: 0, browserUrl: "https://example.com/",
+      },
+    ]);
+
+    await expect(opening).resolves.toEqual({
+      tabId: "browser:persisted", reused: true, created: false,
+    });
+    const panel = mod.useFilePanelTabs(() => scope);
+    expect(panel.tabs.value.map((tab) => tab.id)).toEqual(["browser:persisted"]);
+    expect(panel.activeId.value).toBe("browser:persisted");
+  });
+
+  it("coalesces concurrent normalized browser opens in an unmounted scope", async () => {
+    const rows = deferred<SidebarTabRow[]>();
+    rpc.getSidebarTabs.mockReturnValueOnce(rows.promise);
+    const mod = await import("./useFilePanelTabs");
+
+    const first = mod.openBrowserTabForScope(scope, "https://example.com", {
+      newTabId: "browser:first",
+      allowReuse: true,
+    });
+    const second = mod.openBrowserTabForScope(scope, "example.com/", {
+      newTabId: "browser:second",
+      allowReuse: true,
+    });
+    rows.resolve([]);
+
+    await expect(first).resolves.toEqual({ tabId: "browser:first", reused: false, created: true });
+    await expect(second).resolves.toEqual({ tabId: "browser:first", reused: true, created: false });
+    const panel = mod.useFilePanelTabs(() => scope);
+    expect(panel.tabs.value).toEqual([
+      expect.objectContaining({ id: "browser:first", browserUrl: "https://example.com" }),
+    ]);
+  });
+
   it("drops queued mutations with a stale load instead of merging them into a fresh scope", async () => {
     const staleRows = deferred<SidebarTabRow[]>();
     rpc.getSidebarTabs.mockReturnValueOnce(staleRows.promise);
