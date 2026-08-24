@@ -17,7 +17,6 @@ export interface WorkingDirectory {
 
 export type SidebarTabType =
   | "file"
-  | "diff" // legacy compatibility until Task 7 narrows the union
   | "browser"
   | "sourceControl"
   | "commits"

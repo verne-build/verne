@@ -32,6 +32,16 @@ const SAMPLE_TABS: SidebarTabRow[] = [
   },
 ];
 
+const ALL_TAB_TYPES: SidebarTabRow[] = [
+  { directoryId: "dir-1", tabId: "/repo/a.ts", tabType: "file", label: "a.ts", position: 0 },
+  { directoryId: "dir-1", tabId: "browser:1", tabType: "browser", label: "New Tab", position: 1, browserUrl: null },
+  { directoryId: "dir-1", tabId: "__sc__", tabType: "sourceControl", label: "Source Control", position: 2 },
+  { directoryId: "dir-1", tabId: "__commits__", tabType: "commits", label: "History", position: 3 },
+  { directoryId: "dir-1", tabId: "__search__", tabType: "search", label: "Search", position: 4 },
+  { directoryId: "dir-1", tabId: "__notes__", tabType: "notes", label: "Notes", position: 5 },
+  { directoryId: "dir-1", tabId: "explorer:1", tabType: "explorer", label: "Files", position: 6 },
+];
+
 describe("sidebar", () => {
   it("getSidebarTabs returns empty array when none", () => {
     const db = tmpDb();
@@ -78,25 +88,11 @@ describe("sidebar", () => {
     expect(getSidebarState(db, "directory", "dir-2")).toBeNull();
   });
 
-  it("diff tab fields round-trip", () => {
+  it("round-trips every right-panel tab kind", () => {
     const db = tmpDb();
-    const diffTab: SidebarTabRow = {
-      directoryId: "dir-1",
-      tabId: "tab-diff",
-      tabType: "diff",
-      label: "diff",
-      position: 0,
-      diffSource: "commit",
-      diffRelPath: "src/foo.ts",
-      diffStaged: false,
-      diffCommitId: "abc123",
-      diffCommitShortId: "abc",
-    };
-    saveSidebarTabs(db, "directory", "dir-1", [diffTab], "tab-diff", 250, null, null);
-    const tabs = getSidebarTabs(db, "directory", "dir-1");
-    expect(tabs[0].diffSource).toBe("commit");
-    expect(tabs[0].diffRelPath).toBe("src/foo.ts");
-    expect(tabs[0].diffStaged).toBe(false);
-    expect(tabs[0].diffCommitId).toBe("abc123");
+    saveSidebarTabs(db, "directory", "dir-1", ALL_TAB_TYPES, "__notes__", 250, null, "__notes__");
+    expect(getSidebarTabs(db, "directory", "dir-1").map((tab) => tab.tabType)).toEqual([
+      "file", "browser", "sourceControl", "commits", "search", "notes", "explorer",
+    ]);
   });
 });
