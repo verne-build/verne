@@ -130,6 +130,9 @@ export function dropFilePanelScope(scopeId: string): void {
   let dirtyChanged = false;
   for (const scopeType of ["directory", "agent_worktree"] as const) {
     const key = `${scopeType}:${scopeId}`;
+    for (let index = closedTabStack.length - 1; index >= 0; index--) {
+      if (closedTabStack[index].key === key) closedTabStack.splice(index, 1);
+    }
     const state = dirState.value.get(key);
     if (!state) continue;
     for (const tab of state.tabs) {
@@ -160,13 +163,23 @@ export function syncFilePanelFilePath(oldPath: string, newPath: string): void {
   for (const [key, state] of dirState.value.entries()) {
     const index = state.tabs.findIndex((tab) => tab.kind === "file" && tab.filePath === oldPath);
     if (index === -1) continue;
-    state.tabs = state.tabs.map((tab, tabIndex) =>
-      tabIndex === index && tab.kind === "file"
-        ? { ...tab, id: newPath, filePath: newPath, label: newLabel }
-        : tab,
+    const destinationIndex = state.tabs.findIndex(
+      (tab, tabIndex) => tabIndex !== index && tab.kind === "file" && tab.filePath === newPath,
     );
+    if (destinationIndex === -1) {
+      state.tabs = state.tabs.map((tab, tabIndex) =>
+        tabIndex === index && tab.kind === "file"
+          ? { ...tab, id: newPath, filePath: newPath, label: newLabel }
+          : tab,
+      );
+    } else {
+      state.tabs = state.tabs.filter((_, tabIndex) => tabIndex !== index);
+    }
     if (state.activeId === oldPath) state.activeId = newPath;
-    state.activationHistory = state.activationHistory.map((id) => id === oldPath ? newPath : id);
+    const remappedHistory = state.activationHistory.map((id) => id === oldPath ? newPath : id);
+    state.activationHistory = remappedHistory.filter(
+      (id, historyIndex) => remappedHistory.lastIndexOf(id) === historyIndex,
+    );
     if (dirtyFiles.has(oldPath)) {
       dirtyFiles.delete(oldPath);
       dirtyFiles.add(newPath);
@@ -323,7 +336,10 @@ export function useFilePanelTabs(scope: () => FpScope | null) {
     const state = resolve();
     if (!state) return "";
     const url = normalizeBrowserUrl(rawUrl);
-    const tabId = id ?? `browser:${crypto.randomUUID()}`;
+    const requestedId = id ?? `browser:${crypto.randomUUID()}`;
+    const tabId = state.tabs.some((tab) => tab.id === requestedId)
+      ? `browser:${crypto.randomUUID()}`
+      : requestedId;
     state.tabs = [...state.tabs, {
       kind: "browser",
       id: tabId,

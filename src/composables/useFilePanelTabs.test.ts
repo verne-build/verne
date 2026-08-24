@@ -287,4 +287,46 @@ describe("file panel tabs", () => {
     expect(panel.focusMostRecentFileOrExplorer()).toBe(firstExplorer);
     expect(panel.activeId.value).toBe(firstExplorer);
   });
+
+  it("does not reopen a closed file after its scope is dropped", async () => {
+    const { mod, panel } = await loadedTabs();
+    panel.openFile("/repo/removed.ts", undefined, { permanent: true });
+    panel.closeTab("/repo/removed.ts");
+
+    mod.dropFilePanelScope(scope.scopeId);
+    await mod.ensureFilePanelLoaded(scope);
+    panel.reopenLastClosed();
+
+    expect(panel.tabs.value).toEqual([]);
+  });
+
+  it("generates a fresh id when an explicit browser id is already live", async () => {
+    const { panel } = await loadedTabs();
+    const first = panel.openBrowserTab("https://one.example", undefined, "agent:browser");
+    const second = panel.openBrowserTab("https://two.example", undefined, "agent:browser");
+
+    expect(first).toBe("agent:browser");
+    expect(second).toMatch(/^browser:/);
+    expect(new Set(panel.tabs.value.map((tab) => tab.id))).toEqual(new Set([first, second]));
+  });
+
+  it("keeps the existing destination tab when a file path sync collides", async () => {
+    const { mod, panel } = await loadedTabs();
+    panel.openFile("/repo/old.ts", { line: 3, column: 4 }, { permanent: true });
+    const browserId = panel.openBrowserTab("https://example.com");
+    panel.openFile("/repo/new.ts", { line: 20, column: 8 }, { permanent: true });
+    panel.updateTabViewState("/repo/new.ts", { scrollTop: 99, cursorLine: 21, cursorColumn: 9 });
+    panel.setActiveId("/repo/old.ts");
+    panel.setFileDirty("/repo/old.ts", true);
+
+    mod.syncFilePanelFilePath("/repo/old.ts", "/repo/new.ts");
+
+    expect(panel.tabs.value.map((tab) => tab.id)).toEqual([browserId, "/repo/new.ts"]);
+    expect(panel.tabs.value[1]).toMatchObject({
+      filePath: "/repo/new.ts", scrollTop: 99, cursorLine: 21, cursorColumn: 9,
+    });
+    expect(panel.activeId.value).toBe("/repo/new.ts");
+    expect(panel.isFileDirty("/repo/old.ts")).toBe(false);
+    expect(panel.isFileDirty("/repo/new.ts")).toBe(true);
+  });
 });
