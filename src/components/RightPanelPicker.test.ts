@@ -61,6 +61,20 @@ describe("RightPanelPicker", () => {
     expect(rows(mounted.host)[0].textContent?.trim()).toBe("FilesF");
   });
 
+  it("keeps each row's icon, label, and shortcut on one centered alignment grid", async () => {
+    const mounted = await mountPicker();
+    if (!mounted) return;
+    app = mounted.app;
+
+    const firstRow = rows(mounted.host)[0];
+    expect(firstRow.classList).toContain("grid");
+    expect(firstRow.classList).toContain("grid-cols-[1rem_minmax(0,1fr)_auto]");
+    expect(firstRow.classList).toContain("items-center");
+    expect(firstRow.querySelector("[data-slot='item-media']")?.classList).toContain("size-4");
+    expect(firstRow.querySelector("[data-slot='item-title']")?.classList).toContain("leading-5");
+    expect(firstRow.querySelector("[data-slot='item-actions']")?.classList).toContain("h-5");
+  });
+
   it("wraps focus between picker rows with ArrowUp and ArrowDown", async () => {
     const mounted = await mountPicker();
     if (!mounted) return;

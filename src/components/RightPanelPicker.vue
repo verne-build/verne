@@ -35,14 +35,14 @@ function moveFocus(index: number, delta: -1 | 1) {
         type="button"
         data-picker-row
         variant="muted"
-        class="h-11 w-full rounded-lg bg-muted/50 text-left transition-colors hover:bg-muted focus-visible:bg-muted focus-visible:ring-1 focus-visible:ring-ring"
+        class="grid h-11 w-full grid-cols-[1rem_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-0 rounded-lg bg-muted/50 px-4 py-0 text-left transition-colors hover:bg-muted focus-visible:bg-muted focus-visible:ring-1 focus-visible:ring-ring"
         @click="emit('open', entry.kind)"
         @keydown.up.prevent="moveFocus(index, -1)"
         @keydown.down.prevent="moveFocus(index, 1)"
       >
-        <ItemMedia><component :is="entry.icon" class="size-3.5 text-muted-foreground" /></ItemMedia>
-        <ItemTitle>{{ entry.label }}</ItemTitle>
-        <ItemActions v-if="entry.shortcutText">
+        <ItemMedia class="size-4"><component :is="entry.icon" class="size-3.5 text-muted-foreground" /></ItemMedia>
+        <ItemTitle class="h-5 leading-5">{{ entry.label }}</ItemTitle>
+        <ItemActions v-if="entry.shortcutText" class="h-5">
           <Kbd>{{ entry.shortcutText }}</Kbd>
         </ItemActions>
       </Item>
