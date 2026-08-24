@@ -28,10 +28,7 @@ import BrowserSidebar from "@/components/browser/BrowserSidebar.vue";
 
 const props = defineProps<{ tabId: string; url: string | null; workspaceDir: string; directoryId?: string; active?: boolean; newTabMode?: boolean }>();
 
-// In new-tab mode this pane is the synthetic "new tab page": the webview stays
-// blank and committing the address bar spawns a real browser tab instead of
-// navigating in place (parent handles the emit).
-const emit = defineEmits<{ "navigate-new-tab": [url: string]; "open-new-tab": [url: string] }>();
+const emit = defineEmits<{ "open-new-tab": [url: string] }>();
 
 type Suggestion =
   | { type: "navigate"; label: string; value: string; dest: string }
@@ -201,13 +198,11 @@ async function go(v: string) {
   if (!url) return;
   sel.value = -1;
   addressEdited.value = false;
-  // New-tab page: hand the URL to the parent to spawn a real tab, then reset to
-  // blank so the pinned new-tab page is fresh next time.
   if (props.newTabMode) {
-    emit("navigate-new-tab", url);
-    urlInput.value = "";
-    focused.value = false;
-    return;
+    updateBrowserTab(props.tabId, {
+      browserUrl: url,
+      label: labelForUrl(url) || "New Tab",
+    });
   }
   const id = currentWebContentsId();
   if (id === null) return;
@@ -346,9 +341,8 @@ function onDomReady() {
   }
   updateNavState();
   // Register this tab with main so the CDP browser-control server can attach a
-  // debugger and drive it for agent automation. Idempotent on refire. The blank
-  // new-tab page is never a real navigation target, so skip it.
-  if (wcId !== null && !props.newTabMode) {
+  // debugger and drive it for agent automation. Idempotent on refire.
+  if (wcId !== null) {
     invoke("native_browser_register", { tabId: props.tabId, wcId, workspaceDir: props.workspaceDir })
       .then(() => { if (props.active) reportActive(); })
       .catch((e) => { toast.error(String(e)); });
@@ -358,15 +352,13 @@ function onDomReady() {
 // Tell main which browser tab the user is viewing, so browser_list can flag the
 // active tab for agents. Fires on activation and after (re)registration.
 function reportActive() {
-  if (props.newTabMode) return;
   invoke("native_browser_set_active", { tabId: props.tabId, workspaceDir: props.workspaceDir }).catch(() => {});
 }
 watch(() => props.active, (a) => { if (a) reportActive(); });
 
 function onKeydown(e: KeyboardEvent) { if (e.key === "Escape" && sidebarOpen.value) sidebarOpen.value = false; }
 
-// New-tab page is mounted fresh each time it's shown (v-if), so focus the
-// address bar on mount so the user can type a URL/query immediately.
+// Focus a blank tab's address bar on mount so the user can type immediately.
 onMounted(async () => {
   window.addEventListener("keydown", onKeydown);
   if (!props.newTabMode) return;
@@ -413,8 +405,7 @@ function setProgressTarget(target: number) {
 function onStartLoading() {
   // Reloading / navigating dismisses any prior load-failure screen.
   loadError.value = null;
-  // The new-tab page never navigates in place; its blank about:blank load
-  // shouldn't flash the progress bar.
+  // A blank tab's initial about:blank load shouldn't flash the progress bar.
   if (props.newTabMode) return;
   if (progressDoneTimer) { clearTimeout(progressDoneTimer); progressDoneTimer = null; }
   stopProgressAnimation();
@@ -486,9 +477,8 @@ onBeforeUnmount(() => {
   }
   stopProgressAnimation();
   if (progressDoneTimer) clearTimeout(progressDoneTimer);
-  // Detach the CDP session for this tab (main drops the registry entry). The
-  // new-tab page was never registered, so nothing to unregister.
-  if (!props.newTabMode) invoke("native_browser_unregister", { tabId: props.tabId }).catch(() => {});
+  // Detach the CDP session for this tab (main drops the registry entry).
+  invoke("native_browser_unregister", { tabId: props.tabId }).catch(() => {});
   window.removeEventListener("keydown", onKeydown);
 });
 

@@ -14,7 +14,7 @@ const BrowserView = defineAsyncComponent(() => import("@/components/browser/Brow
 import OverlaySidebarGroup from "./OverlaySidebarGroup.vue";
 import { ask } from "@/platform";
 import { Files } from "@lucide/vue";
-import { EXPLORER_TAB_ID, SC_TAB_ID, COMMITS_TAB_ID, NOTES_TAB_ID, NEW_TAB_ID, type FilePanelBrowserTab } from "@/types";
+import { EXPLORER_TAB_ID, SC_TAB_ID, COMMITS_TAB_ID, NOTES_TAB_ID, type FilePanelBrowserTab } from "@/types";
 import SourceControlTab from "./SourceControlTab.vue";
 import CommitsTab from "./CommitsTab.vue";
 import FileEditorTab from "./FileEditorTab.vue";
@@ -478,7 +478,7 @@ function revertScFile() {
     </template>
 
     <div
-      v-else-if="activeTab?.kind !== 'browser' && activeTab?.kind !== 'newTab' && activeTab?.kind !== 'file' && activeTab?.kind !== 'explorer' && activeTab?.kind !== 'sourceControl' && activeTab?.kind !== 'commits'"
+      v-else-if="activeTab?.kind !== 'browser' && activeTab?.kind !== 'file' && activeTab?.kind !== 'explorer' && activeTab?.kind !== 'sourceControl' && activeTab?.kind !== 'commits'"
       class="flex h-full items-center justify-center bg-sidebar"
     >
       <Empty>
@@ -578,6 +578,7 @@ function revertScFile() {
         :style="browserTabStyle(tab.id)"
         :tab-id="tab.id"
         :url="tab.browserUrl"
+        :new-tab-mode="tab.browserUrl === null"
         :workspace-dir="activeCwd"
         :directory-id="activeDirId"
         :active="tab.id === activeTab?.id"
@@ -585,23 +586,5 @@ function revertScFile() {
         @open-new-tab="(url) => openBrowserTab(url)"
       />
     </div>
-
-    <!-- New-tab page: the pinned Globe shows the browser address bar in a blank
-         state. Committing a URL here spawns a real browser tab (and switches to
-         it), instead of navigating in place. Mounted on demand (v-if) — it holds
-         no page state to preserve, so no need for a permanent idle webview. -->
-    <div v-if="activeTab?.kind === 'newTab'" class="flex-1 min-h-0">
-      <BrowserView
-        new-tab-mode
-        :tab-id="NEW_TAB_ID"
-        url="about:blank"
-        :workspace-dir="activeCwd"
-        :active="activeTab?.kind === 'newTab'"
-        class="h-full w-full"
-        @navigate-new-tab="(url) => openBrowserTab(url)"
-        @open-new-tab="(url) => openBrowserTab(url)"
-      />
-    </div>
-
   </div>
 </template>
