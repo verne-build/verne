@@ -434,20 +434,6 @@ export function useFilePanelTabs(scope: () => FpScope | null) {
     triggerAndPersist();
   }
 
-  // Task 6 compatibility adapter: reorder only the existing browser slots.
-  function reorderBrowserTabs(ids: string[]): void {
-    const state = resolve();
-    if (!state) return;
-    const browsers = state.tabs.filter(
-      (tab): tab is FilePanelBrowserTab => tab.kind === "browser",
-    );
-    const reordered = reorderById(browsers, ids);
-    if (!reordered) return;
-    let browserIndex = 0;
-    state.tabs = state.tabs.map((tab) => tab.kind === "browser" ? reordered[browserIndex++] : tab);
-    triggerAndPersist();
-  }
-
   function focusMostRecentFileOrExplorer(): string | null {
     const state = resolve();
     if (!state) return null;
@@ -488,8 +474,6 @@ export function useFilePanelTabs(scope: () => FpScope | null) {
 
   return {
     tabs,
-    // Task 6 compatibility alias. Every entry is a real tab.
-    allTabs: tabs,
     scSelection,
     commitsSelection,
     activeId,
@@ -505,7 +489,6 @@ export function useFilePanelTabs(scope: () => FpScope | null) {
     setScSelection,
     setCommitsSelection,
     reorderTabs,
-    reorderBrowserTabs,
     focusMostRecentFileOrExplorer,
     updateTabViewState,
     setFileDirty,

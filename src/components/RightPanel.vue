@@ -15,7 +15,7 @@ const BrowserView = defineAsyncComponent(() => import("@/components/browser/Brow
 import OverlaySidebarGroup from "./OverlaySidebarGroup.vue";
 import { ask } from "@/platform";
 import { Files } from "@lucide/vue";
-import { EXPLORER_TAB_ID, SC_TAB_ID, COMMITS_TAB_ID, NOTES_TAB_ID, type FilePanelBrowserTab } from "@/types";
+import type { FilePanelBrowserTab } from "@/types";
 import SourceControlTab from "./SourceControlTab.vue";
 import CommitsTab from "./CommitsTab.vue";
 import FileEditorTab from "./FileEditorTab.vue";
@@ -52,7 +52,7 @@ const {
   setActiveId,
   closeTab,
   reorderTabs,
-  reorderBrowserTabs,
+  focusMostRecentFileOrExplorer,
   setFileDirty,
   isFileDirty,
   updateTabViewState,
@@ -153,16 +153,16 @@ onUnmounted(() => {
 });
 
 function handleSwitchScView(v: "changes" | "history") {
-  setActiveId(v === "history" ? COMMITS_TAB_ID : SC_TAB_ID);
+  openTabOfKind(v === "history" ? "commits" : "sourceControl");
 }
 
 // Navigator "jump to comment": switch to the right panel and open that diff.
 async function handleJumpToComment(c: ReviewComment) {
   if (c.source === "commit" && c.commitSha) {
-    setActiveId(COMMITS_TAB_ID);
+    openTabOfKind("commits");
     await handleOpenCommitDiff(c.relPath, c.commitSha, c.commitSha.slice(0, 7));
   } else {
-    setActiveId(SC_TAB_ID);
+    openTabOfKind("sourceControl");
     await handleOpenGitDiff(c.relPath, c.staged ?? false);
   }
 }
@@ -223,31 +223,29 @@ watch(searchSelected, () => search.dismissOverlay());
 // open it via the same window event the global shortcuts use.
 function handleOpenFileSearch() { window.dispatchEvent(new CustomEvent("open-file-search")); }
 
-// ⌘W routed here when focus is in the file panel — close the active file tab
-// (synthetic SC/Commits/Explorer tabs are pinned and ignored).
+// ⌘W routed here when focus is in the right panel — close its active tab.
+// Dirty files keep the existing confirmation path; every other kind closes now.
 function handleCloseActiveFileTab() {
-  const t = activeTab.value;
-  if (t?.kind === "file") closeFileTab(t.id);
+  const tab = activeTab.value;
+  if (!tab) return;
+  if (tab.kind === "file") void closeFileTab(tab.id);
+  else closeTab(tab.id);
 }
 
-// Reveal the FileExplorer tree and make sure it's actually mounted. The tree
-// lives in the file/explorer view's left split — when an SC/Commits view is
-// active (or activeId points at a stale synthetic id) it isn't mounted, so
-// switch to a file tab if one exists, else the explorer placeholder. EXPLORER_TAB
-// is only in allTabs when there are no file tabs, so never force it otherwise.
+// Reveal the FileExplorer tree and focus the most recently active live
+// file/explorer tab. If the scope has neither, open a fresh explorer tab.
 function revealExplorer() {
   explorer.open.value = true;
-  const t = activeTab.value;
-  if (t?.kind === "file" || t?.kind === "explorer") return;
-  const lastFile = [...tabs.value].reverse().find((x) => x.kind === "file");
-  setActiveId(lastFile ? lastFile.id : EXPLORER_TAB_ID);
+  const active = activeTab.value;
+  if (active?.kind === "file" || active?.kind === "explorer") return;
+  if (!focusMostRecentFileOrExplorer()) openTabOfKind("explorer");
 }
 
 // ⌘⇧E / ⌃⇧G — reveal the explorer tree or the Source Control view.
 function handleFocusFilePanel(e: Event) {
   const view = (e as CustomEvent<string>).detail;
-  if (view === "sc") setActiveId(SC_TAB_ID);
-  else if (view === "notes") setActiveId(NOTES_TAB_ID);
+  if (view === "sc") openTabOfKind("sourceControl");
+  else if (view === "notes") openTabOfKind("notes");
   else revealExplorer();
 }
 
@@ -425,7 +423,7 @@ function revertScFile() {
       @select="setActiveId"
       @close="closeFileTab"
       @reorder="reorderTabs"
-      @reorder-browser="reorderBrowserTabs"
+      @open-kind="openTabOfKind"
       @promote="promoteTab"
     />
 

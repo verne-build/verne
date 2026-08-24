@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onBeforeUnmount, ref, reactive, watch } from "vue";
 import type { FilePanelTab, FilePanelBrowserTab } from "@/types";
-import { COMMITS_TAB_ID } from "@/types";
-import { X, GitBranch, Files, Maximize2, Minimize2, PencilLine, Globe, Asterisk, Search, PanelBottom } from "@lucide/vue";
+import type { OpenableTabKind } from "@/types";
+import { X, Asterisk, Plus } from "@lucide/vue";
 import { toast } from "vue-sonner";
 import { DragDropProvider } from "@dnd-kit/vue";
 import { closestCorners } from "@dnd-kit/collision";
@@ -19,17 +19,9 @@ import FileIcon from "./FileIcon.vue";
 import { useRpc } from "@/composables/useRpc";
 import { addToAgent } from "@/composables/useAddToAgent";
 import { useShortcuts } from "@/composables/useShortcuts";
+import { TAB_TYPE_ENTRIES, tabTypeEntry } from "@/lib/rightPanelTabTypes";
 import { TabBar, TabBarTrigger } from "./ui/tab-bar";
 import { Button } from "./ui/button";
-import { Kbd, KbdGroup } from "./ui/kbd";
-import PanelRightFilled from "./icons/PanelRightFilled.vue";
-import PanelBottomFilled from "./icons/PanelBottomFilled.vue";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-  TooltipProvider,
-} from "./ui/tooltip";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -37,6 +29,13 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "./ui/context-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuShortcut,
+  DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
 
 const props = defineProps<{
   tabs: FilePanelTab[];
@@ -51,20 +50,12 @@ const emit = defineEmits<{
   select: [id: string];
   close: [id: string];
   reorder: [ids: string[]];
-  reorderBrowser: [ids: string[]];
+  openKind: [kind: OpenableTabKind];
   promote: [id: string];
 }>();
 
-function isClosable(t: FilePanelTab) {
-  return t.kind === "file" || t.kind === "browser";
-}
-
 function isDirty(t: FilePanelTab) {
   return t.kind === "file" && props.isFileDirty(t.filePath);
-}
-
-function closableTabs() {
-  return props.tabs.filter(isClosable);
 }
 
 function closeIds(ids: string[]) {
@@ -72,23 +63,23 @@ function closeIds(ids: string[]) {
 }
 
 function closeOthers(id: string) {
-  closeIds(closableTabs().filter(t => t.id !== id).map(t => t.id));
+  closeIds(props.tabs.filter(t => t.id !== id).map(t => t.id));
 }
 
 function closeSaved() {
-  closeIds(closableTabs().filter(t => !isDirty(t)).map(t => t.id));
+  closeIds(props.tabs.filter(t => !isDirty(t)).map(t => t.id));
 }
 
 function closeAll() {
-  closeIds(closableTabs().map(t => t.id));
+  closeIds(props.tabs.map(t => t.id));
 }
 
 function hasOthers(id: string) {
-  return closableTabs().some(t => t.id !== id);
+  return props.tabs.some(t => t.id !== id);
 }
 
 function hasSaved() {
-  return closableTabs().some(t => !isDirty(t));
+  return props.tabs.some(t => !isDirty(t));
 }
 
 function tabAbsPath(t: FilePanelTab): string | null {
@@ -133,37 +124,27 @@ async function revealInFinder(t: FilePanelTab) {
   }
 }
 
-function isSortable(t: FilePanelTab) {
-  return t.kind === "file" || t.kind === "browser";
-}
-
-const browserSortableIds = computed(() => browserStripTabs.value.map(t => t.id));
-const fileSortableIds = computed(() =>
-  fileStripTabs.value.filter(t => t.kind === "file").map(t => t.id),
-);
-
-const pinnedTabs = computed(() =>
-  props.tabs.filter(t =>
-    t.kind === "sourceControl" || t.kind === "notes" || t.kind === "search",
-  ),
-);
-// Browser tabs render as their own group at the start of the strip; file +
-// explorer tabs follow after a divider.
-const browserStripTabs = computed(() =>
-  props.tabs.filter((t): t is FilePanelBrowserTab => t.kind === "browser"),
-);
-const fileStripTabs = computed(() =>
-  props.tabs.filter(t => t.kind === "file" || t.kind === "explorer"),
-);
-// Explorer is a synthetic tab shown only when no files are open. It pins to the
-// left of the divider with the other pinned icons; real file tabs scroll.
-const explorerTab = computed(() => props.tabs.find(t => t.kind === "explorer") ?? null);
-const fileTabsOnly = computed(() => props.tabs.filter(t => t.kind === "file"));
-// Synthetic "new tab page" pinned button (Globe). Selecting it shows the browser
-// address bar in a blank state; navigating from there spawns a real browser tab.
-const newTabTab = computed(() => props.tabs.find(t => t.kind === "newTab") ?? null);
+const sortableIds = computed(() => props.tabs.map((tab) => tab.id));
+const renderTabs = computed(() => props.tabs.map((tab, index) => {
+  const entry = tab.kind === "file" || tab.kind === "browser" ? null : tabTypeEntry(tab.kind);
+  return {
+    tab,
+    index,
+    icon: entry?.icon ?? null,
+    label: tab.kind === "file" || tab.kind === "browser" ? tab.label : entry!.label,
+  };
+}));
+const openEntries = computed(() => TAB_TYPE_ENTRIES.map((entry) => {
+  const shortcut = "shortcut" in entry ? entry.shortcut : undefined;
+  return {
+    ...entry,
+    shortcutText: shortcut && shortcuts.bindingOf(shortcut)
+      ? shortcuts.displayKeys(shortcut).join("")
+      : "",
+  };
+}));
 const dirtyFileIds = computed(() =>
-  fileStripTabs.value
+  props.tabs
     .filter((t): t is Extract<FilePanelTab, { kind: "file" }> => t.kind === "file")
     .filter(t => props.isFileDirty(t.filePath))
     .map(t => t.id),
@@ -246,13 +227,6 @@ watch(
   { flush: "post" },
 );
 
-function browserIndexFor(id: string): number {
-  return browserSortableIds.value.indexOf(id);
-}
-function fileIndexFor(id: string): number {
-  return fileSortableIds.value.indexOf(id);
-}
-
 // Out-of-bar = extract: while the cursor sits inside the tab row, reorder
 // normally; once it leaves (e.g. dragging down onto a terminal), report no
 // collision so dnd-kit drops the reorder target and siblings snap back. The
@@ -332,194 +306,60 @@ function onDragEnd(e: DragEndPayload) {
   const from = src.initialIndex ?? -1;
   const to = src.index ?? -1;
   if (from < 0 || to < 0 || from === to) return;
-  // Reorder within the group the dragged tab belongs to; the two groups have
-  // independent index spaces.
-  const isBrowser = src.id != null && browserSortableIds.value.includes(src.id);
-  const ids = isBrowser ? [...browserSortableIds.value] : [...fileSortableIds.value];
+  const ids = [...sortableIds.value];
   if (from >= ids.length || to >= ids.length) return;
   const [moved] = ids.splice(from, 1);
   ids.splice(to, 0, moved);
-  if (isBrowser) emit("reorderBrowser", ids);
-  else emit("reorder", ids);
+  emit("reorder", ids);
 }
 </script>
 
 <template>
-  <TooltipProvider :delay-duration="250">
-    <!-- pr reserves the persistent top-right control strip (App.vue). -->
-    <TabBar variant="pill" class="pl-1.5 pr-[82px] gap-0.5 bg-sidebar">
-      <!-- Pinned tabs: SC + Commits, never scroll -->
-      <div class="flex items-center gap-0.5 h-11.5 shrink-0">
-        <template v-for="tab in pinnedTabs" :key="tab.id">
-          <Tooltip v-if="tab.kind === 'sourceControl'">
-            <TooltipTrigger as-child>
-              <TabBarTrigger
-                :active="activeId === tab.id || activeId === COMMITS_TAB_ID"
-                variant="pill"
-                class="px-1.5 transition-none"
-                @click="emit('select', tab.id)"
-              >
-                <GitBranch class="size-3.5 shrink-0" />
-              </TabBarTrigger>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">Source Control</TooltipContent>
-          </Tooltip>
-          <Tooltip v-else-if="tab.kind === 'notes'">
-            <TooltipTrigger as-child>
-              <TabBarTrigger
-                :active="activeId === tab.id"
-                variant="pill"
-                class="px-1.5 transition-none"
-                @click="emit('select', tab.id)"
-              >
-                <PencilLine class="size-3.5 shrink-0" />
-              </TabBarTrigger>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">Notes</TooltipContent>
-          </Tooltip>
-          <Tooltip v-else-if="tab.kind === 'search'">
-            <TooltipTrigger as-child>
-              <TabBarTrigger
-                :active="activeId === tab.id"
-                variant="pill"
-                class="px-1.5 transition-none"
-                @click="emit('select', tab.id)"
-              >
-                <Search class="size-3.5 shrink-0" />
-              </TabBarTrigger>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">Search</TooltipContent>
-          </Tooltip>
-        </template>
-        <Tooltip v-if="newTabTab">
-          <TooltipTrigger as-child>
-            <TabBarTrigger
-              :active="activeId === newTabTab.id"
-              variant="pill"
-              class="px-1.5 transition-none"
-              tabindex="0"
-              @click="emit('select', newTabTab.id)"
-            >
-              <Globe class="size-3.5 shrink-0" />
-            </TabBarTrigger>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">Browser</TooltipContent>
-        </Tooltip>
-        <Tooltip v-if="explorerTab">
-          <TooltipTrigger as-child>
-            <TabBarTrigger
-              :active="activeId === explorerTab.id"
-              variant="pill"
-              class="px-1.5 transition-none"
-              :data-tab-id="explorerTab.id"
-              @click="emit('select', explorerTab.id)"
-            >
-              <Files class="size-3.5 shrink-0" />
-            </TabBarTrigger>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">Files</TooltipContent>
-        </Tooltip>
-      </div>
-
-      <!-- Divider between pinned tabs and the scrollable strip (browser or file
-           tabs, whichever comes first). Always present when the strip has tabs. -->
-      <div
-        v-if="browserStripTabs.length || fileTabsOnly.length"
-        aria-hidden="true"
-        class="self-center mx-1 h-5 w-px bg-border shrink-0"
-      />
-
-      <!-- Scrollable tabs: Explorer (when empty) + file tabs -->
-      <DragDropProvider :sensors="sortableSensors" @drag-start="onDragStart" @drag-end="onDragEnd">
+  <!-- pr reserves the persistent top-right control strip (App.vue). -->
+  <TabBar variant="pill" class="pl-1.5 pr-[82px] gap-0.5 bg-sidebar">
+    <DragDropProvider :sensors="sortableSensors" @drag-start="onDragStart" @drag-end="onDragEnd">
       <div class="relative flex-1 min-w-0 h-11.5 flex items-stretch">
         <div
           ref="scrollEl"
           class="h-full min-w-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
           <div ref="barRowRef" class="flex items-center h-11.5 gap-0.5">
-            <!-- Browser tab group -->
             <SortableItem
-              v-for="tab in browserStripTabs"
-              :key="tab.id"
-              :id="tab.id"
-              :index="browserIndexFor(tab.id)"
+              v-for="item in renderTabs"
+              :key="item.tab.id"
+              :id="item.tab.id"
+              :index="item.index"
               :collision-detector="tabBarCollision"
-              group="browser-tabs"
+              group="right-panel-tabs"
               class="inline-flex shrink-0"
             >
-              <TabBarTrigger
-                :active="activeId === tab.id"
-                variant="pill"
-                class="group gap-1.5 pl-1.5 pr-1.5 transition-none overflow-hidden data-[dragging=true]:opacity-50"
-                :data-tab-id="tab.id"
-                @click="emit('select', tab.id)"
-              >
-                <img
-                  v-if="hasFavicon(tab)"
-                  :src="tab.faviconUrl"
-                  class="size-3.5 shrink-0 object-contain"
-                  alt=""
-                  @error="onFaviconError(tab.id)"
-                />
-                <Asterisk v-else class="size-3.5 shrink-0" />
-                <!-- Cap width: long page titles get truncated with an ellipsis;
-                     native title attr reveals the full label on hover.
-                     overflow-clip (not hidden) clips WITHOUT making the span a
-                     scroll container, so it never traps wheel-scroll over the
-                     tab strip. -->
-                <span class="overflow-clip text-ellipsis whitespace-nowrap max-w-[166px]" :title="tab.label">{{ tab.label }}</span>
-                <span
-                  class="pointer-events-none hidden group-hover:block absolute right-0 top-0 bottom-0 w-12 bg-linear-to-r from-transparent via-tab-active-bg to-tab-active-bg"
-                />
-                <Button
-                  size="icon-xs"
-                  variant="ghost"
-                  data-no-drag
-                  class="size-5 hidden group-hover:inline-flex absolute right-1 top-1/2 z-10 -translate-y-1/2 transition-none"
-                  tabindex="0"
-                  @click.stop="emit('close', tab.id)"
-                >
-                  <X />
-                </Button>
-              </TabBarTrigger>
-            </SortableItem>
-
-            <!-- Divider between browser and file groups. pointer-events-none so
-                 wheel events fall through to the scroll viewport instead of
-                 hit-testing this tiny non-scrollable element (which stalls the
-                 native vertical-wheel→horizontal-scroll behavior). -->
-            <div
-              v-if="browserStripTabs.length"
-              aria-hidden="true"
-              class="pointer-events-none self-center mx-1 h-5 w-px bg-border shrink-0"
-            />
-
-            <!-- File group: file tabs (Explorer pins to the left of the divider) -->
-            <template v-for="tab in fileTabsOnly" :key="tab.id">
-              <!-- File tabs -->
-              <SortableItem
-                v-if="tab.kind === 'file'"
-                :id="tab.id"
-                :index="fileIndexFor(tab.id)"
-                :disabled="!isSortable(tab)"
-                :collision-detector="tabBarCollision"
-                group="file-tabs"
-                class="inline-flex shrink-0"
-              >
               <ContextMenu>
                 <ContextMenuTrigger as-child>
                   <TabBarTrigger
-                    :active="activeId === tab.id"
+                    :active="activeId === item.tab.id"
                     variant="pill"
                     class="group gap-1.5 pl-1.5 pr-1.5 transition-none overflow-hidden data-[dragging=true]:opacity-50"
-                    :data-tab-id="tab.id"
-                    @click="emit('select', tab.id)"
-                    @dblclick="emit('promote', tab.id)"
+                    :data-tab-id="item.tab.id"
+                    @click="emit('select', item.tab.id)"
+                    @dblclick="item.tab.kind === 'file' && emit('promote', item.tab.id)"
                   >
-                    <FileIcon :name="tab.label" :size="14" />
-                    <span class="whitespace-nowrap" :class="{ italic: tab.ephemeral }">{{ tab.label }}</span>
+                    <FileIcon v-if="item.tab.kind === 'file'" :name="item.tab.label" :size="14" />
+                    <img
+                      v-else-if="item.tab.kind === 'browser' && hasFavicon(item.tab)"
+                      :src="item.tab.faviconUrl"
+                      class="size-3.5 shrink-0 object-contain outline outline-1 outline-black/10 dark:outline-white/10"
+                      alt=""
+                      @error="onFaviconError(item.tab.id)"
+                    />
+                    <Asterisk v-else-if="item.tab.kind === 'browser'" class="size-3.5 shrink-0" />
+                    <component v-else :is="item.icon" class="size-3.5 shrink-0" />
                     <span
-                      v-if="tab.filePath && isFileDirty(tab.filePath)"
+                      class="overflow-clip text-ellipsis whitespace-nowrap max-w-[166px]"
+                      :class="{ italic: item.tab.kind === 'file' && item.tab.ephemeral }"
+                      :title="item.label"
+                    >{{ item.label }}</span>
+                    <span
+                      v-if="item.tab.kind === 'file' && isFileDirty(item.tab.filePath)"
                       class="size-1.5 rounded-full bg-muted-foreground shrink-0"
                     />
                     <span
@@ -531,49 +371,72 @@ function onDragEnd(e: DragEndPayload) {
                       data-no-drag
                       class="size-5 hidden group-hover:inline-flex absolute right-1 top-1/2 z-10 -translate-y-1/2 transition-none"
                       tabindex="0"
-                      @click.stop="emit('close', tab.id)"
+                      @click.stop="emit('close', item.tab.id)"
                     >
                       <X />
                     </Button>
                   </TabBarTrigger>
                 </ContextMenuTrigger>
                 <ContextMenuContent @close-auto-focus.prevent>
-                  <ContextMenuItem @select="emit('close', tab.id)">Close</ContextMenuItem>
-                  <ContextMenuItem :disabled="!hasOthers(tab.id)" @select="closeOthers(tab.id)">
+                  <ContextMenuItem @select="emit('close', item.tab.id)">Close</ContextMenuItem>
+                  <ContextMenuItem :disabled="!hasOthers(item.tab.id)" @select="closeOthers(item.tab.id)">
                     Close Others
                   </ContextMenuItem>
                   <ContextMenuItem :disabled="!hasSaved()" @select="closeSaved()">
                     Close Saved
                   </ContextMenuItem>
                   <ContextMenuItem @select="closeAll()">Close All</ContextMenuItem>
-                  <ContextMenuSeparator />
-                  <ContextMenuItem @select="addToAgentTab(tab)">Add to Agent</ContextMenuItem>
-                  <ContextMenuSeparator />
-                  <ContextMenuItem @select="copyAbs(tab)">Copy Path</ContextMenuItem>
-                  <ContextMenuItem @select="copyRel(tab)">Copy Relative Path</ContextMenuItem>
-                  <ContextMenuSeparator />
-                  <ContextMenuItem @select="revealInFinder(tab)">Reveal in Finder</ContextMenuItem>
+                  <template v-if="item.tab.kind === 'file'">
+                    <ContextMenuSeparator />
+                    <ContextMenuItem @select="addToAgentTab(item.tab)">Add to Agent</ContextMenuItem>
+                    <ContextMenuSeparator />
+                    <ContextMenuItem @select="copyAbs(item.tab)">Copy Path</ContextMenuItem>
+                    <ContextMenuItem @select="copyRel(item.tab)">Copy Relative Path</ContextMenuItem>
+                    <ContextMenuSeparator />
+                    <ContextMenuItem @select="revealInFinder(item.tab)">Reveal in Finder</ContextMenuItem>
+                  </template>
                 </ContextMenuContent>
               </ContextMenu>
-              </SortableItem>
-            </template>
+            </SortableItem>
           </div>
         </div>
-        <!-- Left fade — extends -0.5 to cover the flex-gap seam with pinned tabs -->
         <div
           v-show="fadeLeft"
           aria-hidden="true"
           class="pointer-events-none absolute top-0 bottom-px -left-0.5 w-8 bg-linear-to-r from-sidebar to-transparent z-10"
         />
-        <!-- Right fade — extends +0.5 to cover the flex-gap seam with actions -->
         <div
           v-show="fadeRight"
           aria-hidden="true"
           class="pointer-events-none absolute top-0 bottom-px -right-0.5 w-8 bg-linear-to-l from-sidebar to-transparent z-10"
         />
       </div>
-      </DragDropProvider>
+    </DragDropProvider>
 
-    </TabBar>
-  </TooltipProvider>
+    <DropdownMenu v-if="tabs.length > 0">
+      <DropdownMenuTrigger as-child>
+        <Button
+          size="icon-xs"
+          variant="ghost"
+          class="mx-0.5 size-10 shrink-0 transition-none"
+          title="Open Tab"
+        >
+          <Plus class="size-3.5" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem
+          v-for="entry in openEntries"
+          :key="entry.kind"
+          @select="emit('openKind', entry.kind)"
+        >
+          <component :is="entry.icon" class="size-3.5" />
+          <span>{{ entry.label }}</span>
+          <DropdownMenuShortcut v-if="entry.shortcutText">
+            {{ entry.shortcutText }}
+          </DropdownMenuShortcut>
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  </TabBar>
 </template>

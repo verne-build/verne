@@ -90,13 +90,6 @@ export interface FilePanelSearchTab {
   id: "__search__";
 }
 
-// Synthetic pinned "new tab page": shows the browser address bar in a blank
-// state. Navigating from it spawns a real browser tab (see BrowserView newTabMode).
-export interface FilePanelNewTab {
-  kind: "newTab";
-  id: "__newtab__";
-}
-
 export interface FilePanelBrowserTab {
   kind: "browser";
   id: string;          // stable per browser tab, e.g. `browser:<uuid>`
@@ -112,7 +105,6 @@ export type FilePanelTab =
   | FilePanelExplorerTab
   | FilePanelNotesTab
   | FilePanelSearchTab
-  | FilePanelNewTab
   | FilePanelBrowserTab;
 
 export type OpenableTabKind =
@@ -129,7 +121,6 @@ export const COMMITS_TAB_ID = "__commits__" as const;
 export const EXPLORER_TAB_ID = "__explorer__" as const;
 export const NOTES_TAB_ID = "__notes__" as const;
 export const SEARCH_TAB_ID = "__search__" as const;
-export const NEW_TAB_ID = "__newtab__" as const;
 
 /** A note as listed in the sidebar. */
 export interface NoteMeta {

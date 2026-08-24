@@ -515,7 +515,7 @@ function selectTabByIndex(n: number) {
   return true;
 }
 
-// ⌘W — close the focused tab: file tab if focus is in the file panel, the
+// ⌘W — close the focused tab: right-panel tab if focus is in the file panel, the
 // focused bottom terminal if the bottom panel owns focus, else the active
 // terminal tab. Each owner applies its own close confirmation.
 function closeActiveTab() {

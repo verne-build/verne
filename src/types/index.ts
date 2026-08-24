@@ -24,7 +24,6 @@ export type {
   FilePanelExplorerTab,
   FilePanelNotesTab,
   FilePanelSearchTab,
-  FilePanelNewTab,
   FilePanelBrowserTab,
   FilePanelTab,
   OpenableTabKind,
@@ -50,7 +49,7 @@ export type {
   ReviewComment,
   ReviewContext,
 } from "./shared";
-export { WS_PORT, SC_TAB_ID, COMMITS_TAB_ID, EXPLORER_TAB_ID, NOTES_TAB_ID, SEARCH_TAB_ID, NEW_TAB_ID } from "./shared";
+export { WS_PORT, SC_TAB_ID, COMMITS_TAB_ID, EXPLORER_TAB_ID, NOTES_TAB_ID, SEARCH_TAB_ID } from "./shared";
 export type {
   AgentDiscoveryStatus,
   AgentInventoryItem,

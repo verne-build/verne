@@ -74,7 +74,6 @@ function tabToRow(tab: FilePanelTab, scopeId: string, position: number): Sidebar
       return {
         directoryId: scopeId, tabId: tab.id, tabType: tab.kind, label: tabTypeEntry(tab.kind).label, position,
       };
-    case "newTab": return null;
   }
 }
 
