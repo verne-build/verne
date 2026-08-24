@@ -380,7 +380,7 @@ function onDragEnd(e: DragEndPayload) {
                       variant="ghost"
                       data-no-drag
                       :aria-label="`Close ${item.label}`"
-                      class="size-5 hidden group-hover:inline-flex group-focus-within:inline-flex absolute right-1 top-1/2 z-10 -translate-y-1/2 transition-none"
+                      class="size-5 hidden group-hover:inline-flex group-has-[:focus-visible]:inline-flex absolute right-1 top-1/2 z-10 -translate-y-1/2 transition-none"
                       tabindex="0"
                       @click.stop="emit('close', item.tab.id)"
                     >

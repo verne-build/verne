@@ -252,7 +252,7 @@ describe("FileTabBar", () => {
     expect(mounted.events.close.mock.calls.map(([id]) => id)).toEqual(tabs.map((tab) => tab.id));
   });
 
-  it("names every close control and reveals it for keyboard focus", async () => {
+  it("reveals close controls for hover and visible keyboard focus, not mouse focus", async () => {
     const mounted = await mountTabBar();
     app = mounted.app;
 
@@ -260,7 +260,9 @@ describe("FileTabBar", () => {
       const close = mounted.host.querySelector<HTMLButtonElement>(`button[aria-label="Close ${label}"]`);
       expect(close, label).not.toBeNull();
       expect(close?.tabIndex).toBe(0);
-      expect(close?.className).toContain("group-focus-within:inline-flex");
+      expect(close?.className).toContain("group-hover:inline-flex");
+      expect(close?.className).toContain("group-has-[:focus-visible]:inline-flex");
+      expect(close?.className).not.toContain("group-focus-within:inline-flex");
     }
     expect(mounted.host.querySelector("button button")).toBeNull();
   });
