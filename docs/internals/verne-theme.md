@@ -16,7 +16,7 @@ The work covers the browser client and the Electron desktop client, which wraps 
 
 ## Theme registration and default selection
 
-Add a dark, built-in web theme with the identifier `verne`. Define it against the shared `ThemeDefinition` contract, then append it to the web client's built-in theme definitions. Do not add it to the shared `BUILT_IN_THEMES` array because the mobile client consumes every entry in that array.
+Add a dark, built-in theme with the identifier `verne`. Register it through the shared `ThemeDefinition` and `BUILT_IN_THEMES` path used by the existing themes. The mobile client may expose the shared palette, but this pass adds no mobile-specific component styling.
 
 New installations select `verne` when no stored theme preference exists. Existing installations keep their saved preference. Users can switch to any stock or custom theme in Settings.
 
@@ -72,7 +72,7 @@ The first pass covers shared primitives and the main working surfaces:
 
 The fork should concentrate its persistent diff in these areas:
 
-- One web-only built-in palette definition and export.
+- One built-in palette definition and export.
 - The default preference in the boot and runtime theme paths.
 - One imported Verne stylesheet.
 - Focused registration, boot, and palette tests.
