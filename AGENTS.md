@@ -153,3 +153,13 @@ Full glossary with file links: `docs/internals/glossary.md`
 
 - Don't verify with browsers or computer use unless the user explicitly agrees or requests it.
 - Security is important, but should not be over-indexed on, especially for dev mode/maintainer-only features.
+
+## Verne fork maintenance
+
+This is a Verne product fork of T3 Code. Keep persistent Verne changes at explicit seams and make
+upstream updates routine. Read [the fork maintenance guide](docs/internals/verne-fork-maintenance.md)
+before adding or integrating fork-specific work. Verne `main` is protected production history:
+never rebase or force-push it. Prepare upstream updates on `sync/upstream-*` branches, verify remote
+destinations before any network mutation, and do not treat the guide as authorization to change
+remotes, push commits, or open a pull request. Keep Verne commits narrow enough to adapt or drop
+without unrelated upstream churn.
