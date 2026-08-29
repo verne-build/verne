@@ -1,14 +1,12 @@
 import { MoonIcon, SunIcon } from "lucide-react";
 import type { CSSProperties } from "react";
-import {
-  STANDARD_THEME_PREVIEW_COLORS as SHARED_STANDARD_THEME_PREVIEW_COLORS,
-  THEME_PREVIEW_RENDER_SPECS,
-} from "@t3tools/shared/themePreview";
+import { THEME_PREVIEW_RENDER_SPECS } from "@t3tools/shared/themePreview";
 import { cn } from "../../lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   getThemeColorsForMode,
   getThemeModes,
+  VERNE_THEME,
   type ThemeAppearance,
   type ThemeDefinition,
 } from "../../themePalette";
@@ -35,34 +33,11 @@ export type ThemeCardDefinition = {
 export type ThemeMode = ThemeAppearance | "system";
 export type ThemeCardPreviewColors = ThemeCardPreview["colors"];
 
-const STANDARD_THEME_PREVIEW_COLORS: Record<
-  ThemeAppearance,
-  Readonly<Record<ThemePreviewRole, string>>
-> = {
-  light: {
-    sidebar: "#fafafa",
-    surface: "#ffffff",
-    accentSurface: "#f4f4f5",
-    messageSurface: "#e4e4e7",
-    ...SHARED_STANDARD_THEME_PREVIEW_COLORS.light,
-  },
-  dark: {
-    sidebar: "#0f0f10",
-    surface: "#121212",
-    accentSurface: "#27272a",
-    messageSurface: "#27272a",
-    ...SHARED_STANDARD_THEME_PREVIEW_COLORS.dark,
-  },
-};
-
 export const STANDARD_THEME_CARDS: ReadonlyArray<ThemeCardDefinition> = [
   {
     id: "default",
-    label: "T3 Code",
-    previews: (["light", "dark"] as const).map((mode) => ({
-      mode,
-      colors: STANDARD_THEME_PREVIEW_COLORS[mode],
-    })),
+    label: "Verne",
+    previews: getThemeCardDefinition(VERNE_THEME).previews,
   },
 ];
 

@@ -27,6 +27,28 @@ afterEach(() => {
 });
 
 describe("theme failure handling", () => {
+  it("uses Verne in system appearance when no preference has been stored", async () => {
+    vi.stubGlobal("window", { localStorage: createStorage() });
+
+    const { readAppearanceModePreference, readThemePreference } = await import("./useTheme");
+
+    const theme = readThemePreference();
+    expect(theme).toBe("system");
+    expect(readAppearanceModePreference(theme)).toBe("system");
+  });
+
+  it("keeps a stored theme preference over the Verne default", async () => {
+    vi.stubGlobal("window", {
+      localStorage: createStorage({
+        getItem: (key) => (key === "t3code:theme" ? "ocean" : null),
+      }),
+    });
+
+    const { readThemePreference } = await import("./useTheme");
+
+    expect(readThemePreference()).toBe("ocean");
+  });
+
   it("preserves exact storage causes and operation context", async () => {
     const readCause = new Error("storage read blocked");
     const writeCause = new Error("storage quota exceeded");

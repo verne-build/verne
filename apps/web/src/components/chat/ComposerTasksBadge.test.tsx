@@ -15,7 +15,7 @@ const steps = [
 ];
 
 describe("ComposerTasksBadge", () => {
-  it("renders active progress as an attached composer tab", () => {
+  it("renders active progress as a full-width attached composer drawer", () => {
     const markup = renderToStaticMarkup(
       <ComposerTasksBadge
         expanded={false}
@@ -28,12 +28,8 @@ describe("ComposerTasksBadge", () => {
 
     expect(markup).toContain('data-composer-tasks-badge="true"');
     expect(markup).toContain('aria-expanded="false"');
-    expect(markup).toContain("chat-composer-shoulder-tab");
-    expect(markup).toContain("chat-composer-tasks-tab");
-    expect(markup).toContain("rounded-t-xl");
-    expect(markup).toContain("border-b-0");
-    expect(markup).toContain("left-4");
-    expect(markup).toContain("right-4");
+    expect(markup).toContain("chat-composer-top-drawer");
+    expect(markup).not.toContain("chat-composer-shoulder-tab");
     expect(markup).toContain('data-composer-task-current="true"');
     expect(markup).toContain("min-w-0 flex-1 truncate");
     expect(markup).toContain("w-20");
@@ -51,7 +47,7 @@ describe("ComposerTasksBadge", () => {
     expect(markup).toContain("bg-muted-foreground/25");
   });
 
-  it("leaves room for the stash tab when both shoulders are present", () => {
+  it("keeps its full width when the stash shoulder is present", () => {
     const markup = renderToStaticMarkup(
       <ComposerTasksBadge
         expanded={false}
@@ -63,8 +59,8 @@ describe("ComposerTasksBadge", () => {
       />,
     );
 
-    expect(markup).toContain("right-28");
-    expect(markup).not.toContain("right-4");
+    expect(markup).toContain("chat-composer-top-drawer");
+    expect(markup).not.toContain("right-28");
   });
 
   it("has a compact inline fallback for occupied composer shoulders", () => {
@@ -96,7 +92,6 @@ describe("ComposerTasksBadge", () => {
     );
 
     expect(markup).toContain('data-chat-composer-tasks-drawer="true"');
-    expect(markup).not.toContain("data-variant");
     expect(markup).toContain('aria-expanded="true"');
     expect(markup).toContain('role="list"');
     expect(markup).toContain("Inspect the composer");

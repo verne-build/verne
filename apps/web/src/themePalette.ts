@@ -8,6 +8,7 @@ import {
   IRIS_THEME,
   OCEAN_THEME,
   T3_CHAT_THEME,
+  VERNE_THEME,
   THEME_COLOR_ROLES,
   type ThemeAppearance,
   type ThemeColorRole,
@@ -16,7 +17,15 @@ import {
   type ThemeVariants,
 } from "@t3tools/shared/themePalettes";
 
-export { EMBER_THEME, GROVE_THEME, IRIS_THEME, OCEAN_THEME, T3_CHAT_THEME, THEME_COLOR_ROLES };
+export {
+  EMBER_THEME,
+  GROVE_THEME,
+  IRIS_THEME,
+  OCEAN_THEME,
+  T3_CHAT_THEME,
+  THEME_COLOR_ROLES,
+  VERNE_THEME,
+};
 export type { ThemeAppearance, ThemeColorRole, ThemeColors, ThemeDefinition, ThemeVariants };
 
 export const T3_CHAT_THEME_ID = "t3-chat" as const;
@@ -29,6 +38,8 @@ export const EMBER_THEME_ID = "ember" as const;
 export const EMBER_THEME_LABEL = "Ember";
 export const IRIS_THEME_ID = "iris" as const;
 export const IRIS_THEME_LABEL = "Iris";
+export const VERNE_THEME_ID = "verne" as const;
+export const VERNE_THEME_LABEL = "Verne";
 export const THEME_FILE_VERSION = 1 as const;
 export const CUSTOM_THEMES_STORAGE_KEY = "t3code:themes:v1";
 export const THEME_FOLLOW_SYSTEM_STORAGE_KEY = "t3code:theme-follow-system";
@@ -65,6 +76,7 @@ const RESERVED_THEME_IDS = new Set([
   OCEAN_THEME_ID,
   EMBER_THEME_ID,
   IRIS_THEME_ID,
+  VERNE_THEME_ID,
   LEGACY_T3_CHAT_DARK_THEME_ID,
   "t3-grove",
   "t3-ocean",
@@ -432,16 +444,13 @@ const T3_CODE_DARK_THEME_COLORS: ThemeColors = {
 };
 
 /**
- * The standard T3 Code look as a theme palette, for seeding a new theme when
- * no theme is installed. Distinct from {@link getDefaultThemeColors}, which
- * carries the flagship T3 Chat palette used to fill roles omitted by theme
- * files.
+ * Verne is the standard palette used by System, Light, and Dark and seeds new
+ * themes when no library theme is installed. Distinct from
+ * {@link getDefaultThemeColors}, which fills roles omitted by theme files.
  */
 export function getStandardThemeColors(appearance: ThemeAppearance): ThemeColors {
-  if (appearance === "dark") {
-    return (standardDarkThemeColors ??= decodeThemeColors(T3_CODE_DARK_THEME_COLORS));
-  }
-  return (standardLightThemeColors ??= decodeThemeColors(T3_CODE_LIGHT_THEME_COLORS));
+  const colors = getThemeColorsForMode(VERNE_THEME, appearance);
+  return colors ?? VERNE_THEME.colors;
 }
 
 type ThemeRgbColor = {
@@ -1858,7 +1867,9 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
   if (!root?.style) return;
 
   setThemePreviewSidebarArtwork(null);
-  const palette = getThemeDefinition(theme);
+  const palette =
+    getThemeDefinition(theme) ??
+    (theme === "system" || theme === "light" || theme === "dark" ? VERNE_THEME : null);
 
   if (palette) {
     root.dataset.themeId = palette.id;

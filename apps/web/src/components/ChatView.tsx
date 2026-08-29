@@ -320,6 +320,7 @@ import {
 } from "./chat/ContextWindowMeter.logic";
 import { deriveLatestContextWindowSnapshot, formatContextWindowTokens } from "../lib/contextWindow";
 import { ThreadSyncStatusPill } from "./chat/ThreadSyncStatusPill";
+import { ContextWindowMeter } from "./chat/ContextWindowMeter";
 import {
   DRAFT_HERO_TRANSITION_ANIMATION_ID,
   DRAFT_HERO_TRANSITION_DURATION_MS,
@@ -7043,7 +7044,6 @@ function ChatViewContent(props: ChatViewProps) {
                       className={cn(
                         "chat-composer-glass-shell relative mx-auto w-full max-w-3xl",
                         externalComposerDrawerAttached && "chat-composer-glass-shell-attached",
-                        showComposerContextStrip && "chat-composer-glass-shell-with-context",
                       )}
                     >
                       <div className="chat-composer-glass-host relative z-10 w-full rounded-[22px]">
@@ -7098,9 +7098,7 @@ function ChatViewContent(props: ChatViewProps) {
                               activeProject?.defaultModelSelection
                             }
                             activeThreadModelSelection={activeThread?.modelSelection}
-                            activeContextWindow={activeContextWindow}
                             compactDisabled={compactDisabled}
-                            compactDisabledReason={compactDisabledReason}
                             resolvedTheme={resolvedTheme}
                             settings={settings}
                             keybindings={keybindings}
@@ -7136,42 +7134,57 @@ function ChatViewContent(props: ChatViewProps) {
                           />
                         </div>
                       </div>
-                      <div className="min-h-0">
-                        <div
-                          data-terminal-open={terminalUiState.terminalOpen ? "true" : undefined}
-                          className="relative z-0"
-                        >
-                          {showComposerContextStrip && (
-                            <div className="pointer-events-auto">
-                              <BranchToolbar
-                                environmentId={activeThread.environmentId}
-                                threadId={activeThread.id}
-                                showGitControls={isGitRepo}
-                                {...(routeKind === "draft" && draftId ? { draftId } : {})}
-                                onEnvModeChange={onEnvModeChange}
-                                startFromOrigin={startFromOrigin}
-                                onStartFromOriginChange={onStartFromOriginChange}
-                                {...(canOverrideServerThreadEnvMode
-                                  ? { effectiveEnvModeOverride: envMode }
-                                  : {})}
-                                {...(canOverrideServerThreadEnvMode
-                                  ? {
-                                      activeThreadBranchOverride: activeThreadBranch,
-                                      onActiveThreadBranchOverrideChange:
-                                        setPendingServerThreadBranch,
+                    </div>
+                    <div className="min-h-0">
+                      <div
+                        data-terminal-open={terminalUiState.terminalOpen ? "true" : undefined}
+                        className="relative z-0"
+                      >
+                        {(showComposerContextStrip || activeContextWindow) && (
+                          <div className="pointer-events-auto">
+                            <BranchToolbar
+                              environmentId={activeThread.environmentId}
+                              threadId={activeThread.id}
+                              showGitControls={isGitRepo}
+                              {...(routeKind === "draft" && draftId ? { draftId } : {})}
+                              onEnvModeChange={onEnvModeChange}
+                              startFromOrigin={startFromOrigin}
+                              onStartFromOriginChange={onStartFromOriginChange}
+                              {...(canOverrideServerThreadEnvMode
+                                ? { effectiveEnvModeOverride: envMode }
+                                : {})}
+                              {...(canOverrideServerThreadEnvMode
+                                ? {
+                                    activeThreadBranchOverride: activeThreadBranch,
+                                    onActiveThreadBranchOverrideChange:
+                                      setPendingServerThreadBranch,
+                                  }
+                                : {})}
+                              envLocked={envLocked}
+                              onComposerFocusRequest={scheduleComposerFocus}
+                              {...(canCheckoutPullRequestIntoThread
+                                ? { onCheckoutPullRequestRequest: openPullRequestDialog }
+                                : {})}
+                              {...(hasMultipleEnvironments ? { onEnvironmentChange } : {})}
+                              availableEnvironments={logicalProjectEnvironments}
+                              trailingContent={
+                                activeContextWindow ? (
+                                  <ContextWindowMeter
+                                    usage={activeContextWindow}
+                                    modelDisplayName={activeThread.modelSelection?.model ?? null}
+                                    onCompact={
+                                      selectedProvider === "claudeAgent"
+                                        ? () => composerRef.current?.compactContext()
+                                        : undefined
                                     }
-                                  : {})}
-                                envLocked={envLocked}
-                                onComposerFocusRequest={scheduleComposerFocus}
-                                {...(canCheckoutPullRequestIntoThread
-                                  ? { onCheckoutPullRequestRequest: openPullRequestDialog }
-                                  : {})}
-                                {...(hasMultipleEnvironments ? { onEnvironmentChange } : {})}
-                                availableEnvironments={logicalProjectEnvironments}
-                              />
-                            </div>
-                          )}
-                        </div>
+                                    compactDisabled={compactDisabled}
+                                    compactDisabledReason={compactDisabledReason}
+                                  />
+                                ) : null
+                              }
+                            />
+                          </div>
+                        )}
                       </div>
                     </div>
                     <div

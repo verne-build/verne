@@ -5,6 +5,14 @@ import { FlaskConicalIcon } from "lucide-react";
 import { Button } from "./button";
 
 describe("button geometry tokens", () => {
+  it("exposes its visual variant for theme-scoped interaction states", () => {
+    const outline = renderToStaticMarkup(<Button variant="outline">Open</Button>);
+    const defaultButton = renderToStaticMarkup(<Button>Continue</Button>);
+
+    expect(outline).toContain('data-variant="outline"');
+    expect(defaultButton).toContain('data-variant="default"');
+  });
+
   it("uses the shared control radius and an opaque semantic icon color", () => {
     const html = renderToStaticMarkup(
       <Button size="icon-xs" variant="outline" aria-label="Run tests">

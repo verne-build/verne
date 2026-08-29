@@ -16,28 +16,28 @@ The work covers the browser client and the Electron desktop client, which wraps 
 
 ## Theme registration and default selection
 
-Add a dark, built-in theme with the identifier `verne`. Register it through the shared `ThemeDefinition` and `BUILT_IN_THEMES` path used by the existing themes. The mobile client may expose the shared palette, but this pass adds no mobile-specific component styling.
+Add a dual-mode, built-in theme with the identifier `verne`. Register it through the shared `ThemeDefinition` and `BUILT_IN_THEMES` path used by the existing themes. Dark remains the palette definition's base appearance for compatibility with stored `verne` preferences. At the product boundary, Verne replaces the stock T3 Code palette: System, Light, and Dark select the corresponding Verne half, and a fresh installation starts in System appearance. The mobile client may expose the shared palette, but its separate T3 Code default is unchanged.
 
-New installations select `verne` when no stored theme preference exists. Existing installations keep their saved preference. Users can switch to any stock or custom theme in Settings.
+New installations select the standard System preference, backed by Verne. Existing `system`, `light`, `dark`, and `verne` preferences all resolve through Verne, while other saved themes remain unchanged. The theme library presents Verne as its standard card and keeps the stored `verne` identifier readable without showing a duplicate card.
 
 The pre-React boot script must know the Verne palette and default so the splash screen and browser chrome use the correct colors before hydration. Runtime theme selection must continue to set `data-theme-id="verne"` on the document root.
 
 ## Palette mapping
 
-Use Verne Electron's default Sovngarde UI palette as the source. Map its roles into T3 Code's existing semantic theme contract instead of introducing a second color system.
+Use shadcn's default neutral palette as the shared light/dark foundation. Map its roles into T3 Code's existing semantic theme contract instead of introducing a second color system. T3-only status roles retain their semantic hues, while product surfaces follow the shadcn neutral hierarchy.
 
-| T3 role family                       | Verne source                 | Default value |
-| ------------------------------------ | ---------------------------- | ------------- |
-| Canvas, chrome, toolbar              | `background`, `editor-bg`    | `#0d1016`     |
-| Cards, popovers, sidebar             | `card`, `popover`, `sidebar` | `#16191f`     |
-| Hover and accent surfaces            | `accent`, `tab-border`       | `#1d2026`     |
-| Borders, inputs, focus-neutral rings | `border`, `input`, `ring`    | `#2e3138`     |
-| Primary control surface              | `primary`                    | `#3a3d41`     |
-| Secondary control surface            | `secondary`                  | `#3a4150`     |
-| Primary text                         | `foreground`                 | `#f2fffc`     |
-| Muted text                           | `muted-foreground`           | `#6b7678`     |
-| Soft secondary text                  | `soft-foreground`            | `#bfbdb7`     |
-| Destructive                          | `destructive`                | `#ff6d7e`     |
+| T3 role family           | Light                       | Dark                        |
+| ------------------------ | --------------------------- | --------------------------- |
+| Canvas                   | `oklch(1 0 0)`              | `oklch(0.145 0 0)`          |
+| Cards and popovers       | `oklch(1 0 0)`              | `oklch(0.205 0 0)`          |
+| Sidebar                  | `oklch(0.985 0 0)`          | `oklch(0.205 0 0)`          |
+| Hover and muted surfaces | `oklch(0.97 0 0)`           | `oklch(0.269 0 0)`          |
+| Borders                  | `oklch(0.922 0 0)`          | `oklch(1 0 0 / 0.1)`        |
+| Inputs                   | `oklch(0.922 0 0)`          | `oklch(1 0 0 / 0.15)`       |
+| Primary text             | `oklch(0.145 0 0)`          | `oklch(0.985 0 0)`          |
+| Muted text               | `oklch(0.556 0 0)`          | `oklch(0.708 0 0)`          |
+| Primary controls         | `oklch(0.205 0 0)`          | `oklch(0.922 0 0)`          |
+| Destructive              | `oklch(0.577 0.245 27.325)` | `oklch(0.704 0.191 22.216)` |
 
 T3-only status, message, terminal, and provider roles should derive from the nearest Verne role while preserving readable contrast and existing semantic meaning.
 
@@ -53,6 +53,7 @@ The stylesheet owns:
 - Verne's solid dark surfaces and restrained `shadow-xs` depth.
 - The translucent floating-surface recipe for menus, tooltips, and overlays where T3 already uses glass.
 - Sidebar, top bar, composer, message, code-block, and terminal surface relationships.
+- Sidebar metadata color and thread-title scale, through stable row data attributes.
 - Existing focus rings, disabled states, touch targets, and accessibility contrast.
 
 Prefer custom-property overrides. Use selectors based on existing `data-slot` and named surface attributes only when a component hard-codes a material that tokens cannot reach. Do not copy or fork React primitives.
@@ -68,6 +69,13 @@ The first pass covers shared primitives and the main working surfaces:
 - Chat composer, user messages, markdown code blocks, and terminal drawer.
 - Settings surfaces so users can switch away from Verne without losing access to the theme controls.
 
+`apps/web/src/components/sidebar/SidebarChrome.tsx` is the narrow product-chrome seam for the
+fork. Verne omits the upstream sidebar wordmark and keeps the environment-identification badge at
+the right edge of the header, leaving the updater in its upstream footer position. The modern
+sidebar's fixed controls are a second localized seam: Verne keeps the upstream thread-search
+markup and logic dormant for mergeability, hides its control, and expands New thread to a labeled
+full-width row. The legacy sidebar remains unchanged. Do not fork the shared sidebar primitive.
+
 ## Upstream maintenance
 
 The fork should concentrate its persistent diff in these areas:
@@ -75,6 +83,7 @@ The fork should concentrate its persistent diff in these areas:
 - One built-in palette definition and export.
 - The default preference in the boot and runtime theme paths.
 - One imported Verne stylesheet.
+- Localized sidebar chrome and modern control-row adjustments, with the legacy sidebar unchanged.
 - Focused registration, boot, and palette tests.
 
 Upstream feature components should merge without theme-specific edits. When upstream adds a primitive or surface, it inherits the semantic palette first. Add a scoped selector only if the inherited result does not match the Verne material language.

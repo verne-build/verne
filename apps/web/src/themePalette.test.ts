@@ -36,6 +36,7 @@ import {
   createManagedThemeColors,
   createVividThemeColors,
   getDefaultThemeColors,
+  getStandardThemeColors,
   themeColorToHex,
   toCanonicalThemeColor,
   THEME_FILE_VERSION,
@@ -361,6 +362,28 @@ describe("theme files", () => {
     vi.unstubAllGlobals();
   });
 
+  it("applies the Verne palette and material scope to standard appearance choices", () => {
+    const properties = new Map<string, string>();
+    const root = {
+      dataset: {} as Record<string, string>,
+      style: {
+        removeProperty: vi.fn((name: string) => properties.delete(name)),
+        setProperty: vi.fn((name: string, value: string) => properties.set(name, value)),
+      },
+    };
+    vi.stubGlobal("document", { documentElement: root });
+
+    applyThemePalette("system", "light");
+    const verne = getThemeDefinition("verne")!;
+    const light = getThemeColorsForMode(verne, "light")!;
+
+    expect(root.dataset.themeId).toBe("verne");
+    expect(properties.get("--app-theme-canvas")).toBe(light.canvas);
+    expect(properties.get("--app-theme-sidebar")).toBe(light.sidebar);
+
+    vi.unstubAllGlobals();
+  });
+
   it("keeps optional light and dark palettes under one theme id", () => {
     const theme = parseThemeFile({
       version: THEME_FILE_VERSION,
@@ -431,6 +454,53 @@ describe("theme files", () => {
       expect(contrastRatio(colors.sidebarForeground, colors.sidebar)).toBeGreaterThanOrEqual(4.5);
       expect(contrastRatio(colors.accentForeground, colors.accent)).toBeGreaterThanOrEqual(4.5);
     }
+  });
+
+  it("registers Verne as a dual-mode shadcn neutral palette", () => {
+    const theme = getThemeDefinition("verne");
+
+    expect(theme).not.toBeNull();
+    if (!theme) return;
+
+    expect(getThemeModes(theme)).toEqual(["light", "dark"]);
+    expect(resolveThemeAppearance(theme.id, false, false)).toBe("dark");
+    expect(resolveDesktopTheme(theme.id, false)).toBe("dark");
+    expect(resolveThemeAppearance(theme.id, false, false, "light")).toBe("light");
+    expect(resolveThemeAppearance(theme.id, true, true)).toBe("dark");
+    expect(resolveDesktopTheme(theme.id, true)).toBe("system");
+    expectThemeColors(theme.colors, {
+      canvas: "#0a0a0a",
+      surface: "#171717",
+      text: "#fafafa",
+      accentSurface: "#262626",
+      secondary: "#262626",
+      sidebar: "#171717",
+      terminalBackground: "#0a0a0a",
+      error: "#ff6568",
+    });
+    expect(theme.colors.border).toBe("oklch(1 0 0 / 0.1)");
+    expect(theme.colors.input).toBe("oklch(1 0 0 / 0.15)");
+    expect(theme.colors.sidebarBorder).toBe("oklch(1 0 0 / 0.1)");
+
+    expectThemeColors(theme.variants!.light!, {
+      canvas: "#ffffff",
+      surface: "#ffffff",
+      text: "#0a0a0a",
+      border: "#e5e5e5",
+      input: "#e5e5e5",
+      accentSurface: "#f5f5f5",
+      sidebar: "#fafafa",
+      sidebarBorder: "#e5e5e5",
+      terminalBackground: "#ffffff",
+      error: "#e40016",
+    });
+  });
+
+  it("uses Verne colors for the standard light and dark appearances", () => {
+    const verne = getThemeDefinition("verne")!;
+
+    expect(getStandardThemeColors("light")).toEqual(getThemeColorsForMode(verne, "light"));
+    expect(getStandardThemeColors("dark")).toEqual(getThemeColorsForMode(verne, "dark"));
   });
 
   it("includes the dual-mode maintainer themes", () => {

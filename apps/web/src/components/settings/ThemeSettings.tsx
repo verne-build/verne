@@ -683,7 +683,7 @@ export function ThemeLibrary({
 
   // Rings always show the effective owner of each appearance: an unpicked
   // half belongs to the default card (a null owner), so a fresh install
-  // shows T3 Code selected instead of nothing.
+  // shows Verne selected instead of nothing.
   const pickedModesFor = (cardId: string | null): ThemeMode[] => {
     const rings: ThemeMode[] = [];
     if (lightOwner === cardId) rings.push("light");

@@ -8,6 +8,7 @@ import {
   createThreadJumpHintVisibilityController,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
+  getVisibleSidebarSectionLabels,
   resolveAdjacentThreadId,
   getFallbackThreadIdAfterDelete,
   getVisibleThreadsForProject,
@@ -54,6 +55,20 @@ import {
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("getVisibleSidebarSectionLabels", () => {
+  it("returns headings only for populated sidebar sections", () => {
+    expect(
+      getVisibleSidebarSectionLabels({
+        drafts: 2,
+        pinned: 0,
+        active: 3,
+        snoozed: 1,
+        settled: 0,
+      }),
+    ).toEqual(["Drafts", "Active", "Snoozed"]);
+  });
+});
 
 describe("animatePinnedLayoutChanges", () => {
   const baseArgs: Parameters<AnimateLayoutChanges>[0] = {

@@ -127,6 +127,7 @@ import {
   buildBulkTitleRegenerationContextMenuItem,
   formatWorkingDurationLabel,
   firstValidTimestampMs,
+  getVisibleSidebarSectionLabels,
   hasUnseenCompletion,
   isSidebarNestedLinkClick,
   isTrailingDoubleClick,
@@ -540,7 +541,10 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
               faviconPath={props.projectFaviconPath}
               className="size-4 shrink-0"
             />
-            <span className="min-w-0 flex-1 truncate text-xs font-medium text-secondary-label">
+            <span
+              data-sidebar-project-name
+              className="min-w-0 flex-1 truncate text-xs font-medium text-secondary-label"
+            >
               {props.projectTitle}
             </span>
             <span className="ml-auto flex h-5 min-w-5 shrink-0 items-center justify-end">
@@ -572,6 +576,15 @@ interface SidebarDraftRowData {
   draftId: DraftId;
   session: DraftSessionState;
   composer: ComposerThreadDraftState;
+}
+
+function SidebarSectionHeading({ label }: { label: "Drafts" | "Pinned" | "Active" }) {
+  return (
+    <li className="mb-1 mt-3 flex list-none items-center gap-2 px-2.5" data-sidebar-section={label}>
+      <span className="text-xs font-medium text-muted-foreground/50">{label}</span>
+      <span aria-hidden className="h-px flex-1 bg-sidebar-border/60" />
+    </li>
+  );
 }
 
 // Draft sessions with user content, surfaced above the pinned block so an
@@ -667,6 +680,7 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
   }
   return (
     <>
+      <SidebarSectionHeading label="Drafts" />
       {drafts.map(({ composer, draftId, session }) => {
         const projectKey = `${session.environmentId}:${session.projectId}`;
         return (
@@ -684,11 +698,6 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
           />
         );
       })}
-      <li
-        aria-hidden
-        data-testid="sidebar-draft-divider"
-        className="mx-2.5 my-1.5 h-px list-none bg-sidebar-border/60"
-      />
     </>
   );
 });
@@ -1126,6 +1135,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
 
   const title = isRenaming ? (
     <input
+      data-sidebar-thread-title
       autoFocus
       value={renamingTitle}
       aria-label="Thread title"
@@ -1139,6 +1149,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     />
   ) : (
     <span
+      data-sidebar-thread-title
       className={cn(
         "min-w-0 flex-1 text-sm transition-opacity motion-reduce:transition-none",
         shouldRecede ? "font-normal" : "font-medium",
@@ -1422,6 +1433,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               />
               {props.projectTitle ? (
                 <span
+                  data-sidebar-project-name
                   className={cn(
                     "min-w-0 flex-1 truncate text-secondary-label text-xs",
                     shouldRecede ? "font-normal" : "font-medium",
@@ -1555,7 +1567,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               {thread.branch ? (
                 <>
                   <ThreadWorktreeIndicator thread={thread} />
-                  <span className="min-w-0 flex-1 truncate whitespace-nowrap">{thread.branch}</span>
+                  <span
+                    data-sidebar-branch-name
+                    className="min-w-0 flex-1 truncate whitespace-nowrap"
+                  >
+                    {thread.branch}
+                  </span>
                 </>
               ) : (
                 <span className="flex-1" />
@@ -3395,10 +3412,10 @@ export default function Sidebar() {
         className="gap-0"
         fixedHeader={
           // Lifted above the stage backdrop, whose fade bleeds below the
-          // header and would otherwise paint across the search row's outline.
+          // header and would otherwise paint across the fixed controls.
           <SidebarGroup className="relative z-[1] gap-1 p-[var(--sidebar-content-inset)]">
             <div className="flex items-center gap-1">
-              <div className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground">
+              <div className="hidden h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground">
                 <SearchIcon className="size-4 shrink-0 text-sidebar-muted-foreground/80" />
                 <Input
                   ref={threadSearchInputRef}
@@ -3444,14 +3461,13 @@ export default function Sidebar() {
                   </Button>
                 ) : null}
               </div>
-              <div className="shrink-0">
+              <div className="min-w-0 flex-1">
                 <Tooltip>
                   <TooltipTrigger
                     render={
                       <SidebarMenuButton
-                        size="icon"
                         type="button"
-                        className="relative focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
+                        className="relative w-full focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
                         onClick={handleNewThreadClick}
                         disabled={projects.length === 0}
                         aria-label="New thread"
@@ -3459,6 +3475,7 @@ export default function Sidebar() {
                     }
                   >
                     <SquarePenIcon />
+                    <span className="min-w-0 flex-1 truncate">New thread</span>
                     <span
                       className="pointer-events-none absolute left-1/2 top-1/2 size-[max(100%,3rem)] -translate-1/2 pointer-fine:hidden"
                       aria-hidden="true"
@@ -3495,7 +3512,7 @@ export default function Sidebar() {
                     render={
                       <SidebarMenuButton
                         aria-label="Filter threads by project"
-                        className="min-w-0 flex-1 ps-[calc(var(--sidebar-row-content-inset)-1px)] focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
+                        className="min-w-0 flex-1 focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
                       />
                     }
                   >
@@ -3765,10 +3782,17 @@ export default function Sidebar() {
                       />
                     );
                   };
-                  // Draft block above everything, then the pinned block:
-                  // full cards above the inbox, closed by a thin divider (the
-                  // pin glyphs carry the meaning, so no header text). Both
-                  // vanish entirely at count 0.
+                  const visibleSectionLabels = new Set(
+                    getVisibleSidebarSectionLabels({
+                      drafts: 0,
+                      pinned: pinnedThreads.length,
+                      active: activeThreads.length,
+                      snoozed: snoozedThreads.length,
+                      settled: settledThreads.length,
+                    }),
+                  );
+                  // Draft block above everything, then the pinned block. Each
+                  // populated section owns a quiet label and trailing rule.
                   // Pinned rows render in the one shared pinned order; only
                   // reorder-capable rows register as sortable (legacy-server
                   // pins render in place as plain rows).
@@ -3782,6 +3806,9 @@ export default function Sidebar() {
                       routeDraftId={routeDraftIdForRows}
                       onNavigateToDraft={navigateToDraft}
                     />,
+                    visibleSectionLabels.has("Pinned") ? (
+                      <SidebarSectionHeading key="pinned-heading" label="Pinned" />
+                    ) : null,
                     pinnedThreads.length > 0 ? (
                       <li key="pinned-dnd" className="list-none">
                         <DndContext
@@ -3822,15 +3849,8 @@ export default function Sidebar() {
                       </li>
                     ) : null,
                   ];
-                  if (pinnedThreads.length > 0) {
-                    items.push(
-                      <li
-                        key="pinned-divider"
-                        aria-hidden
-                        data-testid="sidebar-pinned-divider"
-                        className="mx-2.5 my-1.5 h-px list-none bg-sidebar-border/60"
-                      />,
-                    );
+                  if (visibleSectionLabels.has("Active")) {
+                    items.push(<SidebarSectionHeading key="active-heading" label="Active" />);
                   }
                   for (const thread of activeThreads) {
                     items.push(renderThreadRow(thread, "active"));
@@ -3840,7 +3860,7 @@ export default function Sidebar() {
                   // is snoozed (the count is the whole footprint when
                   // collapsed); rows only when expanded. Vanishes entirely at
                   // count 0.
-                  if (snoozedThreads.length > 0) {
+                  if (visibleSectionLabels.has("Snoozed")) {
                     items.push(
                       <li
                         key="snoozed-shelf-header"
@@ -3874,7 +3894,7 @@ export default function Sidebar() {
                       items.push(renderThreadRow(thread, "snoozed"));
                     }
                   }
-                  if (settledThreads.length > 0) {
+                  if (visibleSectionLabels.has("Settled")) {
                     items.push(
                       <li
                         key="settled-shelf-header"

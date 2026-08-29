@@ -23,6 +23,7 @@ function Textarea({ className, size = "default", unstyled = false, ...props }: T
       }
       data-size={size}
       data-slot="textarea-control"
+      data-unstyled={unstyled || undefined}
     >
       <FieldPrimitive.Control
         render={(defaultProps) => (

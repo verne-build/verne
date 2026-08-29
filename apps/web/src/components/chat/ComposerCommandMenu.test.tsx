@@ -24,6 +24,23 @@ describe("ComposerCommandMenu", () => {
     expect(markup).not.toContain("dropdown-glass");
   });
 
+  it("centers the empty-state message within the menu row", () => {
+    const markup = renderToStaticMarkup(
+      <ComposerCommandMenu
+        items={[]}
+        resolvedTheme="dark"
+        isLoading={false}
+        triggerKind="path"
+        activeItemId={null}
+        onHighlightedItemChange={() => {}}
+        onSelect={() => {}}
+      />,
+    );
+
+    expect(markup).toContain("No matching files or folders.");
+    expect(markup).toContain("flex h-[3.625rem] items-center px-5");
+  });
+
   it("renders commands without a category heading or invented icons", () => {
     const markup = renderToStaticMarkup(
       <ComposerCommandMenu

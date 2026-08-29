@@ -25,6 +25,20 @@ export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 200;
 // it small; cold opens still render instantly from the cached snapshot.
 export const SIDEBAR_THREAD_PREWARM_LIMIT = 3;
 
+const SIDEBAR_SECTION_LABELS = ["Drafts", "Pinned", "Active", "Snoozed", "Settled"] as const;
+
+export function getVisibleSidebarSectionLabels(counts: {
+  drafts: number;
+  pinned: number;
+  active: number;
+  snoozed: number;
+  settled: number;
+}): readonly (typeof SIDEBAR_SECTION_LABELS)[number][] {
+  return SIDEBAR_SECTION_LABELS.filter(
+    (label) => counts[label.toLowerCase() as keyof typeof counts] > 0,
+  );
+}
+
 // The list already reaches its destination through sortable transforms while
 // the pointer is down. dnd-kit's default also animates the committed DOM order
 // after release, replaying the same movement across every affected row.

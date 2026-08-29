@@ -16,6 +16,7 @@ import {
   THEME_APPEARANCE_MODE_STORAGE_KEY,
   THEME_FOLLOW_SYSTEM_STORAGE_KEY,
   toCanonicalThemeColor,
+  VERNE_THEME,
 } from "./themePalette";
 
 const THEME_STORAGE_KEY = "t3code:theme";
@@ -113,7 +114,7 @@ function runtimeResolvedAppearance(
   invalidateCustomThemes();
   try {
     const raw = storage[THEME_STORAGE_KEY] ?? null;
-    const theme = raw !== null && isKnownThemePreference(raw) ? raw : "system";
+    const theme = raw !== null && isKnownThemePreference(raw) ? raw : "verne";
     const followRaw = storage[THEME_FOLLOW_SYSTEM_STORAGE_KEY] ?? null;
     const appearanceRaw = storage[THEME_APPEARANCE_MODE_STORAGE_KEY] ?? null;
     const appearanceMode =
@@ -149,6 +150,36 @@ const CHARCOAL_DARK_ONLY = {
 };
 
 describe("index.html boot script", () => {
+  it("boots a fresh client into Verne following the system appearance", () => {
+    const boot = runBootScript({ storage: {}, prefersDark: false });
+
+    expect(boot.themeId).toBe("verne");
+    expect(boot.themeSelected).toBe("true");
+    expect(boot.isDark).toBe(false);
+    expect(boot.bootVariables["--boot-background"]).toBe(VERNE_THEME.variants!.light!.canvas);
+    expect(boot.bootVariables["--boot-foreground"]).toBe(VERNE_THEME.variants!.light!.text);
+    expect(boot.bootVariables["--boot-accent"]).toBe(VERNE_THEME.variants!.light!.accent);
+    expect(boot.backgroundColor).toBe(VERNE_THEME.variants!.light!.chrome);
+  });
+
+  it("boots Verne in light mode when light appearance is selected", () => {
+    const boot = runBootScript({
+      storage: {
+        [THEME_STORAGE_KEY]: "verne",
+        [THEME_APPEARANCE_MODE_STORAGE_KEY]: "light",
+      },
+      prefersDark: true,
+    });
+
+    const light = VERNE_THEME.variants!.light!;
+    expect(boot.themeId).toBe("verne");
+    expect(boot.isDark).toBe(false);
+    expect(boot.bootVariables["--boot-background"]).toBe(light.canvas);
+    expect(boot.bootVariables["--boot-foreground"]).toBe(light.text);
+    expect(boot.bootVariables["--boot-accent"]).toBe(light.accent);
+    expect(boot.backgroundColor).toBe(light.chrome);
+  });
+
   const parityCases: ReadonlyArray<{
     name: string;
     storage: Record<string, string>;
@@ -480,7 +511,7 @@ describe("index.html boot script", () => {
     expect(boot.metaContent).toBe(DEFAULT_DARK_CHROME);
   });
 
-  it("ignores malformed custom theme entries before applying a splash", () => {
+  it("falls back to Verne for a malformed stored custom theme", () => {
     const boot = runBootScript({
       storage: {
         [THEME_STORAGE_KEY]: "broken",
@@ -491,28 +522,33 @@ describe("index.html boot script", () => {
       prefersDark: false,
     });
 
-    expect(boot.themeId).toBeUndefined();
-    expect(boot.themeSelected).toBeUndefined();
-    expect(boot.backgroundColor).toBe("#ffffff");
-    expect(boot.metaContent).toBe("#ffffff");
+    expect(boot.themeId).toBe("verne");
+    expect(boot.themeSelected).toBe("true");
+    expect(boot.isDark).toBe(false);
+    expect(boot.backgroundColor).toBe(VERNE_THEME.variants!.light!.chrome);
+    expect(boot.metaContent).toBe(VERNE_THEME.variants!.light!.chrome);
   });
 
-  it("leaves unknown preferences unthemed so the runtime default applies", () => {
+  it("falls back to Verne for an unknown stored preference", () => {
     const boot = runBootScript({
       storage: { [THEME_STORAGE_KEY]: "gone-theme" },
       prefersDark: true,
     });
-    expect(boot.themeId).toBeUndefined();
-    expect(boot.themeSelected).toBeUndefined();
+    expect(boot.themeId).toBe("verne");
+    expect(boot.themeSelected).toBe("true");
     expect(boot.isDark).toBe(true);
+    expect(boot.backgroundColor).toBe(VERNE_THEME.colors.chrome);
   });
 
   it("follows the OS appearance when storage is unavailable", () => {
     const light = runBootScript({ storageThrows: true, prefersDark: false });
     expect(light.isDark).toBe(false);
-    expect(light.themeId).toBeUndefined();
+    expect(light.themeId).toBe("verne");
+    expect(light.bootVariables["--boot-background"]).toBe(VERNE_THEME.variants!.light!.canvas);
 
     const dark = runBootScript({ storageThrows: true, prefersDark: true });
     expect(dark.isDark).toBe(true);
+    expect(dark.themeId).toBe("verne");
+    expect(dark.bootVariables["--boot-background"]).toBe(VERNE_THEME.colors.canvas);
   });
 });

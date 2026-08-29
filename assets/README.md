@@ -2,11 +2,13 @@
 
 The three Icon Composer projects are the source of truth for full application icons:
 
-- `dev/app-icon.icon`
-- `nightly/app-icon.icon`
-- `prod/app-icon.icon`
+- `verne/dev/app-icon.icon`
+- `verne/nightly/app-icon.icon`
+- `verne/prod/app-icon.icon`
 
-Each project uses `text.svg` for the T3 mark and `background.svg` when the background is a vector layer. Additional layers use semantic names that describe their role and placement.
+The Verne projects use the two symbol halves from Verne's Icon Composer source. Development,
+nightly, and production currently contain identical artwork, but remain separate so each channel can
+gain a distinct icon without changing build or packaging configuration.
 
 Run `vp run icons:export` from the repository root to regenerate the tracked iOS, Linux, Windows, and web assets. The development web exports are also copied to `apps/web/public` for the browser favicon and splash screen. Run `vp run icons:check` to verify that the generated assets and public copies match their sources without changing files.
 
@@ -25,9 +27,9 @@ After changing an Icon Composer project, open it in Icon Composer and export the
 
 Save the three exports to:
 
-- `dev/app-icon.icon` -> `dev/blueprint-macos-1024.png`
-- `nightly/app-icon.icon` -> `nightly/nightly-macos-1024.png`
-- `prod/app-icon.icon` -> `prod/black-macos-1024.png`
+- `verne/dev/app-icon.icon` -> `verne/dev/verne-macos-1024.png`
+- `verne/nightly/app-icon.icon` -> `verne/nightly/verne-macos-1024.png`
+- `verne/prod/app-icon.icon` -> `verne/prod/verne-macos-1024.png`
 
 The result must be a 1024×1024 PNG with the classic macOS safe area: the opaque icon body is 824×824, inset 100 pixels on every side, with only the native Icon Composer shadow extending into the surrounding transparent canvas.
 
@@ -38,9 +40,9 @@ Use [@Computer](plugin://computer-use@openai-bundled) and the Icon Composer app 
 
 For each project below, use Platform: macOS pre-Tahoe, Appearance: Default, Size: 1024pt, and Scale: 1×, then save the PNG to the exact destination:
 
-- assets/dev/app-icon.icon -> assets/dev/blueprint-macos-1024.png
-- assets/nightly/app-icon.icon -> assets/nightly/nightly-macos-1024.png
-- assets/prod/app-icon.icon -> assets/prod/black-macos-1024.png
+- assets/verne/dev/app-icon.icon -> assets/verne/dev/verne-macos-1024.png
+- assets/verne/nightly/app-icon.icon -> assets/verne/nightly/verne-macos-1024.png
+- assets/verne/prod/app-icon.icon -> assets/verne/prod/verne-macos-1024.png
 
 Do not resize, composite, or otherwise post-process the exported PNGs.
 

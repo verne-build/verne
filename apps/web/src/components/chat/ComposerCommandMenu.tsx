@@ -110,7 +110,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
             </CommandGroup>
           </CommandList>
         ) : (
-          <div className="px-5 pt-3.5 pb-7">
+          <div className="flex h-[3.625rem] items-center px-5">
             <p className="text-secondary-label text-xs">
               {props.isLoading
                 ? props.triggerKind === "skill"

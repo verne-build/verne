@@ -121,6 +121,20 @@
               chrome: "oklch(0.225975 0.031062 293.741)",
             },
           },
+          verne: {
+            dark: {
+              background: "oklch(0.145 0 0)",
+              foreground: "oklch(0.985 0 0)",
+              accent: "oklch(0.922 0 0)",
+              chrome: "oklch(0.205 0 0)",
+            },
+            light: {
+              background: "oklch(1 0 0)",
+              foreground: "oklch(0.145 0 0)",
+              accent: "oklch(0.205 0 0)",
+              chrome: "oklch(0.985 0 0)",
+            },
+          },
         };
         // Keep the built-in mode list in sync with the runtime so the selected
         // T3 Chat palette is visible before React has mounted.
@@ -139,6 +153,7 @@
           "ocean",
           "ember",
           "iris",
+          "verne",
           "t3-chat-dark",
           "t3-grove",
           "t3-ocean",
@@ -230,9 +245,28 @@
             "t3-iris": "iris",
           };
           const isLegacyT3ChatDark = storedTheme === "t3-chat-dark";
-          const themeId =
+          const storedThemeId =
             storedTheme === null ? "" : (LEGACY_THEME_IDS[storedTheme] ?? storedTheme);
           const legacyMode = isLegacyT3ChatDark ? "dark" : null;
+          const storedBuiltInModes = BUILT_IN_THEME_MODES[storedThemeId] ?? null;
+          const storedCustomTheme = storedBuiltInModes ? null : findCustomTheme(storedThemeId);
+          const storedThemeModes =
+            storedBuiltInModes ??
+            (storedCustomTheme
+              ? ["light", "dark"].filter(
+                  (mode) =>
+                    mode === storedCustomTheme.appearance || storedCustomTheme.variants?.[mode],
+                )
+              : null);
+          // Mirrors the runtime's isKnownThemePreference.
+          const isKnownTheme =
+            storedTheme === "light" ||
+            storedTheme === "dark" ||
+            storedTheme === "system" ||
+            storedThemeModes !== null;
+          const theme = isKnownTheme && storedTheme ? storedTheme : "system";
+          const themeId =
+            theme === "system" || theme === "light" || theme === "dark" ? "verne" : storedThemeId;
           const builtInModes = BUILT_IN_THEME_MODES[themeId] ?? null;
           const customTheme = builtInModes ? null : findCustomTheme(themeId);
           const themeModes =
@@ -242,15 +276,10 @@
                   (mode) => mode === customTheme.appearance || customTheme.variants?.[mode],
                 )
               : null);
-          // Mirrors the runtime's isKnownThemePreference.
-          const isKnownTheme =
-            storedTheme === "light" ||
-            storedTheme === "dark" ||
-            storedTheme === "system" ||
-            themeModes !== null;
-          const theme = isKnownTheme && storedTheme ? storedTheme : "system";
-          const isThemed = isKnownTheme && themeModes !== null;
-          const baseAppearance = customTheme ? customTheme.appearance : "light";
+          const isThemed = themeModes !== null;
+          const baseAppearance = customTheme
+            ? customTheme.appearance
+            : (builtInModes?.[0] ?? "light");
           const systemMode = prefersDark ? "dark" : "light";
           const storedAppearanceMode = window.localStorage.getItem(
             THEME_APPEARANCE_MODE_STORAGE_KEY,
@@ -360,7 +389,7 @@
           }
           // A resolved half is a selection even when the base theme is gone
           // (deleting the base leaves the mix pointing at a real theme).
-          const hasSelection = halfThemeId !== null || (isKnownTheme && storedTheme !== null);
+          const hasSelection = effectiveIsThemed || (isKnownTheme && storedTheme !== null);
           if (hasSelection) {
             document.documentElement.dataset.themeSelected = "true";
           } else {
@@ -392,10 +421,16 @@
           } catch {
             // Keep the dark default when even matchMedia is unavailable.
           }
-          delete document.documentElement.dataset.themeId;
-          delete document.documentElement.dataset.themeSelected;
+          document.documentElement.dataset.themeId = "verne";
+          document.documentElement.dataset.themeSelected = "true";
           document.documentElement.classList.toggle("dark", prefersDark);
-          const fallbackColor = prefersDark ? DARK_BACKGROUND : LIGHT_BACKGROUND;
+          const fallbackPalette = BUILT_IN_THEME_PALETTES.verne[prefersDark ? "dark" : "light"];
+          for (const [name, value] of Object.entries(fallbackPalette)) {
+            if (name !== "chrome") {
+              document.documentElement.style.setProperty(`--boot-${name}`, value);
+            }
+          }
+          const fallbackColor = fallbackPalette.chrome;
           document.documentElement.style.backgroundColor = fallbackColor;
           setThemeColor(fallbackColor);
         }
