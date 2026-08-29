@@ -1,7 +1,11 @@
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 
-import { T3ProjectFile, T3_PROJECT_FILE_SCHEMA_URL } from "@t3tools/contracts";
+import {
+  type ProjectFileName,
+  T3ProjectFile,
+  T3_PROJECT_FILE_SCHEMA_URL,
+} from "@t3tools/contracts";
 
 import { fromLenientJson } from "./schemaJson.ts";
 
@@ -21,6 +25,51 @@ const decodeT3ProjectFile = Schema.decodeExit(T3ProjectFileFromJson);
 export function parseT3ProjectFile(contents: string): T3ProjectFile | null {
   const decoded = decodeT3ProjectFile(contents);
   return Exit.isSuccess(decoded) ? decoded.value : null;
+}
+
+/** State of a checked-in project-file candidate after its read and decode attempt. */
+export type ProjectFileCandidateState =
+  | {
+      readonly status: "loading";
+      readonly fileName: ProjectFileName;
+      readonly file: null;
+    }
+  | {
+      readonly status: "missing";
+      readonly fileName: ProjectFileName;
+      readonly file: null;
+    }
+  | {
+      readonly status: "invalid";
+      readonly fileName: ProjectFileName;
+      readonly file: null;
+    }
+  | {
+      readonly status: "valid";
+      readonly fileName: ProjectFileName;
+      readonly file: T3ProjectFile;
+    };
+
+/** The resolved project file, including the filename used for source-specific UI copy. */
+export type ProjectFileSelection =
+  | Exclude<ProjectFileCandidateState, { status: "missing" }>
+  | {
+      readonly status: "missing";
+      readonly fileName: null;
+      readonly file: null;
+    };
+
+/**
+ * Select the first present project-file candidate. Candidates must be ordered
+ * by precedence; only a missing file permits considering the next candidate.
+ */
+export function selectProjectFileCandidate(
+  candidates: ReadonlyArray<ProjectFileCandidateState>,
+): ProjectFileSelection {
+  for (const candidate of candidates) {
+    if (candidate.status !== "missing") return candidate;
+  }
+  return { status: "missing", fileName: null, file: null };
 }
 
 /**

@@ -1,11 +1,34 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { T3ProjectFile } from "./t3ProjectFile.ts";
+import {
+  PROJECT_FILE_NAMES_BY_PRECEDENCE,
+  type ProjectFileName,
+  T3ProjectFile,
+  VERNE_PROJECT_FILE_NAME,
+} from "./t3ProjectFile.ts";
+
+type Equal<Left, Right> =
+  (<Value>() => Value extends Left ? 1 : 2) extends <Value>() => Value extends Right ? 1 : 2
+    ? (<Value>() => Value extends Right ? 1 : 2) extends <Value>() => Value extends Left ? 1 : 2
+      ? true
+      : false
+    : false;
+type Assert<Value extends true> = Value;
+type ProjectFileNameIncludesOnlyConfiguredNames = Assert<
+  Equal<ProjectFileName, "verne.json" | "t3.json">
+>;
+
+void (0 as unknown as ProjectFileNameIncludesOnlyConfiguredNames);
 
 const decode = Schema.decodeUnknownSync(T3ProjectFile);
 
 describe("T3ProjectFile", () => {
+  it("defines Verne-first project-file precedence", () => {
+    expect(VERNE_PROJECT_FILE_NAME).toBe("verne.json");
+    expect(PROJECT_FILE_NAMES_BY_PRECEDENCE).toEqual(["verne.json", "t3.json"]);
+  });
+
   it("decodes a full project file", () => {
     const decoded = decode({
       $schema: "https://t3.codes/schema/t3.json",

@@ -7,6 +7,17 @@ import { ProjectScriptIcon } from "./orchestration.ts";
 /** File name of the checked-in T3 project file, resolved at the workspace root. */
 export const T3_PROJECT_FILE_NAME = "t3.json";
 
+/** File name of Verne's checked-in project file, resolved at the workspace root. */
+export const VERNE_PROJECT_FILE_NAME = "verne.json";
+
+/** Checked-in project-file candidates, in authoritative precedence order. */
+export const PROJECT_FILE_NAMES_BY_PRECEDENCE = [
+  VERNE_PROJECT_FILE_NAME,
+  T3_PROJECT_FILE_NAME,
+] as const;
+
+export type ProjectFileName = (typeof PROJECT_FILE_NAMES_BY_PRECEDENCE)[number];
+
 /** Public URL of the published JSON Schema for {@link T3ProjectFile}. */
 export const T3_PROJECT_FILE_SCHEMA_URL = "https://t3.codes/schema/t3.json";
 
@@ -88,8 +99,8 @@ export const T3ProjectFile = Schema.Struct({
       .check(Schema.isMaxLength(T3_PROJECT_FILE_MAX_SCRIPTS)),
   ),
 }).annotate({
-  title: "T3 project file",
+  title: "Project file",
   description:
-    "Checked-in project configuration for T3 Code (t3.json at the repository root). See https://t3.codes for documentation.",
+    "Checked-in project configuration for T3 Code (verne.json or t3.json at the repository root). See https://t3.codes for documentation.",
 });
 export type T3ProjectFile = typeof T3ProjectFile.Type;

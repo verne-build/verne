@@ -4,10 +4,21 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   buildT3ProjectFileJsonSchema,
   parseT3ProjectFile,
+  selectProjectFileCandidate,
+  type ProjectFileSelection,
   T3ProjectFileFromJson,
 } from "./t3ProjectFile.ts";
 
 const decodeJson = Schema.decodeUnknownSync(T3ProjectFileFromJson);
+
+function assertMissingSelectionHasNoCandidateFileName(selection: ProjectFileSelection) {
+  if (selection.status === "missing") {
+    const fileName: null = selection.fileName;
+    void fileName;
+  }
+}
+
+void assertMissingSelectionHasNoCandidateFileName;
 
 describe("buildT3ProjectFileJsonSchema", () => {
   it("emits a draft 2020-12 schema with the published $id", () => {
@@ -88,5 +99,58 @@ describe("parseT3ProjectFile", () => {
   it("returns null for malformed or invalid contents", () => {
     expect(parseT3ProjectFile("{ not json")).toBeNull();
     expect(parseT3ProjectFile('{ "defaultThreadEnvMode": "spaceship" }')).toBeNull();
+  });
+});
+
+describe("selectProjectFileCandidate", () => {
+  const validVerne = {
+    status: "valid" as const,
+    fileName: "verne.json" as const,
+    file: { iconPath: "assets/verne.svg" },
+  };
+  const validT3 = {
+    status: "valid" as const,
+    fileName: "t3.json" as const,
+    file: { iconPath: "assets/t3.svg" },
+  };
+
+  it("selects Verne when both project files are valid", () => {
+    expect(selectProjectFileCandidate([validVerne, validT3])).toEqual(validVerne);
+  });
+
+  it("falls back to T3 when Verne is missing", () => {
+    expect(
+      selectProjectFileCandidate([
+        { status: "missing", fileName: "verne.json", file: null },
+        validT3,
+      ]),
+    ).toEqual(validT3);
+  });
+
+  it("keeps an invalid Verne file authoritative over valid T3", () => {
+    expect(
+      selectProjectFileCandidate([
+        { status: "invalid", fileName: "verne.json", file: null },
+        validT3,
+      ]),
+    ).toEqual({ status: "invalid", fileName: "verne.json", file: null });
+  });
+
+  it("keeps a loading Verne file authoritative over valid T3", () => {
+    expect(
+      selectProjectFileCandidate([
+        { status: "loading", fileName: "verne.json", file: null },
+        validT3,
+      ]),
+    ).toEqual({ status: "loading", fileName: "verne.json", file: null });
+  });
+
+  it("returns missing when neither project file exists", () => {
+    expect(
+      selectProjectFileCandidate([
+        { status: "missing", fileName: "verne.json", file: null },
+        { status: "missing", fileName: "t3.json", file: null },
+      ]),
+    ).toEqual({ status: "missing", fileName: null, file: null });
   });
 });

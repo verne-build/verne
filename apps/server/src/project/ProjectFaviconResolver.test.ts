@@ -77,6 +77,22 @@ it.layer(TestLayer)("ProjectFaviconResolverLive", (it) => {
       }),
     );
 
+    it.effect("prefers a verne.json iconPath over a t3.json iconPath", () =>
+      Effect.gen(function* () {
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "verne.json", '{ "iconPath": "brand/verne.svg" }');
+        yield* writeTextFile(cwd, "t3.json", '{ "iconPath": "brand/t3.svg" }');
+        yield* writeTextFile(cwd, "brand/verne.svg", "<svg>verne</svg>");
+        yield* writeTextFile(cwd, "brand/t3.svg", "<svg>t3</svg>");
+
+        const resolved = yield* resolver.resolvePath(cwd);
+
+        expect(resolved).not.toBeNull();
+        expect(resolved).toContain("brand/verne.svg");
+      }),
+    );
+
     it.effect("uses a saved project favicon override", () =>
       Effect.gen(function* () {
         const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;

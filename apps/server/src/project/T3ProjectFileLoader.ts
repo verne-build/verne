@@ -1,10 +1,11 @@
 /**
- * T3ProjectFileLoader - Effect service that loads the checked-in `t3.json`
- * project file from a workspace root.
+ * T3ProjectFileLoader - Effect service that loads the checked-in project file
+ * from a workspace root.
  *
- * Loading is best-effort: a missing file resolves to `Option.none`, and
- * unreadable or invalid files are logged and treated as absent so callers
- * can fall back to their defaults.
+ * Project filenames are probed in authoritative precedence order. A missing
+ * candidate advances to the next filename, while an unreadable or invalid
+ * candidate is logged and stops discovery so callers can fall back to their
+ * defaults without silently selecting a lower-precedence file.
  *
  * @module T3ProjectFileLoader
  */
@@ -16,7 +17,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
-import { T3_PROJECT_FILE_NAME, type T3ProjectFile } from "@t3tools/contracts";
+import { PROJECT_FILE_NAMES_BY_PRECEDENCE, type T3ProjectFile } from "@t3tools/contracts";
 import { T3ProjectFileFromJson } from "@t3tools/shared/t3ProjectFile";
 
 const decodeT3ProjectFileJson = Schema.decodeEffect(T3ProjectFileFromJson);
@@ -31,19 +32,19 @@ export class T3ProjectFileLoadError extends Schema.TaggedErrorClass<T3ProjectFil
   },
 ) {
   override get message(): string {
-    return `Failed to ${this.operation} ${T3_PROJECT_FILE_NAME} at ${this.filePath}.`;
+    return `Failed to ${this.operation} project file at ${this.filePath}.`;
   }
 }
 
-/** Service tag for t3.json project file loading. */
+/** Service tag for checked-in project file loading. */
 export class T3ProjectFileLoader extends Context.Service<
   T3ProjectFileLoader,
   {
     /**
-     * Load and decode `t3.json` at the workspace root.
+     * Load and decode the authoritative project file at the workspace root.
      *
      * Never fails: missing, unreadable, or invalid files resolve to
-     * `Option.none` (invalid files are logged as warnings).
+     * `Option.none` (read and decode failures are logged as warnings).
      */
     readonly load: (workspaceRoot: string) => Effect.Effect<Option.Option<T3ProjectFile>>;
   }
@@ -65,40 +66,46 @@ export const make = Effect.gen(function* () {
 
   const load: T3ProjectFileLoader["Service"]["load"] = Effect.fn("T3ProjectFileLoader.load")(
     function* (workspaceRoot) {
-      const filePath = path.join(workspaceRoot, T3_PROJECT_FILE_NAME);
-      const raw = yield* fileSystem.readFileString(filePath).pipe(
-        Effect.map(Option.some),
-        Effect.catchTags({
-          PlatformError: (error) =>
-            error.reason._tag === "NotFound"
-              ? Effect.succeed(Option.none<string>())
-              : logT3ProjectFileLoadError(
-                  new T3ProjectFileLoadError({
-                    operation: "read",
-                    workspaceRoot,
-                    filePath,
-                    cause: error,
-                  }),
-                ).pipe(Effect.as(Option.none<string>())),
-        }),
-      );
-      if (Option.isNone(raw)) {
-        return Option.none<T3ProjectFile>();
+      for (const fileName of PROJECT_FILE_NAMES_BY_PRECEDENCE) {
+        const filePath = path.join(workspaceRoot, fileName);
+        const readResult = yield* fileSystem.readFileString(filePath).pipe(
+          Effect.map((raw) => ({ _tag: "Found", raw }) as const),
+          Effect.catchTags({
+            PlatformError: (error) =>
+              error.reason._tag === "NotFound"
+                ? Effect.succeed({ _tag: "Missing" } as const)
+                : logT3ProjectFileLoadError(
+                    new T3ProjectFileLoadError({
+                      operation: "read",
+                      workspaceRoot,
+                      filePath,
+                      cause: error,
+                    }),
+                  ).pipe(Effect.as({ _tag: "Invalid" } as const)),
+          }),
+        );
+        if (readResult._tag === "Missing") {
+          continue;
+        }
+        if (readResult._tag === "Invalid") {
+          return Option.none<T3ProjectFile>();
+        }
+        return yield* decodeT3ProjectFileJson(readResult.raw).pipe(
+          Effect.map(Option.some),
+          Effect.catchTags({
+            SchemaError: (error) =>
+              logT3ProjectFileLoadError(
+                new T3ProjectFileLoadError({
+                  operation: "decode",
+                  workspaceRoot,
+                  filePath,
+                  cause: error,
+                }),
+              ).pipe(Effect.as(Option.none<T3ProjectFile>())),
+          }),
+        );
       }
-      return yield* decodeT3ProjectFileJson(raw.value).pipe(
-        Effect.map(Option.some),
-        Effect.catchTags({
-          SchemaError: (error) =>
-            logT3ProjectFileLoadError(
-              new T3ProjectFileLoadError({
-                operation: "decode",
-                workspaceRoot,
-                filePath,
-                cause: error,
-              }),
-            ).pipe(Effect.as(Option.none<T3ProjectFile>())),
-        }),
-      );
+      return Option.none<T3ProjectFile>();
     },
   );
 

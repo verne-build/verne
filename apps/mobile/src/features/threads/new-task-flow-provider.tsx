@@ -14,10 +14,9 @@ import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   MessageId,
-  T3_PROJECT_FILE_NAME,
+  PROJECT_FILE_NAMES_BY_PRECEDENCE,
   ThreadId,
 } from "@t3tools/contracts";
-import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import {
   isDefaultThreadEnvModeSettled,
   resolveDefaultThreadEnvMode,
@@ -77,6 +76,7 @@ import {
 } from "../home/homeThreadList";
 import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
 import { resolvePendingTaskInteractionMode } from "./legacy-plan-mode";
+import { resolveMobileProjectFileDefault } from "./new-task-project-file-default";
 import { useLegacyPlanModeState } from "./use-legacy-plan-mode-enabled";
 import {
   resolveNewTaskBranchWorktreePath,
@@ -361,33 +361,69 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const prompt = selectedProjectDraft.text;
   const attachments = selectedProjectDraft.attachments;
   // Default mode until the user picks one explicitly — same resolution web
-  // uses for new draft threads: per-project setting, then the repo's
-  // checked-in t3.json, then the server's configured default.
+  // uses for new draft threads: per-project setting, then the selected
+  // checked-in project file, then the server's configured default.
+  const verneProjectFileQuery = useEnvironmentQuery(
+    selectedProject !== null && selectedProject.workspaceRoot !== ""
+      ? projectEnvironment.readFile({
+          environmentId: selectedProject.environmentId,
+          input: {
+            cwd: selectedProject.workspaceRoot,
+            relativePath: PROJECT_FILE_NAMES_BY_PRECEDENCE[0],
+          },
+        })
+      : null,
+  );
   const t3ProjectFileQuery = useEnvironmentQuery(
     selectedProject !== null && selectedProject.workspaceRoot !== ""
       ? projectEnvironment.readFile({
           environmentId: selectedProject.environmentId,
-          input: { cwd: selectedProject.workspaceRoot, relativePath: T3_PROJECT_FILE_NAME },
+          input: {
+            cwd: selectedProject.workspaceRoot,
+            relativePath: PROJECT_FILE_NAMES_BY_PRECEDENCE[1],
+          },
         })
       : null,
   );
-  const t3ProjectFileData = t3ProjectFileQuery.data as ProjectReadFileResult | null;
-  const t3ProjectFileDefaultMode = useMemo(() => {
-    if (t3ProjectFileData === null || t3ProjectFileData.truncated) return null;
-    return parseT3ProjectFile(t3ProjectFileData.contents)?.defaultThreadEnvMode ?? null;
-  }, [t3ProjectFileData]);
+  const projectFileDefault = useMemo(
+    () =>
+      resolveMobileProjectFileDefault({
+        [PROJECT_FILE_NAMES_BY_PRECEDENCE[0]]: {
+          data: verneProjectFileQuery.data as ProjectReadFileResult | null,
+          error: verneProjectFileQuery.error,
+          failureCause: verneProjectFileQuery.failureCause,
+          isPending: verneProjectFileQuery.isPending,
+        },
+        [PROJECT_FILE_NAMES_BY_PRECEDENCE[1]]: {
+          data: t3ProjectFileQuery.data as ProjectReadFileResult | null,
+          error: t3ProjectFileQuery.error,
+          failureCause: t3ProjectFileQuery.failureCause,
+          isPending: t3ProjectFileQuery.isPending,
+        },
+      }),
+    [
+      t3ProjectFileQuery.data,
+      t3ProjectFileQuery.error,
+      t3ProjectFileQuery.failureCause,
+      t3ProjectFileQuery.isPending,
+      verneProjectFileQuery.data,
+      verneProjectFileQuery.error,
+      verneProjectFileQuery.failureCause,
+      verneProjectFileQuery.isPending,
+    ],
+  );
   const defaultWorkspaceMode: WorkspaceMode = resolveDefaultThreadEnvMode({
     projectSetting: selectedProject?.defaultThreadEnvMode,
-    projectFile: t3ProjectFileDefaultMode,
+    projectFile: projectFileDefault.projectFile,
     globalDefault: selectedEnvironmentServerConfig?.settings.defaultThreadEnvMode ?? "local",
   });
   // While unsettled the resolved default is provisional. Nothing may write
   // it into the draft during that window (the auto-branch effect does), or
-  // the frozen interim value beats the t3.json default once it loads.
+  // the frozen interim value beats the project-file default once it loads.
   const defaultWorkspaceModeSettled = isDefaultThreadEnvModeSettled({
     explicitMode: selectedProjectDraft.workspaceSelection?.mode,
     projectSetting: selectedProject?.defaultThreadEnvMode,
-    projectFilePending: t3ProjectFileQuery.isPending,
+    projectFilePending: projectFileDefault.projectFilePending,
   });
   const workspaceMode = selectedProjectDraft.workspaceSelection?.mode ?? defaultWorkspaceMode;
   const selectedBranchName = selectedProjectDraft.workspaceSelection?.branch ?? null;

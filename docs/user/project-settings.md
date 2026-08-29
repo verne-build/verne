@@ -1,7 +1,8 @@
 # Customize a project icon
 
-T3 Code selects a project icon automatically. It checks `t3.json`, common favicon and app icon
-paths, and icon links in project HTML files.
+T3 Code selects a project icon automatically. It checks `verne.json` or `t3.json`, common favicon
+and app icon paths, and icon links in project HTML files. When both project files exist,
+`verne.json` is authoritative.
 
 To choose a different icon:
 

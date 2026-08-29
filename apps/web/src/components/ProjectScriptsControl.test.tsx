@@ -1,8 +1,13 @@
-import type { ProjectScript, ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import type {
+  ProjectFileName,
+  ProjectScript,
+  ResolvedKeybindingsConfig,
+  T3ProjectFileScript,
+} from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
-import ProjectScriptsControl from "./ProjectScriptsControl";
+import ProjectScriptsControl, { projectFileScriptsSourceLabel } from "./ProjectScriptsControl";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const PRIMARY_SCRIPT: ProjectScript = {
@@ -13,10 +18,16 @@ const PRIMARY_SCRIPT: ProjectScript = {
   runOnWorktreeCreate: false,
 };
 
-function renderControl(scripts: ReadonlyArray<ProjectScript>) {
+function renderControl(
+  scripts: ReadonlyArray<ProjectScript>,
+  fileScripts?: ReadonlyArray<T3ProjectFileScript>,
+  fileName?: ProjectFileName,
+) {
   return renderToStaticMarkup(
     <ProjectScriptsControl
       scripts={scripts}
+      {...(fileScripts === undefined ? {} : { fileScripts })}
+      {...(fileName === undefined ? {} : { fileName })}
       keybindings={EMPTY_KEYBINDINGS}
       onRunScript={() => {}}
       onAddScript={async () => undefined as never}
@@ -61,5 +72,9 @@ describe("ProjectScriptsControl compact controls", () => {
     expect(html).toContain(
       'class="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5"',
     );
+  });
+
+  it("labels imported actions with the selected project filename", () => {
+    expect(projectFileScriptsSourceLabel("verne.json")).toBe("From verne.json");
   });
 });

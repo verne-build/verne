@@ -25,8 +25,40 @@ function optimisticFileAtom(environmentId: EnvironmentId, cwd: string, relativeP
 interface ProjectQueryState<A> {
   readonly data: A | null;
   readonly error: string | null;
+  readonly failureCause: Cause.Cause<unknown> | null;
   readonly isPending: boolean;
   readonly refresh: () => void;
+}
+
+/** A missing file fails while resolving the target; later failures mean the target exists. */
+export function projectFileReadFailureIsMissing(cause: Cause.Cause<unknown>): boolean {
+  const error = Cause.squash(cause);
+  if (
+    typeof error !== "object" ||
+    error === null ||
+    !("_tag" in error) ||
+    error._tag !== "ProjectReadFileError" ||
+    !("operation" in error) ||
+    error.operation !== "realpath-target" ||
+    !("cause" in error)
+  ) {
+    return false;
+  }
+  const visited = new Set<object>();
+  const containsNotFoundCause = (value: unknown): boolean => {
+    if (typeof value !== "object" || value === null || visited.has(value)) return false;
+    visited.add(value);
+    if ("code" in value && value.code === "ENOENT") return true;
+    if (
+      "message" in value &&
+      typeof value.message === "string" &&
+      value.message.includes("ENOENT")
+    ) {
+      return true;
+    }
+    return "cause" in value && containsNotFoundCause(value.cause);
+  };
+  return containsNotFoundCause(error.cause);
 }
 
 export function getProjectEntriesQueryAtom(environmentId: EnvironmentId, cwd: string) {
@@ -132,6 +164,7 @@ export function useProjectEntriesQuery(
   return {
     data: Option.getOrNull(AsyncResult.value(result)),
     error: errorMessage(result),
+    failureCause: result._tag === "Failure" ? result.cause : null,
     isPending: result.waiting,
     refresh,
   };
@@ -193,6 +226,7 @@ export function useProjectFileQuery(
   return {
     data: optimisticFile?.data ?? data,
     error: errorMessage(result),
+    failureCause: result._tag === "Failure" ? result.cause : null,
     isPending: result.waiting,
     refresh,
   };
