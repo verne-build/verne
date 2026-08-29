@@ -1,33 +1,40 @@
-node_modules/
-out/
-dist/
-release/
-*.log
-
-# signing/notarization credentials — auto-loaded by electron-builder. Never commit.
-electron-builder.env
-
-# compiled TS artifacts (sources are .ts; electron-vite emits to out/)
-electron/**/*.js
-electron.vite.config.js
+node_modules
+.bun
+.turbo
 .DS_Store
-**/.DS_Store
-
-# Rust daemon build artifacts
-daemon/target/
-
-# actool byproducts — only build/compiled/Assets.car is needed (injected by after-pack)
-build/compiled/*.icns
-build/partial.plist
-
-# Bundled LSP server node_modules is reproduced from the committed manifest
-# (resources/bundled/{package.json,pnpm-lock.yaml,.npmrc}) via `pnpm bundle:install`.
-# The node_modules dir itself is already ignored by the root `node_modules/` rule above.
-
-# git worktrees for isolated feature work
-.worktrees/
-electron-builder.env
-.claude/worktrees
-# playwright renderer suite artifacts
-test-results/
-playwright-report/
+*.log
+*.tsbuildinfo
+apps/*/dist
+infra/*/dist
+.astro
+packages/*/dist
+.env
+.env.local
+build/
+.logs/
+release/
+release-mock/
+.t3
+.idea/
+apps/web/.playwright
+apps/web/playwright-report
+apps/web/src/components/__screenshots__
+.vitest-*
+__screenshots__/
+.tanstack
+squashfs-root/
+.vercel
+.gstack/
+.plans/
+dist-electron/
+.electron-runtime/
+.showcase/
+apps/mobile/.showcase/
+artifacts/app-store/screenshots/
+.github/pr-assets/
+native/**/target/
+node_modules/
+.alchemy/
+*.log
+.env*
+!.env.example

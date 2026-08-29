@@ -1,18 +1,33 @@
-<!-- Verne PR — write prose, keep it tight.
-     Fix? Use ?template=fix.md. Feature? This is it (?template=feature.md). -->
+<!--
+⚠️ READ BEFORE OPENING ⚠️
 
-## Summary
-<!-- One sentence: what a user/dev can now do. -->
+We are not actively accepting contributions right now.
 
-## Context
-<!-- What prompted this and the prior state — what was missing or awkward. Link issue/note. -->
+You can still open a PR, but please do so knowing there is a high chance
+we may close it without merging it, or never review it.
 
-## Change
-<!-- Walk through what you built and why this shape. Name the layers it spans
-     (renderer / electron-main / daemon / sidecar) and any new IPC method + its route.
-     Mention new deps, settings, ports, or DB migrations inline as they come up. -->
+- Small, focused PRs are strongly preferred. Bug fixes are most likely to be merged.
+- New features will most likely just annoy us.
+- 1,000+ line PRs with a bunch of new features will probably get you banned from the repo.
+-->
 
-## Risk & verification
-<!-- What this could affect, and the proof it holds:
-     pnpm typecheck · pnpm test · pnpm build · cargo check (results), plus the manual
-     steps you ran (what you did, what you saw). Screenshots/gif for visual changes. -->
+## What Changed
+
+<!-- Describe the change clearly and keep scope tight. -->
+
+## Why
+
+<!-- Explain the problem being solved and why this approach is the right one. -->
+
+## UI Changes
+
+<!-- If this PR changes UI, include clear before/after screenshots.
+     If the change involves motion or interaction, include a short video.
+     Delete this section if not applicable. -->
+
+## Checklist
+
+- [ ] This PR is small and focused
+- [ ] I explained what changed and why
+- [ ] I included before/after screenshots for any UI changes
+- [ ] I included a video for animation/interaction changes

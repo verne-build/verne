@@ -1,52 +1,120 @@
-<div align="center">
+# T3 Code
 
-<img src="src/assets/hero.png" alt="Verne workspace" width="full" />
+T3 Code is an "agent harness control surface". It enables control of the agents on your machine with a best-in-class mobile app ([iOS](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824), [Android](https://play.google.com/store/apps/details?id=com.t3tools.t3code)), [web app](https://app.t3.codes) and [Electron-based desktop app](https://t3.codes).
 
+Works with your subscriptions on Claude Code, Codex, Cursor, Grok Build, and OpenCode. If they're set up on your computer, T3 Code can control them.
 
-### The open-source IDE for your coding agents
+## "Wait, what are you selling me?"
 
-<br />
+Nothing. We built T3 Code because we wanted the best possible development experience with agents. We were inspired by existing solutions like the Codex desktop app, Conductor, Claude Desktop and Cursor Glass, but none met our bar.
 
-[![License: GPLv3](https://img.shields.io/badge/License-GPLv3-informational.svg)](./LICENSE.txt)
-[![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/verne-build/verne/release.yml)](https://github.com/verne-build/verne/releases)
-[![GitHub release](https://img.shields.io/github/v/release/verne-build/verne?style=flat)](https://github.com/verne-build/verne/releases)
+We wanted something performant, remote-ready, and truly open. If we ever go the wrong direction, we want you to have everything you need to fork and build the editor that you want.
 
-<br />
+## Installation
 
-[**Download for macOS**](https://github.com/verne-build/verne/releases/latest) &nbsp;&bull;&nbsp; [**Website**](https://verne.build) &nbsp;&bull;&nbsp; [**Docs**](https://verne.build/docs) &nbsp;&bull;&nbsp; [**Changelog**](https://verne.build/changelog)
+> [!WARNING]
+> T3 Code currently supports Codex, Claude, Cursor, Grok Build and OpenCode. Install and authenticate at least one provider before use:
+>
+> - Codex: install [Codex CLI](https://developers.openai.com/codex/cli) and run `codex login`
+> - Claude: install [Claude Code](https://claude.com/product/claude-code) and run `claude auth login`
+> - Cursor: install [Cursor CLI](https://cursor.com/cli) and run `agent login`
+> - Grok Build: install [Grok Build CLI](https://x.ai/cli) and run `grok login`
+> - OpenCode: install [OpenCode](https://opencode.ai) and run `opencode auth login`
 
-</div>
+### Try it out (install-free)
 
-## Why Verne
+The easiest way to test T3 Code is to run the server in your terminal (requires Node.js 22.16+, 23.11+, or 24.10+):
 
-Your agents run in a terminal. The files they touch, the diffs you review, the browser you verify in, and the context they need all live in other windows. Verne puts the agents at the centre and brings the rest in with them.
+```bash
+npx t3@latest
+```
 
-- **Your agents, your accounts.** Verne runs the CLI agents you installed, signed in with your own accounts. On a Claude Pro or Max plan? Verne keeps using it, no API key and no extra billing.
-- **Your code stays on your machine.** Verne runs locally and talks only to the agents you installed. Your code and prompts never reach our servers.
-- **Free and open-source.** GPLv3. Download it, use it, fork it. No account, no licence key, nothing paywalled.
+This will launch T3 Code's backend on your machine as well as the local web app to control your agents.
 
-## Bring your favourite agents
+Tip: Use `npx t3@latest --help` for the full CLI reference.
 
-[Claude Code](https://www.anthropic.com/claude-code) · [Codex](https://openai.com/codex/) · [Cursor](https://cursor.com) · [OpenCode](https://opencode.ai) · [Antigravity](https://antigravity.google)
+### Desktop app
 
-Any CLI agent runs in a Verne terminal; the ones above also show their live status.
+Install the latest version of the desktop app from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), or from your favorite package registry:
 
-## Features
+#### Windows (`winget`)
 
-| Feature | What it does |
-| --- | --- |
-| **Monitor every agent at a glance** | Each terminal carries a live status dot. Verne reads the running agent and tells you when it's working, waiting on you, or done, so a stalled session never hides in a background tab. |
-| **Pick up where you left off** | A detached daemon owns the PTYs, so terminals and agents outlive the app. Quit, reboot, or drop your connection, then reopen and reattach to sessions still running. |
-| **A familiar editor, built in** | Open files in tabs and edit them in-app on Monaco, the engine behind VS Code, backed by LSP for go-to-definition and diagnostics. Your themes and keybindings come along. |
-| **Review every change before you commit** | Watch files change as your agents write them, open a line-by-line diff for any one, then stage and commit from the same window. |
-| **A browser your agents can drive** | Real browser tabs sit beside your code for previewing work. Hand one to an agent over MCP and it can navigate, fill forms, and read the page mid-task. |
-| **Notes your agents can read** | Every workspace gets its own notes, exposed to agents over MCP. Drop the context, conventions, or TODOs they need where the code is, not in a separate doc. |
-| **Voice** | On-device speech-to-text via sherpa-onnx, with developer-term and number post-processing. |
+```bash
+winget install T3Tools.T3Code
+```
 
-## Platforms
+#### macOS (Homebrew)
 
-macOS today, on both Apple Silicon and Intel. Linux and Windows are on the roadmap. Watch [the repo](https://github.com/verne-build/verne) for releases.
+```bash
+brew install --cask t3-code
+```
 
-## Licence
+#### Arch Linux (AUR)
 
-Distributed under the GNU General Public Licence 3.0. See [LICENCE.txt](LICENCE.txt) for more information.
+Stable:
+
+```bash
+yay -S t3code-bin
+```
+
+Nightly:
+
+```bash
+yay -S t3code-nightly-bin
+```
+
+The AUR packaging is maintained in this repository under [`packaging/aur`](./packaging/aur).
+
+## Some notes
+
+We are very very early in this project. Expect bugs.
+
+We are (mostly) not accepting contributions yet. Small fixes may be considered. Big features will not be.
+
+## Documentation
+
+Full docs live in [docs/](./docs). There's no docs site yet.
+
+- [Install and first run](./docs/user/install.md)
+- [Permission modes](./docs/user/permission-modes.md)
+- [Keyboard shortcuts](./docs/user/keybindings.md)
+- [Customize a project icon](./docs/user/project-settings.md)
+- [Remote access from a phone or another machine](./docs/user/remote-access.md)
+- [Keeping app and server in sync](./docs/user/updating.md)
+- [Source control integrations](./docs/user/source-control.md)
+- Multiple accounts: [Codex](./docs/user/providers-codex.md) · [Claude](./docs/user/providers-claude.md)
+- Linux: [run T3 Code as a background service](./docs/user/background-service.md)
+
+Building from source? Start at [docs/internals/overview.md](./docs/internals/overview.md).
+
+## If you REALLY want to contribute still.... read this first
+
+### Install `vp`
+
+T3 Code uses Vite+ so you'll need to install the global `vp` command-line tool.
+
+#### macOS / Linux
+
+```bash
+curl -fsSL https://vite.plus | bash
+```
+
+#### Windows
+
+```bash
+irm https://vite.plus/ps1 | iex
+```
+
+Checkout their getting started guide for more information: https://viteplus.dev/guide/
+
+### Install dependencies
+
+```bash
+vp i
+```
+
+Read [CONTRIBUTING.md](./CONTRIBUTING.md) before reporting a bug or opening a PR.
+
+Have a feature request? Start an [Ideas discussion](https://github.com/pingdotgg/t3code/discussions/categories/ideas).
+
+Need support? Join the [Discord](https://discord.gg/jn4EGJjrvv).
