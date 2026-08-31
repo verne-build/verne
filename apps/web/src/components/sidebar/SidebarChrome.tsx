@@ -103,37 +103,81 @@ function SidebarUtilityItem({
   );
 }
 
-export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
+export function isPullRequestsRoute(pathname: string): boolean {
+  return pathname === "/pull-requests";
+}
+
+export function resolveSidebarFooterPage(
+  pathname: string,
+): "settings" | "project-settings" | "usage" | null {
+  if (/^\/settings(?:\/|$)/.test(pathname)) return "settings";
+  if (/^\/projects\/[^/]+\/?$/.test(pathname)) return "project-settings";
+  if (pathname === "/usage") return "usage";
+  return null;
+}
+
+export const SidebarPullRequestsButton = memo(function SidebarPullRequestsButton({
+  iconOnly = false,
+}: {
+  iconOnly?: boolean;
+}) {
+  const navigate = useNavigate();
+  const isActive = useLocation({ select: (location) => isPullRequestsRoute(location.pathname) });
+  const { isMobile, setOpenMobile } = useSidebar();
+  const { environments } = useEnvironments();
+  const pullRequestsSupported = environments.some(
+    (environment) => environment.serverConfig?.environment.capabilities.pullRequests === true,
+  );
+  const handleClick = useCallback(() => {
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+    void navigate({ to: "/pull-requests", search: { involvement: "all", state: "open" } });
+  }, [isMobile, navigate, setOpenMobile]);
+
+  if (!pullRequestsSupported) {
+    return null;
+  }
+
+  if (iconOnly) {
+    return (
+      <SidebarUtilityItem
+        icon={<GitPullRequestIcon />}
+        label="Pull Requests"
+        onClick={handleClick}
+      />
+    );
+  }
+
+  return (
+    <SidebarMenuButton
+      type="button"
+      onClick={handleClick}
+      aria-label="Pull requests"
+      isActive={isActive}
+    >
+      <GitPullRequestIcon />
+      <span className="min-w-0 flex-1 truncate">Pull requests</span>
+    </SidebarMenuButton>
+  );
+});
+
+export const SidebarUtilityMenu = memo(function SidebarUtilityMenu({
+  showPullRequests = true,
+}: {
+  showPullRequests?: boolean;
+}) {
   const navigate = useNavigate();
   const canGoBack = useCanGoBack();
   const { isMobile, setOpenMobile } = useSidebar();
   const currentFooterPage = useLocation({
-    select: (location) =>
-      /^\/settings(?:\/|$)/.test(location.pathname)
-        ? "settings"
-        : /^\/projects\/[^/]+\/?$/.test(location.pathname)
-          ? "project-settings"
-          : location.pathname === "/usage"
-            ? "usage"
-            : location.pathname === "/pull-requests"
-              ? "pull-requests"
-              : null,
+    select: (location) => resolveSidebarFooterPage(location.pathname),
   });
-  const { environments } = useEnvironments();
-  // The page reads every connected server, so one of them offering pull requests is enough for
-  // the link to lead somewhere.
-  const pullRequestsSupported = environments.some(
-    (environment) => environment.serverConfig?.environment.capabilities.pullRequests === true,
-  );
   const closeMobileSidebar = useCallback(() => {
     if (isMobile) {
       setOpenMobile(false);
     }
   }, [isMobile, setOpenMobile]);
-  const handlePullRequestsClick = useCallback(() => {
-    closeMobileSidebar();
-    void navigate({ to: "/pull-requests", search: { involvement: "all", state: "open" } });
-  }, [closeMobileSidebar, navigate]);
   const handleSettingsClick = useCallback(() => {
     closeMobileSidebar();
     void navigate({ to: "/settings" });
@@ -171,13 +215,7 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
             label="Settings"
             onClick={handleSettingsClick}
           />
-          {pullRequestsSupported ? (
-            <SidebarUtilityItem
-              icon={<GitPullRequestIcon />}
-              label="Pull Requests"
-              onClick={handlePullRequestsClick}
-            />
-          ) : null}
+          {showPullRequests ? <SidebarPullRequestsButton iconOnly /> : null}
           <SidebarUtilityItem
             icon={<ChartNoAxesColumnIcon />}
             label="Usage"
@@ -190,12 +228,16 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   );
 });
 
-export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
+export const SidebarChromeFooter = memo(function SidebarChromeFooter({
+  showPullRequests = true,
+}: {
+  showPullRequests?: boolean;
+}) {
   return (
     <SidebarFooter className="p-[var(--sidebar-content-inset)]">
       <SidebarProviderUpdatePill />
       <SidebarUpdateArchitectureWarning />
-      <SidebarUtilityMenu />
+      <SidebarUtilityMenu showPullRequests={showPullRequests} />
     </SidebarFooter>
   );
 });

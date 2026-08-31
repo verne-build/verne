@@ -8,7 +8,9 @@ import {
   type ReactNode,
 } from "react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
+import { SearchIcon } from "lucide-react";
 
+import { openCommandPalette } from "../commandPaletteBus";
 import { isElectron } from "../env";
 import { getLocalStorageItem, removeLocalStorageItem } from "../hooks/useLocalStorage";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
@@ -40,6 +42,8 @@ import {
   useSidebarVisibility,
 } from "./ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { Button } from "./ui/button";
+import type { SidebarStageBackdropVariant } from "./SidebarStageBackdrop";
 
 const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "90px";
 
@@ -64,6 +68,71 @@ function readInitialThreadSidebarWidth(): number {
   }
 }
 
+export function openSidebarSearch(): void {
+  openCommandPalette();
+}
+
+export function SidebarControlButtons({
+  isSidebarVisible,
+  searchShortcutLabel,
+  stageBackdropVariant,
+  toggleShortcutLabel,
+}: {
+  isSidebarVisible: boolean;
+  searchShortcutLabel: string | null;
+  stageBackdropVariant: SidebarStageBackdropVariant | null;
+  toggleShortcutLabel: string | null;
+}) {
+  const stageButtonClassName = cn(
+    "pointer-events-auto",
+    isSidebarVisible &&
+      stageBackdropVariant &&
+      "focus-visible:ring-white/90 [&_svg]:stroke-white/90! [&_svg]:opacity-100! [&_svg]:hover:stroke-white! [:hover,[data-pressed]]:bg-white/15",
+    isSidebarVisible &&
+      stageBackdropVariant &&
+      resolveSidebarStageFocusRingOffsetClass(stageBackdropVariant),
+  );
+
+  return (
+    // The right-side layout controls carry mr-px (border compensation inside
+    // the panel), so the trigger mirrors it: both clusters sit one extra pixel
+    // off their edge and the titlebar reads symmetric.
+    <div
+      className="pointer-events-none fixed left-[var(--workspace-controls-left)] top-[var(--workspace-controls-top)] z-50 ml-px flex h-[var(--workspace-topbar-height)] items-center gap-1"
+      data-sidebar-control=""
+    >
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <SidebarTrigger className={stageButtonClassName} aria-label="Toggle main sidebar" />
+          }
+        />
+        <TooltipPopup side="bottom">
+          Toggle main sidebar{toggleShortcutLabel ? ` (${toggleShortcutLabel})` : ""}
+        </TooltipPopup>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              className={stageButtonClassName}
+              size="icon"
+              variant="ghost"
+              aria-label="Search"
+              onClick={openSidebarSearch}
+            >
+              <SearchIcon />
+            </Button>
+          }
+        />
+        <TooltipPopup side="bottom">
+          Search{searchShortcutLabel ? ` (${searchShortcutLabel})` : ""}
+        </TooltipPopup>
+      </Tooltip>
+    </div>
+  );
+}
+
 function SidebarControl() {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { toggleSidebar } = useSidebar();
@@ -72,7 +141,8 @@ function SidebarControl() {
   const stageBackdropVariant = useSidebarStageBackdropVariant(
     environmentIdentificationMode === "artwork",
   );
-  const shortcutLabel = shortcutLabelForCommand(keybindings, "sidebar.toggle");
+  const toggleShortcutLabel = shortcutLabelForCommand(keybindings, "sidebar.toggle");
+  const searchShortcutLabel = shortcutLabelForCommand(keybindings, "commandPalette.toggle");
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -96,35 +166,12 @@ function SidebarControl() {
   }, [keybindings, toggleSidebar]);
 
   return (
-    // The right-side layout controls carry mr-px (border compensation inside
-    // the panel), so the trigger mirrors it: both clusters sit one extra pixel
-    // off their edge and the titlebar reads symmetric.
-    <div
-      className="pointer-events-none fixed left-[var(--workspace-controls-left)] top-[var(--workspace-controls-top)] z-50 ml-px flex h-[var(--workspace-topbar-height)] items-center"
-      data-sidebar-control=""
-    >
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <SidebarTrigger
-              className={cn(
-                "pointer-events-auto",
-                isSidebarVisible &&
-                  stageBackdropVariant &&
-                  "focus-visible:ring-white/90 [&_svg]:stroke-white/90! [&_svg]:opacity-100! [&_svg]:hover:stroke-white! [:hover,[data-pressed]]:bg-white/15",
-                isSidebarVisible &&
-                  stageBackdropVariant &&
-                  resolveSidebarStageFocusRingOffsetClass(stageBackdropVariant),
-              )}
-              aria-label="Toggle main sidebar"
-            />
-          }
-        />
-        <TooltipPopup side="bottom">
-          Toggle main sidebar{shortcutLabel ? ` (${shortcutLabel})` : ""}
-        </TooltipPopup>
-      </Tooltip>
-    </div>
+    <SidebarControlButtons
+      isSidebarVisible={isSidebarVisible}
+      searchShortcutLabel={searchShortcutLabel}
+      stageBackdropVariant={stageBackdropVariant}
+      toggleShortcutLabel={toggleShortcutLabel}
+    />
   );
 }
 
