@@ -437,7 +437,7 @@ export class BootService extends Context.Service<
     readonly uninstall: Effect.Effect<boolean, BootServiceError>;
     readonly status: Effect.Effect<BootServiceStatus, BootServiceError>;
   }
->()("t3/cloud/bootService") {}
+>()("@verne-build/cli/cloud/bootService") {}
 
 export interface BootServiceHost {
   readonly execPath: string;

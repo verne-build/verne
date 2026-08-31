@@ -56,7 +56,7 @@ export class AnalyticsService extends Context.Service<
     /** Flush all currently queued telemetry events. */
     readonly flush: Effect.Effect<void>;
   }
->()("t3/telemetry/AnalyticsService") {
+>()("@verne-build/cli/telemetry/AnalyticsService") {
   /** No-op layer for callers that intentionally disable telemetry. */
   static readonly layerTest = Layer.succeed(
     AnalyticsService,

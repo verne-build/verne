@@ -68,4 +68,4 @@ export interface OrchestrationEventStoreShape {
 export class OrchestrationEventStore extends Context.Service<
   OrchestrationEventStore,
   OrchestrationEventStoreShape
->()("t3/persistence/Services/OrchestrationEventStore") {}
+>()("@verne-build/cli/persistence/Services/OrchestrationEventStore") {}

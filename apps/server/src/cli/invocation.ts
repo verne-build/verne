@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 
 import { HostProcessArguments } from "@t3tools/shared/hostProcess";
+import { VERNE_CLI_COMMAND, VERNE_CLI_PACKAGE } from "@t3tools/shared/productIdentity";
 
 import packageJson from "../../package.json" with { type: "json" };
 
@@ -43,7 +44,7 @@ export function detectCliRunner(entryPath: string): CliRunner | null {
  * anything else suggests the bare package.
  */
 export function suggestedPackageSpec(version: string): string {
-  return version.includes("-nightly.") ? "t3@nightly" : "t3";
+  return version.includes("-nightly.") ? `${VERNE_CLI_PACKAGE}@nightly` : VERNE_CLI_PACKAGE;
 }
 
 /**
@@ -59,7 +60,7 @@ export function formatCliCommand(input: {
 }): string {
   const runner = detectCliRunner(input.entryPath);
   if (runner === null) {
-    return `t3 ${input.subcommand}`;
+    return `${VERNE_CLI_COMMAND} ${input.subcommand}`;
   }
   return `${runner} ${suggestedPackageSpec(input.version)} ${input.subcommand}`;
 }

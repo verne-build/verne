@@ -1,5 +1,5 @@
 /**
- * `t3 pair` - mint a pairing token for an already-running server and print it
+ * `verne pair` - mint a pairing token for an already-running server and print it
  * as a QR code, without restarting anything.
  *
  * Discovery reads the `server-runtime.json` a live server persists next to its
@@ -76,9 +76,9 @@ export class NoRunningServerError extends Schema.TaggedErrorClass<NoRunningServe
 ) {
   override get message(): string {
     return [
-      "No running T3 Code server found.",
+      "No running Verne server found.",
       ...this.checkedStatePaths.map((statePath) => `  checked ${statePath}`),
-      "Start one with `npx t3 serve`, or connect this machine with T3 Connect: `npx t3 connect`.",
+      "Start one with `npx @verne-build/cli serve`.",
     ].join("\n");
   }
 }
@@ -261,7 +261,7 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
     if (worktreeHome !== undefined) {
       bases.push(worktreeHome);
     }
-    const envHome = yield* Config.string("T3CODE_HOME").pipe(Config.option);
+    const envHome = yield* Config.string("VERNE_HOME").pipe(Config.option);
     bases.push(yield* resolveBaseDir(Option.getOrUndefined(envHome)));
   }
 
@@ -331,7 +331,7 @@ const makePairServerConfig = Effect.fn(function* (input: {
     otlpTracesUrl: undefined,
     otlpMetricsUrl: undefined,
     otlpExportIntervalMs: 10_000,
-    otlpServiceName: "t3-server",
+    otlpServiceName: "verne-server",
     mode: "web",
     port: state.port,
     host: state.host,
@@ -442,7 +442,7 @@ const mintPairingLink = Effect.fn("pair.mintPairingLink")(function* (input: {
     return yield* environmentAuth.createPairingLink({
       scopes: AuthStandardClientScopes,
       subject: "one-time-token",
-      label: Option.getOrElse(input.label, () => "t3 pair"),
+      label: Option.getOrElse(input.label, () => "verne pair"),
       ...(Option.isSome(input.ttl) ? { ttl: input.ttl.value } : {}),
     });
   }).pipe(
@@ -489,7 +489,7 @@ export const pairCommand = Command.make("pair", {
   tailscaleServePort: tailscaleServePortFlag,
 }).pipe(
   Command.withDescription(
-    "Mint a pairing token for a running T3 Code server and print it as a QR code.",
+    "Mint a pairing token for a running Verne server and print it as a QR code.",
   ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {

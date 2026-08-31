@@ -1,14 +1,14 @@
 {
-  "name": "t3",
+  "name": "@verne-build/cli",
   "version": "0.0.35",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/pingdotgg/t3code",
+    "url": "https://github.com/verne-build/verne",
     "directory": "apps/server"
   },
   "bin": {
-    "t3": "./dist/bin.mjs"
+    "verne": "./dist/bin.mjs"
   },
   "files": [
     "dist"

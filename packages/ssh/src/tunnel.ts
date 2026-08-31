@@ -423,8 +423,8 @@ if [ -n "$T3_NODE_SCRIPT_PATH" ]; then
   fi
   exec node "$T3_NODE_SCRIPT_PATH" "$@"
 fi
-if command -v t3 >/dev/null 2>&1; then
-  exec t3 "$@"
+if command -v verne >/dev/null 2>&1; then
+  exec verne "$@"
 fi
 # npm extracts a package before it runs the native builds of its dependencies,
 # so a failed build (t3 depends on node-pty, which needs a C toolchain) leaves
@@ -433,11 +433,11 @@ fi
 # never becomes ready. Resolve the CLI once up front so that install failure is
 # reported here, with npm's own output on stderr.
 require_installed_t3_cli() {
-  T3_CLI_PATH="$("$@" -- sh -c 'command -v t3' || true)"
+  T3_CLI_PATH="$("$@" -- sh -c 'command -v verne' || true)"
   if [ -n "$T3_CLI_PATH" ]; then
     return 0
   fi
-  printf 'Remote host installed %s but npm produced no t3 executable, which usually means a native dependency (node-pty) failed to build. Install a C toolchain on the remote host (Debian/Ubuntu: build-essential, Fedora/RHEL: gcc-c++ make, macOS: xcode-select --install) and try again.\\n' @@T3_PACKAGE_SPEC@@ >&2
+  printf 'Remote host installed %s but npm produced no verne executable, which usually means a native dependency (node-pty) failed to build. Install a C toolchain on the remote host (Debian/Ubuntu: build-essential, Fedora/RHEL: gcc-c++ make, macOS: xcode-select --install) and try again.\\n' @@T3_PACKAGE_SPEC@@ >&2
   return 1
 }
 if command -v npx >/dev/null 2>&1; then
@@ -448,22 +448,22 @@ if command -v npm >/dev/null 2>&1; then
   require_installed_t3_cli npm exec --yes --package @@T3_PACKAGE_SPEC@@ || exit 1
   exec npm exec --yes @@T3_PACKAGE_SPEC@@ -- "$@"
 fi
-printf 'Remote host is missing the t3 CLI and could not install @@T3_PACKAGE_SPEC@@ because node/npm/npx are unavailable on PATH. Install Node or configure a supported version manager for non-interactive shells.\\n' >&2
+printf 'Remote host is missing the Verne CLI and could not install @@T3_PACKAGE_SPEC@@ because node/npm/npx are unavailable on PATH. Install Node or configure a supported version manager for non-interactive shells.\\n' >&2
 exit 1
 `;
 
 export const REMOTE_LAUNCH_SCRIPT = `set -eu
 @@T3_NODE_ENV_SCRIPT@@
 STATE_KEY="$1"
-STATE_DIR="$HOME/.t3/ssh-launch/$STATE_KEY"
-DEFAULT_SERVER_HOME="$HOME/.t3"
+STATE_DIR="$HOME/.verne/ssh-launch/$STATE_KEY"
+DEFAULT_SERVER_HOME="$HOME/.verne"
 DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_HOME/userdata/server-runtime.json"
 PORT_FILE="$STATE_DIR/port"
 PID_FILE="$STATE_DIR/pid"
 MANAGED_FILE="$STATE_DIR/managed"
 LOG_FILE="$STATE_DIR/server.log"
-RUNNER_FILE="$STATE_DIR/run-t3.sh"
-RUNNER_NEXT="$STATE_DIR/run-t3.next.$$"
+RUNNER_FILE="$STATE_DIR/run-verne.sh"
+RUNNER_NEXT="$STATE_DIR/run-verne.next.$$"
 mkdir -p "$STATE_DIR"
 cleanup_runner_next() {
   rm -f "$RUNNER_NEXT"
@@ -590,13 +590,13 @@ if [ -z "$REMOTE_PORT" ]; then
     printf 'Failed to find an available port on the remote host. Ensure node is available on PATH.\\n' >&2
     exit 1
   fi
-  nohup env T3CODE_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
+  nohup env VERNE_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
   REMOTE_PID="$!"
   printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
   printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
   printf 'managed\\n' >"$MANAGED_FILE"
   if ! wait_ready "@@T3_READY_TIMEOUT_MS@@"; then
-    printf 'Remote T3 server did not become ready on 127.0.0.1:%s.\\n' "$REMOTE_PORT" >&2
+    printf 'Remote Verne server did not become ready on 127.0.0.1:%s.\\n' "$REMOTE_PORT" >&2
     if [ -s "$LOG_FILE" ]; then
       tail -n 80 "$LOG_FILE" >&2 2>/dev/null || true
     else
@@ -612,9 +612,9 @@ printf '{"remotePort":%s,"serverKind":"%s"}\\n' "$REMOTE_PORT" "\${REMOTE_MANAGE
 `;
 
 export const REMOTE_PAIRING_SCRIPT = `set -eu
-STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
-DEFAULT_SERVER_HOME="$HOME/.t3"
-RUNNER_FILE="$STATE_DIR/run-t3.sh"
+STATE_DIR="$HOME/.verne/ssh-launch/@@T3_STATE_KEY@@"
+DEFAULT_SERVER_HOME="$HOME/.verne"
+RUNNER_FILE="$STATE_DIR/run-verne.sh"
 mkdir -p "$STATE_DIR"
 cat >"$RUNNER_FILE" <<'SH'
 @@T3_RUNNER_SCRIPT@@
@@ -625,7 +625,7 @@ PAIRING_BASE_DIR="$DEFAULT_SERVER_HOME"
 `;
 
 export const REMOTE_STOP_SCRIPT = `set -eu
-STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
+STATE_DIR="$HOME/.verne/ssh-launch/@@T3_STATE_KEY@@"
 PID_FILE="$STATE_DIR/pid"
 PORT_FILE="$STATE_DIR/port"
 MANAGED_FILE="$STATE_DIR/managed"
@@ -644,7 +644,7 @@ printf '{"stopped":true}\\n'
 `;
 
 const REMOTE_LOG_TAIL_SCRIPT = `set -eu
-STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
+STATE_DIR="$HOME/.verne/ssh-launch/@@T3_STATE_KEY@@"
 LOG_FILE="$STATE_DIR/server.log"
 if [ -f "$LOG_FILE" ]; then
   tail -n 80 "$LOG_FILE" 2>/dev/null || true
@@ -652,7 +652,7 @@ fi
 `;
 
 export function buildRemoteT3RunnerScript(input?: RemoteT3RunnerOptions): string {
-  const packageSpec = shellSingleQuote(input?.packageSpec?.trim() || "t3@latest");
+  const packageSpec = shellSingleQuote(input?.packageSpec?.trim() || "@verne-build/cli@latest");
   const nodeScriptPath = input?.nodeScriptPath?.trim() || "";
   return stripTrailingNewlines(
     applyScriptPlaceholders(REMOTE_RUNNER_SCRIPT, {

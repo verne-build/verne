@@ -167,4 +167,4 @@ export interface ProjectionTurnRepositoryShape {
 export class ProjectionTurnRepository extends Context.Service<
   ProjectionTurnRepository,
   ProjectionTurnRepositoryShape
->()("t3/persistence/Services/ProjectionTurns/ProjectionTurnRepository") {}
+>()("@verne-build/cli/persistence/Services/ProjectionTurns/ProjectionTurnRepository") {}

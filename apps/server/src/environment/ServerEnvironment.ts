@@ -40,7 +40,7 @@ export class ServerEnvironment extends Context.Service<
     readonly getEnvironmentId: Effect.Effect<EnvironmentId>;
     readonly getDescriptor: Effect.Effect<ExecutionEnvironmentDescriptor>;
   }
->()("t3/environment/ServerEnvironment") {}
+>()("@verne-build/cli/environment/ServerEnvironment") {}
 
 function platformOs(platform: NodeJS.Platform): ExecutionEnvironmentDescriptor["platform"]["os"] {
   switch (platform) {

@@ -194,4 +194,4 @@ export interface ProjectionSnapshotQueryShape {
 export class ProjectionSnapshotQuery extends Context.Service<
   ProjectionSnapshotQuery,
   ProjectionSnapshotQueryShape
->()("t3/orchestration/Services/ProjectionSnapshotQuery") {}
+>()("@verne-build/cli/orchestration/Services/ProjectionSnapshotQuery") {}
