@@ -14,18 +14,21 @@ export const runServerCommand = (
 ) =>
   Effect.gen(function* () {
     const logLevel = yield* GlobalFlag.LogLevel;
-    const config = yield* resolveServerConfig(flags, logLevel, options);
+    const config = yield* resolveServerConfig(flags, logLevel, {
+      ...options,
+      importLegacyState: true,
+    });
     return yield* runServer.pipe(Effect.provideService(ServerConfig, config));
   });
 
 export const startCommand = Command.make("start", { ...sharedServerCommandFlags }).pipe(
-  Command.withDescription("Run the T3 Code server."),
+  Command.withDescription("Run the Verne server."),
   Command.withHandler((flags) => runServerCommand(flags)),
 );
 
 export const serveCommand = Command.make("serve", { ...sharedServerCommandFlags }).pipe(
   Command.withDescription(
-    "Run the T3 Code server without opening a browser and print headless pairing details.",
+    "Run the Verne server without opening a browser and print headless pairing details.",
   ),
   Command.withHandler((flags) =>
     runServerCommand(flags, {

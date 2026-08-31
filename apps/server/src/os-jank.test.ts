@@ -1,7 +1,11 @@
+// @effect-diagnostics nodeBuiltinImport:off - assertions compare host-native paths.
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Effect from "effect/Effect";
 import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { assert, it } from "vite-plus/test";
 
-import { hydratePosixHome } from "./os-jank.ts";
+import { hydratePosixHome, resolveBaseDir } from "./os-jank.ts";
 
 it("hydrates HOME for minimal service environments from the user account", () => {
   const env: NodeJS.ProcessEnv = {};
@@ -37,4 +41,12 @@ it("preserves an explicitly configured HOME", () => {
   });
 
   assert.equal(env.HOME, "/custom/home");
+});
+
+it("uses the Verne home by default", async () => {
+  const baseDir = await Effect.runPromise(
+    resolveBaseDir(undefined).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  assert.equal(baseDir, NodePath.join(NodeOS.homedir(), ".verne"));
 });

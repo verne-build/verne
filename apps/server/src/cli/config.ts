@@ -16,6 +16,7 @@ import { Argument, Flag } from "effect/unstable/cli";
 import { readBootstrapEnvelope } from "../bootstrap.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
+import { importLegacyT3State as importLegacyState } from "../stateMigration.ts";
 
 export const modeFlag = Flag.choice("mode", ServerConfig.RuntimeMode.literals).pipe(
   Flag.withDescription("Runtime mode. `desktop` keeps loopback defaults unless overridden."),
@@ -215,6 +216,7 @@ export const resolveServerConfig = (
   options?: {
     readonly startupPresentation?: ServerConfig.StartupPresentation;
     readonly forceAutoBootstrapProjectFromCwd?: boolean;
+    readonly importLegacyState?: boolean;
   },
 ) =>
   Effect.gen(function* () {
@@ -281,6 +283,27 @@ export const resolveServerConfig = (
         resolveOptionPrecedence(explicitBaseDir, Option.fromUndefinedOr(bootstrap?.t3Home)),
       ),
     );
+    const defaultBaseDir = yield* resolveBaseDir(undefined);
+    if (options?.importLegacyState === true && baseDir === defaultBaseDir) {
+      const legacyHome = path.join(path.dirname(defaultBaseDir), ".t3");
+      yield* Effect.tryPromise(() => importLegacyState({ legacyHome, verneHome: baseDir })).pipe(
+        Effect.tap((result) =>
+          result === "imported"
+            ? Effect.logInfo("Imported T3 Code state into an empty Verne home.", {
+                source: legacyHome,
+                destination: baseDir,
+              })
+            : Effect.void,
+        ),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Could not import T3 Code state; starting Verne without migration.", {
+            cause,
+            source: legacyHome,
+            destination: baseDir,
+          }),
+        ),
+      );
+    }
     const rawCwd = Option.getOrElse(normalizedFlags.cwd, () => process.cwd());
     const cwd = path.resolve(yield* expandHomePath(rawCwd.trim()));
     yield* fs.makeDirectory(cwd, { recursive: true });
