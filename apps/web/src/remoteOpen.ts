@@ -197,7 +197,7 @@ export async function openRemoteEditorUrl(url: string): Promise<boolean> {
  * until the first remote open fires (we cannot observe SSH success from here,
  * so first click is the dismiss signal).
  */
-const REMOTE_OPEN_HINT_KEY = "t3code:remote-open-hint-seen";
+const REMOTE_OPEN_HINT_KEY = "verne:remote-open-hint-seen";
 
 export function useRemoteOpenHint(): readonly [seen: boolean, markSeen: () => void] {
   const [seen, setSeen] = useLocalStorage(REMOTE_OPEN_HINT_KEY, false, Schema.Boolean);

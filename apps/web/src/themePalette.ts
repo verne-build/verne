@@ -49,10 +49,10 @@ export const IRIS_THEME_LABEL = "Iris";
 export const VERNE_THEME_ID = "verne" as const;
 export const VERNE_THEME_LABEL = "Verne";
 export const THEME_FILE_VERSION = 1 as const;
-export const CUSTOM_THEMES_STORAGE_KEY = "t3code:themes:v1";
-export const THEME_FOLLOW_SYSTEM_STORAGE_KEY = "t3code:theme-follow-system";
-export const THEME_APPEARANCE_MODE_STORAGE_KEY = "t3code:theme-appearance-mode";
-export const THEME_HALVES_STORAGE_KEY = "t3code:theme-halves:v1";
+export const CUSTOM_THEMES_STORAGE_KEY = "verne:themes:v1";
+export const THEME_FOLLOW_SYSTEM_STORAGE_KEY = "verne:theme-follow-system";
+export const THEME_APPEARANCE_MODE_STORAGE_KEY = "verne:theme-appearance-mode";
+export const THEME_HALVES_STORAGE_KEY = "verne:theme-halves:v1";
 
 const LEGACY_T3_CHAT_DARK_THEME_ID = "t3-chat-dark";
 
@@ -372,7 +372,7 @@ function legacyThemeMode(theme: ThemePreference): ThemeAppearance | null {
 }
 
 /**
- * The palette T3 Code wears with no theme installed, captured from the app's
+ * The palette Verne wears with no theme installed, captured from the app's
  * stock tokens (index.css) so a draft seeded from the default look paints the
  * pixels the user is already seeing. Alpha-bearing tokens are flattened over
  * their real backdrops (canvas, or the sidebar for its rows) because theme
@@ -809,7 +809,7 @@ function solveOklchLightness(
 }
 
 /**
- * The status colors T3 Code shows without a theme, read from the app's own
+ * The status colors Verne shows without a theme, read from the app's own
  * tokens (red-500 / amber-500 families). Generated palettes fall back to
  * these instead of the flagship theme's, so an imported or created theme
  * never inherits a brand tint on destructive buttons and warnings.

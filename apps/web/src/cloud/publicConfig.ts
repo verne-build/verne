@@ -5,7 +5,7 @@ import * as Schema from "effect/Schema";
 export class CloudPublicConfigMissingError extends Schema.TaggedErrorClass<CloudPublicConfigMissingError>()(
   "CloudPublicConfigMissingError",
   {
-    key: Schema.Literal("T3CODE_CLERK_JWT_TEMPLATE"),
+    key: Schema.Literal("VERNE_CLERK_JWT_TEMPLATE"),
   },
 ) {
   override get message(): string {
@@ -44,7 +44,7 @@ export function resolveCloudPublicConfig(): CloudPublicConfig {
     ),
     clerkJwtTemplate: trimNonEmpty(import.meta.env.VITE_CLERK_JWT_TEMPLATE as string | undefined),
     relayUrl: normalizeSecureRelayUrl(
-      (import.meta.env.VITE_T3CODE_RELAY_URL as string | undefined) ?? "",
+      (import.meta.env.VITE_VERNE_RELAY_URL as string | undefined) ?? "",
     ),
     relayTracing: {
       tracesUrl: normalizeSecureUrl(
@@ -70,14 +70,13 @@ export function resolveRelayTracingConfig() {
 }
 
 export function hasCloudPublicConfig(): boolean {
-  const config = resolveCloudPublicConfig();
-  return Boolean(config.clerkPublishableKey && config.clerkJwtTemplate && config.relayUrl);
+  return false;
 }
 
 export function resolveRelayClerkTokenOptions() {
   const { clerkJwtTemplate } = resolveCloudPublicConfig();
   if (!clerkJwtTemplate) {
-    throw new CloudPublicConfigMissingError({ key: "T3CODE_CLERK_JWT_TEMPLATE" });
+    throw new CloudPublicConfigMissingError({ key: "VERNE_CLERK_JWT_TEMPLATE" });
   }
   return relayClerkTokenOptions(clerkJwtTemplate);
 }

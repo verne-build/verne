@@ -14,10 +14,29 @@
       (() => {
         const LIGHT_BACKGROUND = "#ffffff";
         const DARK_BACKGROUND = "#0a0a0a";
-        const CUSTOM_THEMES_STORAGE_KEY = "t3code:themes:v1";
-        const THEME_FOLLOW_SYSTEM_STORAGE_KEY = "t3code:theme-follow-system";
-        const THEME_APPEARANCE_MODE_STORAGE_KEY = "t3code:theme-appearance-mode";
-        const THEME_HALVES_STORAGE_KEY = "t3code:theme-halves:v1";
+        const importLegacyThemeValue = (suffix) => {
+          const verneKey = `verne:${suffix}`;
+          if (window.localStorage.getItem(verneKey) !== null) return;
+          const legacyValue = window.localStorage.getItem(`t3code:${suffix}`);
+          if (legacyValue !== null) window.localStorage.setItem(verneKey, legacyValue);
+        };
+        try {
+          for (const suffix of [
+            "theme",
+            "themes:v1",
+            "theme-follow-system",
+            "theme-appearance-mode",
+            "theme-halves:v1",
+          ]) {
+            importLegacyThemeValue(suffix);
+          }
+        } catch {
+          // Storage may be unavailable; the existing boot fallback handles it.
+        }
+        const CUSTOM_THEMES_STORAGE_KEY = "verne:themes:v1";
+        const THEME_FOLLOW_SYSTEM_STORAGE_KEY = "verne:theme-follow-system";
+        const THEME_APPEARANCE_MODE_STORAGE_KEY = "verne:theme-appearance-mode";
+        const THEME_HALVES_STORAGE_KEY = "verne:theme-halves:v1";
         const SPLASH_COLORS = {
           light: {
             background: "#ffffff",
@@ -232,7 +251,7 @@
         };
 
         try {
-          const storedTheme = window.localStorage.getItem("t3code:theme");
+          const storedTheme = window.localStorage.getItem("verne:theme");
           const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
           // Older builds stored the dark T3 Chat palette as its own theme id
           // and every maintainer theme under a t3- prefix; keep those
@@ -488,13 +507,13 @@
         object-fit: contain;
       }
     </style>
-    <title>T3 Code (Alpha)</title>
+    <title>Verne (Alpha)</title>
   </head>
   <body>
     <div id="root">
       <div id="boot-shell">
-        <div id="boot-shell-card" aria-label="T3 Code splash screen">
-          <img id="boot-shell-logo" src="/apple-touch-icon.png" alt="T3 Code" />
+        <div id="boot-shell-card" aria-label="Verne splash screen">
+          <img id="boot-shell-logo" src="/apple-touch-icon.png" alt="Verne" />
         </div>
       </div>
     </div>

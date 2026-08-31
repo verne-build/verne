@@ -74,7 +74,7 @@ function ensureRelayClientAvailable(
     if (status.status === "available") return;
     if (status.status === "unsupported") {
       return yield* new CloudEnvironmentLinkError({
-        message: `T3 Code cannot install the relay client automatically on ${status.platform}-${status.arch}.`,
+        message: `Verne cannot install the relay client automatically on ${status.platform}-${status.arch}.`,
       });
     }
 
@@ -110,7 +110,7 @@ function ensureRelayClientAvailable(
       return yield* new CloudEnvironmentLinkError({
         message:
           installedStatus.status === "unsupported"
-            ? `T3 Code cannot install the relay client automatically on ${installedStatus.platform}-${installedStatus.arch}.`
+            ? `Verne cannot install the relay client automatically on ${installedStatus.platform}-${installedStatus.arch}.`
             : "The relay client is still unavailable after installation.",
       });
     }
@@ -285,7 +285,7 @@ export function listManagedCloudEnvironments(input: {
     const configuredRelayUrl = relayUrl();
     if (!configuredRelayUrl) {
       return yield* new CloudEnvironmentLinkError({
-        message: "T3CODE_RELAY_URL is not configured.",
+        message: "VERNE_RELAY_URL is not configured.",
       });
     }
     const relayClient = yield* ManagedRelay.ManagedRelayClient;
@@ -315,7 +315,7 @@ export function listCloudDevices(input: {
   return Effect.gen(function* () {
     if (!relayUrl()) {
       return yield* new CloudEnvironmentLinkError({
-        message: "T3CODE_RELAY_URL is not configured.",
+        message: "VERNE_RELAY_URL is not configured.",
       });
     }
     const relayClient = yield* ManagedRelay.ManagedRelayClient;
@@ -412,7 +412,7 @@ export function linkPrimaryEnvironmentToCloud(input: {
     const configuredRelayUrl = relayUrl();
     if (!configuredRelayUrl) {
       return yield* new CloudEnvironmentLinkError({
-        message: "T3CODE_RELAY_URL is not configured.",
+        message: "VERNE_RELAY_URL is not configured.",
       });
     }
     const managedTunnelsEnabled = (input.mode ?? "managed") === "managed";

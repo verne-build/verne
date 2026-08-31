@@ -19,7 +19,7 @@ import {
   VERNE_THEME,
 } from "./themePalette";
 
-const THEME_STORAGE_KEY = "t3code:theme";
+const THEME_STORAGE_KEY = "verne:theme";
 // A custom theme that omits chrome falls back to the runtime default, so the
 // boot copy of that default stays derived from the real palette.
 const DEFAULT_DARK_CHROME = getDefaultThemeColors("dark").chrome;
@@ -80,6 +80,10 @@ function runBootScript(options: {
       getItem: (key: string): string | null => {
         if (options.storageThrows) throw new Error("storage blocked");
         return options.storage?.[key] ?? null;
+      },
+      setItem: (key: string, value: string) => {
+        if (options.storageThrows) throw new Error("storage blocked");
+        if (options.storage) options.storage[key] = value;
       },
     },
     matchMedia: () => ({ matches: options.prefersDark }),
@@ -150,6 +154,14 @@ const CHARCOAL_DARK_ONLY = {
 };
 
 describe("index.html boot script", () => {
+  it("imports a legacy T3 Code theme before the first paint", () => {
+    const storage = { "t3code:theme": "grove" };
+    const boot = runBootScript({ storage, prefersDark: false });
+
+    expect(storage).toEqual({ "t3code:theme": "grove", "verne:theme": "grove" });
+    expect(boot.themeId).toBe("grove");
+  });
+
   it("boots a fresh client into Verne following the system appearance", () => {
     const boot = runBootScript({ storage: {}, prefersDark: false });
 
@@ -401,7 +413,7 @@ describe("index.html boot script", () => {
     const storage = {
       [THEME_STORAGE_KEY]: "t3-chat",
       [THEME_APPEARANCE_MODE_STORAGE_KEY]: "system",
-      "t3code:theme-halves:v1": JSON.stringify({ dark: GROVE_THEME.id }),
+      "verne:theme-halves:v1": JSON.stringify({ dark: GROVE_THEME.id }),
     };
 
     const dark = runBootScript({ storage, prefersDark: true });
@@ -432,7 +444,7 @@ describe("index.html boot script", () => {
             colors: { canvas: "#f8fbff", text: "#10243d", accent: "#5b6cff" },
           },
         ]),
-        "t3code:theme-halves:v1": JSON.stringify({ dark: GROVE_THEME.id }),
+        "verne:theme-halves:v1": JSON.stringify({ dark: GROVE_THEME.id }),
       },
       prefersDark: true,
     });
@@ -445,7 +457,7 @@ describe("index.html boot script", () => {
       storage: {
         [THEME_STORAGE_KEY]: "gone-theme",
         [THEME_APPEARANCE_MODE_STORAGE_KEY]: "system",
-        "t3code:theme-halves:v1": JSON.stringify({ dark: GROVE_THEME.id }),
+        "verne:theme-halves:v1": JSON.stringify({ dark: GROVE_THEME.id }),
       },
       prefersDark: true,
     });
@@ -462,7 +474,7 @@ describe("index.html boot script", () => {
       storage: {
         [THEME_STORAGE_KEY]: "t3-chat",
         [THEME_APPEARANCE_MODE_STORAGE_KEY]: "system",
-        "t3code:theme-halves:v1": JSON.stringify({ dark: "t3-grove" }),
+        "verne:theme-halves:v1": JSON.stringify({ dark: "t3-grove" }),
       },
       prefersDark: true,
     });
@@ -478,7 +490,7 @@ describe("index.html boot script", () => {
       storage: {
         [THEME_STORAGE_KEY]: "t3-chat",
         [THEME_APPEARANCE_MODE_STORAGE_KEY]: "system",
-        "t3code:theme-halves:v1": JSON.stringify({ dark: "gone-theme" }),
+        "verne:theme-halves:v1": JSON.stringify({ dark: "gone-theme" }),
       },
       prefersDark: true,
     });

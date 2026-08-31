@@ -26,7 +26,7 @@ import {
 } from "./browserFaviconLogic";
 import { createMemoryStorage, type StateStorage } from "./lib/storage";
 
-const BROWSER_FAVICON_STORAGE_KEY = "t3code:browser-favicons:v1";
+const BROWSER_FAVICON_STORAGE_KEY = "verne:browser-favicons:v1";
 const MAX_PENDING_ORIGINS_PER_THREAD = 10;
 const MAX_PENDING_THREADS = 20;
 const MAX_REGISTERED_THREADS = 100;

@@ -33,7 +33,8 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
-const DATABASE_NAME = "t3code:connection-runtime";
+const DATABASE_NAME = "verne:connection-runtime";
+const LEGACY_DATABASE_NAME = "t3code:connection-runtime";
 const DATABASE_VERSION = 4;
 const CATALOG_STORE_NAME = "catalog";
 const SHELL_STORE_NAME = "shell";
@@ -149,6 +150,39 @@ const openDatabase = Effect.fn("web.connectionStorage.openDatabase")(function* (
       resume(Effect.fail(catalogError("open", request.error ?? "Unknown IndexedDB error")));
     });
     request.addEventListener("success", () => {
+      resume(Effect.succeed(request.result));
+    });
+  });
+});
+
+const openLegacyDatabase = Effect.fn("web.connectionStorage.openLegacyDatabase")(function* () {
+  return yield* Effect.callback<IDBDatabase | null, ConnectionTransientError>((resume) => {
+    if (typeof indexedDB === "undefined") {
+      resume(Effect.succeed(null));
+      return;
+    }
+
+    let createdByProbe = false;
+    const request = indexedDB.open(LEGACY_DATABASE_NAME);
+    request.addEventListener("upgradeneeded", (event) => {
+      createdByProbe = (event as IDBVersionChangeEvent).oldVersion === 0;
+      if (createdByProbe) request.transaction?.abort();
+    });
+    request.addEventListener("error", () => {
+      if (createdByProbe) {
+        indexedDB.deleteDatabase(LEGACY_DATABASE_NAME);
+        resume(Effect.succeed(null));
+        return;
+      }
+      resume(Effect.fail(catalogError("open legacy", request.error ?? "Unknown IndexedDB error")));
+    });
+    request.addEventListener("success", () => {
+      if (createdByProbe) {
+        request.result.close();
+        indexedDB.deleteDatabase(LEGACY_DATABASE_NAME);
+        resume(Effect.succeed(null));
+        return;
+      }
       resume(Effect.succeed(request.result));
     });
   });
@@ -284,6 +318,10 @@ export function makeCatalogBackend(database: IDBDatabase): CatalogBackend {
     };
   }
 
+  return makeIndexedDbCatalogBackend(database);
+}
+
+function makeIndexedDbCatalogBackend(database: IDBDatabase): CatalogBackend {
   return {
     read: readDatabaseValue(database, CATALOG_STORE_NAME, CATALOG_KEY).pipe(
       Effect.map((value) => (typeof value === "string" ? value : null)),
@@ -303,6 +341,7 @@ interface CatalogStore {
 
 export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStore")(function* (
   backend: CatalogBackend,
+  legacyBackend?: CatalogBackend,
 ) {
   const state = yield* Ref.make<Option.Option<ConnectionCatalogDocumentType>>(Option.none());
   const lock = yield* Semaphore.make(1);
@@ -312,7 +351,26 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
     if (Option.isSome(cached)) {
       return cached.value;
     }
-    const raw = yield* backend.read;
+    let raw = yield* backend.read;
+    if ((raw === null || raw.trim() === "") && legacyBackend !== undefined) {
+      const legacyRaw = yield* legacyBackend.read.pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Could not read the legacy T3 Code connection catalog.", {
+            error: cause.message,
+          }).pipe(Effect.as(null)),
+        ),
+      );
+      if (legacyRaw !== null && legacyRaw.trim() !== "") {
+        raw = legacyRaw;
+        yield* backend.write(legacyRaw).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Could not persist the imported Verne connection catalog.", {
+              error: cause.message,
+            }),
+          ),
+        );
+      }
+    }
     let catalog = EMPTY_CONNECTION_CATALOG_DOCUMENT;
     if (raw !== null && raw.trim() !== "") {
       catalog = yield* decodeCatalog(raw).pipe(
@@ -368,7 +426,18 @@ export const connectionStorageLayer = Layer.effectContext(
     const database = yield* Effect.acquireRelease(openDatabase(), (database) =>
       Effect.sync(() => database.close()),
     );
-    const catalog = yield* makeCatalogStore(makeCatalogBackend(database));
+    const usesDesktopCatalog =
+      window.desktopBridge?.getConnectionCatalog !== undefined &&
+      window.desktopBridge.setConnectionCatalog !== undefined;
+    const legacyDatabase = usesDesktopCatalog
+      ? null
+      : yield* Effect.acquireRelease(openLegacyDatabase(), (legacyDatabase) =>
+          legacyDatabase === null ? Effect.void : Effect.sync(() => legacyDatabase.close()),
+        );
+    const catalog = yield* makeCatalogStore(
+      makeCatalogBackend(database),
+      legacyDatabase === null ? undefined : makeIndexedDbCatalogBackend(legacyDatabase),
+    );
 
     const targetStore = ConnectionTargetStore.of({
       list: catalog.read.pipe(

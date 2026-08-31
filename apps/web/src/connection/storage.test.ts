@@ -15,6 +15,7 @@ const emptyCatalog = {
   remoteDpopTokens: [],
 } as const;
 const decodeCatalog = Schema.decodeUnknownSync(Schema.fromJsonString(ConnectionCatalogDocument));
+const encodeCatalog = Schema.encodeSync(Schema.fromJsonString(ConnectionCatalogDocument));
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -22,6 +23,40 @@ afterEach(() => {
 });
 
 describe("makeCatalogStore", () => {
+  it.effect("imports a legacy catalog only when the Verne catalog is empty", () =>
+    Effect.gen(function* () {
+      const imported = encodeCatalog(emptyCatalog);
+      const writes: string[] = [];
+      const store = yield* makeCatalogStore(
+        {
+          read: Effect.succeed(null),
+          write: (raw) => Effect.sync(() => writes.push(raw)),
+        },
+        {
+          read: Effect.succeed(imported),
+          write: () => Effect.die("Legacy storage must remain read-only"),
+        },
+      );
+
+      expect(yield* store.read).toEqual(emptyCatalog);
+      expect(writes).toEqual([imported]);
+    }),
+  );
+
+  it.effect("does not merge legacy data into an initialized Verne catalog", () =>
+    Effect.gen(function* () {
+      const current = encodeCatalog(emptyCatalog);
+      const legacyRead = vi.fn(() => Effect.succeed("legacy"));
+      const store = yield* makeCatalogStore(
+        { read: Effect.succeed(current), write: () => Effect.void },
+        { read: Effect.suspend(legacyRead), write: () => Effect.void },
+      );
+
+      expect(yield* store.read).toEqual(emptyCatalog);
+      expect(legacyRead).not.toHaveBeenCalled();
+    }),
+  );
+
   it.effect("quarantines malformed catalogs and starts from an empty document", () =>
     Effect.gen(function* () {
       const writes: string[] = [];

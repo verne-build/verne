@@ -7,6 +7,7 @@ interface ImportMetaEnv {
   readonly VITE_WS_URL: string;
   readonly VITE_HOSTED_APP_URL: string;
   readonly VITE_HOSTED_APP_CHANNEL: string;
+  readonly VITE_VERNE_RELAY_URL: string;
   readonly VITE_CLERK_PUBLISHABLE_KEY: string;
   readonly VITE_CLERK_JWT_TEMPLATE: string;
   readonly VITE_CLERK_CLI_OAUTH_CLIENT_ID: string;

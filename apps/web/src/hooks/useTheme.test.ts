@@ -40,7 +40,7 @@ describe("theme failure handling", () => {
   it("keeps a stored theme preference over the Verne default", async () => {
     vi.stubGlobal("window", {
       localStorage: createStorage({
-        getItem: (key) => (key === "t3code:theme" ? "ocean" : null),
+        getItem: (key) => (key === "verne:theme" ? "ocean" : null),
       }),
     });
 
@@ -73,7 +73,7 @@ describe("theme failure handling", () => {
       expect(error).toBeInstanceOf(ThemeStorageError);
       expect(error).toMatchObject({
         operation: "read",
-        storageKey: "t3code:theme",
+        storageKey: "verne:theme",
         cause: readCause,
       });
     }
@@ -85,7 +85,7 @@ describe("theme failure handling", () => {
       expect(error).toBeInstanceOf(ThemeStorageError);
       expect(error).toMatchObject({
         operation: "write",
-        storageKey: "t3code:theme",
+        storageKey: "verne:theme",
         theme: "dark",
         cause: writeCause,
       });
@@ -124,10 +124,10 @@ describe("theme failure handling", () => {
     await expect(import("./useTheme")).resolves.toBeDefined();
 
     expect(errorLog).toHaveBeenCalledWith(
-      "Failed to read theme preference for t3code:theme.",
+      "Failed to read theme preference for verne:theme.",
       expect.objectContaining({
         operation: "read",
-        storageKey: "t3code:theme",
+        storageKey: "verne:theme",
         errorTag: "ThemeStorageError",
       }),
     );
@@ -141,7 +141,7 @@ describe("theme failure handling", () => {
     const themeGetItem = vi.fn((): string | null => {
       throw cause;
     });
-    const getItem = vi.fn((key: string) => (key === "t3code:theme" ? themeGetItem() : null));
+    const getItem = vi.fn((key: string) => (key === "verne:theme" ? themeGetItem() : null));
     const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
     let readSnapshot: (() => unknown) | undefined;
     let subscribeToTheme: ((listener: () => void) => () => void) | undefined;
@@ -180,7 +180,7 @@ describe("theme failure handling", () => {
     expect(errorLog).toHaveBeenCalledTimes(1);
 
     const unsubscribe = subscribeToTheme?.(() => undefined);
-    storageHandler?.({ key: "t3code:theme" } as StorageEvent);
+    storageHandler?.({ key: "verne:theme" } as StorageEvent);
     readSnapshot?.();
 
     expect(themeGetItem).toHaveBeenCalledTimes(2);
