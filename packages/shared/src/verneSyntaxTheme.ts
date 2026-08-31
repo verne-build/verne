@@ -1,4 +1,4 @@
-import type { SyntaxTheme } from "./themePalettes";
+import type { SyntaxTheme } from "./themePalettes.ts";
 
 /** TextMate rules carried forward from Verne's VS Code-compatible theme. */
 export const VERNE_DARK_SYNTAX_THEME = [

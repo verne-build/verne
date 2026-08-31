@@ -1,4 +1,4 @@
-import { VERNE_DARK_SYNTAX_THEME } from "./verneSyntaxTheme";
+import { VERNE_DARK_SYNTAX_THEME } from "./verneSyntaxTheme.ts";
 
 export const BUILT_IN_THEME_IDS = ["t3-chat", "grove", "ocean", "ember", "iris", "verne"] as const;
 
