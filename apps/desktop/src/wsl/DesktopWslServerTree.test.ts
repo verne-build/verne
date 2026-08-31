@@ -37,8 +37,8 @@ const environmentLayer = (input: {
       Layer.mergeAll(
         NodeServices.layer,
         DesktopConfig.layerTest({
-          T3CODE_HOME: input.baseDir,
-          T3CODE_MODE: "desktop",
+          VERNE_HOME: input.baseDir,
+          VERNE_MODE: "desktop",
         }),
       ),
     ),
@@ -154,7 +154,7 @@ describe("DesktopWslServerTree", () => {
         const dep = yield* fileSystem.exists(path.join(root, "node_modules/effect/package.json"));
         assert.isTrue(dep);
         const marker = yield* fileSystem.readFileString(
-          path.join(root, "t3code-wsl-server-tree.json"),
+          path.join(root, "verne-wsl-server-tree.json"),
         );
         assert.include(marker, '"version":"1.2.3"');
       }),
@@ -243,7 +243,7 @@ describe("DesktopWslServerTree", () => {
         });
         yield* fileSystem.writeFileString(path.join(serverRoot, "apps/server/dist/bin.mjs"), "x");
 
-        // T3CODE_HOME is set to tempDir, so the desktop state dir resolves to
+        // VERNE_HOME is set to tempDir, so the desktop state dir resolves to
         // <tempDir>/userdata (no .t3 segment).
         const treeRoot = path.join(tempDir, "userdata", "wsl-server-tree");
         yield* fileSystem.makeDirectory(path.join(treeRoot, "1.0.0"), { recursive: true });

@@ -20,9 +20,9 @@ const defaultEnvironmentInput = {
   platform: "darwin",
   processArch: "arm64",
   appVersion: "1.2.3",
-  appPath: "/Applications/T3 Code.app/Contents/Resources/app.asar",
+  appPath: "/Applications/Verne.app/Contents/Resources/app.asar",
   isPackaged: true,
-  resourcesPath: "/Applications/T3 Code.app/Contents/Resources",
+  resourcesPath: "/Applications/Verne.app/Contents/Resources",
   runningUnderArm64Translation: false,
 } satisfies DesktopEnvironment.MakeDesktopEnvironmentInput;
 
@@ -39,7 +39,7 @@ interface ElectronAppCalls {
 const makeElectronAppLayer = (calls: ElectronAppCalls) =>
   Layer.succeed(ElectronApp.ElectronApp, {
     metadata: Effect.die("unexpected metadata read"),
-    name: Effect.succeed("T3 Code"),
+    name: Effect.succeed("Verne"),
     systemLocale: Effect.succeed("en-US"),
     whenReady: Effect.void,
     quit: Effect.void,
@@ -132,7 +132,7 @@ const withIdentity = <A, E, R>(
                     input.legacyPathExists === true && path.includes("T3 Code (Alpha)"),
                   ),
             readFileString: () =>
-              Effect.succeed(input.packageJson ?? '{"t3codeCommitHash":"abcdef1234567890"}'),
+              Effect.succeed(input.packageJson ?? '{"verneCommitHash":"abcdef1234567890"}'),
           }),
         ),
         Layer.provideMerge(makeAssetsLayer(input.pngIconPath ?? Option.none())),
@@ -144,16 +144,100 @@ const withIdentity = <A, E, R>(
 };
 
 describe("DesktopAppIdentity", () => {
-  it.effect("keeps using the legacy userData path when it already exists", () =>
-    withIdentity(
+  it.effect("imports the default T3 home before resolving desktop userData", () =>
+    Effect.scoped(
       Effect.gen(function* () {
-        const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
-        const userDataPath = yield* identity.resolveUserDataPath;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "verne-desktop-home-" });
+        const legacyState = `${root}/.t3/userdata`;
+        yield* fileSystem.makeDirectory(legacyState, { recursive: true });
+        yield* fileSystem.writeFileString(`${legacyState}/settings.json`, '{"theme":"dark"}');
 
-        assert.equal(userDataPath, "/Users/alice/Library/Application Support/T3 Code (Alpha)");
-      }),
-      { legacyPathExists: true },
+        const calls: ElectronAppCalls = {
+          setAboutPanelOptions: [],
+          setDockIcon: [],
+          setName: [],
+        };
+        const identityLayer = DesktopAppIdentity.layer.pipe(
+          Layer.provideMerge(NodeServices.layer),
+          Layer.provideMerge(makeAssetsLayer(Option.none())),
+          Layer.provideMerge(makeElectronAppLayer(calls)),
+          Layer.provideMerge(
+            makeEnvironmentLayer({
+              homeDirectory: root,
+              platform: "linux",
+              appPath: `${root}/app.asar`,
+              resourcesPath: root,
+            }),
+          ),
+        );
+
+        const userDataPath = yield* DesktopAppIdentity.DesktopAppIdentity.pipe(
+          Effect.flatMap((identity) => identity.resolveUserDataPath),
+          Effect.provide(identityLayer),
+        );
+
+        assert.equal(userDataPath, `${root}/.config/verne`);
+        assert.equal(
+          yield* fileSystem.readFileString(`${root}/.verne/userdata/settings.json`),
+          '{"theme":"dark"}',
+        );
+      }).pipe(Effect.provide(NodeServices.layer)),
     ),
+  );
+
+  it.effect("imports legacy userData into an empty Verne directory", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "verne-userdata-import-" });
+      const legacyPath = `${root}/T3 Code (Alpha)`;
+      const vernePath = `${root}/verne`;
+      yield* fileSystem.makeDirectory(legacyPath, { recursive: true });
+      yield* fileSystem.writeFileString(`${legacyPath}/Preferences`, "legacy-preferences");
+
+      const result = yield* DesktopAppIdentity.importLegacyDesktopUserData({
+        fileSystem,
+        parentPath: root,
+        legacyPath,
+        vernePath,
+      });
+
+      assert.equal(result, "imported");
+      assert.equal(
+        yield* fileSystem.readFileString(`${vernePath}/Preferences`),
+        "legacy-preferences",
+      );
+      assert.equal(
+        yield* fileSystem.readFileString(`${legacyPath}/Preferences`),
+        "legacy-preferences",
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("does not merge legacy userData into initialized Verne state", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "verne-userdata-import-" });
+      const legacyPath = `${root}/T3 Code (Alpha)`;
+      const vernePath = `${root}/verne`;
+      yield* fileSystem.makeDirectory(legacyPath, { recursive: true });
+      yield* fileSystem.makeDirectory(vernePath, { recursive: true });
+      yield* fileSystem.writeFileString(`${legacyPath}/Preferences`, "legacy-preferences");
+      yield* fileSystem.writeFileString(`${vernePath}/Preferences`, "verne-preferences");
+
+      const result = yield* DesktopAppIdentity.importLegacyDesktopUserData({
+        fileSystem,
+        parentPath: root,
+        legacyPath,
+        vernePath,
+      });
+
+      assert.equal(result, "destination-initialized");
+      assert.equal(
+        yield* fileSystem.readFileString(`${vernePath}/Preferences`),
+        "verne-preferences",
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("preserves failures while inspecting the legacy userData path", () => {
@@ -195,8 +279,8 @@ describe("DesktopAppIdentity", () => {
         const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
         yield* identity.configure;
 
-        assert.deepEqual(calls.setName, ["T3 Code (Alpha)"]);
-        assert.equal(calls.setAboutPanelOptions[0]?.applicationName, "T3 Code (Alpha)");
+        assert.deepEqual(calls.setName, ["Verne (Alpha)"]);
+        assert.equal(calls.setAboutPanelOptions[0]?.applicationName, "Verne (Alpha)");
         assert.equal(calls.setAboutPanelOptions[0]?.applicationVersion, "1.2.3");
         assert.equal(calls.setAboutPanelOptions[0]?.version, "0123456789ab");
         // Packaged: the bundle's own icon stands, so a custom one the user
@@ -207,7 +291,7 @@ describe("DesktopAppIdentity", () => {
         calls,
         environment: {
           env: {
-            T3CODE_COMMIT_HASH: "0123456789abcdef",
+            VERNE_COMMIT_HASH: "0123456789abcdef",
           },
         },
         pngIconPath: Option.some("/icon.png"),

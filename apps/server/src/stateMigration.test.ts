@@ -38,6 +38,14 @@ describe("importLegacyT3State", () => {
       const sourceDatabase = seedLegacyDatabase(NodePath.join(legacyState, "state.sqlite"));
       NodeFS.writeFileSync(NodePath.join(legacyState, "settings.json"), '{"theme":"dark"}');
       NodeFS.writeFileSync(NodePath.join(legacyState, "keybindings.json"), '{"save":"cmd+s"}');
+      NodeFS.writeFileSync(
+        NodePath.join(legacyState, "desktop-settings.json"),
+        '{"launchAtLogin":true}',
+      );
+      NodeFS.writeFileSync(
+        NodePath.join(legacyState, "connection-catalog.json"),
+        '{"version":1,"encryptedCatalog":"legacy"}',
+      );
       NodeFS.mkdirSync(NodePath.join(legacyState, "secrets"), { recursive: true });
       NodeFS.writeFileSync(NodePath.join(legacyState, "secrets", "provider.bin"), "secret");
       NodeFS.mkdirSync(NodePath.join(legacyState, "attachments"), { recursive: true });
@@ -63,6 +71,17 @@ describe("importLegacyT3State", () => {
       assert.equal(
         NodeFS.readFileSync(NodePath.join(verneHome, "userdata", "settings.json"), "utf8"),
         '{"theme":"dark"}',
+      );
+      assert.equal(
+        NodeFS.readFileSync(NodePath.join(verneHome, "userdata", "desktop-settings.json"), "utf8"),
+        '{"launchAtLogin":true}',
+      );
+      assert.equal(
+        NodeFS.readFileSync(
+          NodePath.join(verneHome, "userdata", "connection-catalog.json"),
+          "utf8",
+        ),
+        '{"version":1,"encryptedCatalog":"legacy"}',
       );
       assert.equal(
         NodeFS.readFileSync(

@@ -219,6 +219,10 @@
       "types": "./src/productIdentity.ts",
       "import": "./src/productIdentity.ts"
     },
+    "./legacyStateMigration": {
+      "types": "./src/legacyStateMigration.ts",
+      "import": "./src/legacyStateMigration.ts"
+    },
     "./devProxy": {
       "types": "./src/devProxy.ts",
       "import": "./src/devProxy.ts"

@@ -112,11 +112,11 @@ export function resolveLinuxSecretStorageUnavailableMessage(input: {
 }
 
 function getGnomeKeyringRemediationMessage(): string {
-  return "T3 Code could not access GNOME Keyring to save this environment credential. Install and start GNOME Keyring, then restart T3 Code.";
+  return "Verne could not access GNOME Keyring to save this environment credential. Install and start GNOME Keyring, then restart Verne.";
 }
 
 function getKWalletRemediationMessage(): string {
-  return "T3 Code could not access KWallet to save this environment credential. Enable the KDE wallet subsystem in System Settings, then restart T3 Code.";
+  return "Verne could not access KWallet to save this environment credential. Enable the KDE wallet subsystem in System Settings, then restart Verne.";
 }
 
 // Advisory only: this picks between the GNOME Keyring and KWallet wording in the failure notice. It

@@ -3,10 +3,10 @@ import { defineConfig } from "vite-plus";
 import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
 
 const repoEnv = loadRepoEnv();
-const shouldLaunchElectronAfterPack = process.env.T3CODE_DESKTOP_DEV === "1";
+const shouldLaunchElectronAfterPack = process.env.VERNE_DESKTOP_DEV === "1";
 const publicConfigDefine = {
-  __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: JSON.stringify(
-    repoEnv.T3CODE_CLERK_PUBLISHABLE_KEY?.trim() ?? "",
+  __VERNE_BUILD_CLERK_PUBLISHABLE_KEY__: JSON.stringify(
+    repoEnv.VERNE_CLERK_PUBLISHABLE_KEY?.trim() ?? "",
   ),
 };
 
@@ -20,7 +20,7 @@ export default defineConfig({
       },
       dev: {
         command:
-          "node scripts/build-preview-annotation-css.mjs && cross-env T3CODE_DESKTOP_DEV=1 vp pack --watch",
+          "node scripts/build-preview-annotation-css.mjs && cross-env VERNE_DESKTOP_DEV=1 vp pack --watch",
         dependsOn: ["@verne-build/cli#build"],
         cache: false,
       },
