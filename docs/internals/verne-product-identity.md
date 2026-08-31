@@ -2,9 +2,12 @@
 
 ## Goal
 
-Present this fork as Verne on every user-facing surface while preserving access to projects,
-settings, links, and installations created by T3 Code. Credit T3 Code in the README, legal copy,
-and other provenance surfaces instead of carrying its name through the product UI.
+Present this fork as Verne on every user-facing surface and give it an independent physical
+identity. Verne uses its own CLI, application IDs, protocols, state paths, databases, storage keys,
+release artifacts, and public domains. When a Verne state owner is still empty, it imports the
+corresponding T3 Code state where the platform makes that possible. Credit T3 Code in the README,
+legal copy, migration UI, and other provenance surfaces instead of carrying its name through the
+product UI.
 
 Verne remains a single product. The repository does not need a general-purpose build system that
 can produce either T3 Code or Verne.
@@ -26,53 +29,81 @@ The brand applies to:
 Names for an upstream service or another organization stay accurate. Verne does not relabel a
 T3-hosted endpoint or a T3 Code compatibility format as a Verne-operated service.
 
-## Compatibility identity
+## Product identity map
 
-Verne introduces aliases and migrations only where users benefit from them. Low-level renaming
-adds migration risk and makes upstream syncs harder without changing the product experience.
+Verne is not yet released, so new installations do not need operational aliases for T3 Code.
+Legacy names exist only at migration and project-import boundaries, in accurate upstream
+attribution, or when naming a service still operated by T3. Private workspace package scopes and
+upstream-shaped source symbols stay unchanged to keep upstream integrations reviewable.
 
-| Identity                   | Verne behavior                                                                                                      |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| Project files              | Prefer `verne.json`; accept and continue writing an existing `t3.json`                                              |
-| Environment variables      | Prefer `VERNE_*`; fall back to matching `T3CODE_*` variables                                                        |
-| Deep links                 | Generate `verne:` links; accept `verne:` and `t3code:`                                                              |
-| Persisted client state     | Use Verne keys for new state and import missing state from T3 Code keys                                             |
-| Database and data paths    | Use Verne names for fresh installs and adopt legacy data through a tested migration                                 |
-| Package and CLI names      | Offer Verne-facing names while retaining the existing `t3` command where compatibility requires it                  |
-| Bundle and application IDs | Use Verne IDs only when the platform can transfer or import legacy application data safely                          |
-| Wire contracts             | Keep existing protocol fields and values unless they expose visible product copy                                    |
-| Telemetry                  | Report Verne as the product while retaining stable installation continuity                                          |
-| Internal names             | Keep package scopes, CSS hooks, test fixtures, and internal symbols unless a user-facing alias needs them to change |
+| Identity                   | Verne behavior                                                                                                           |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| CLI package and command    | Publish `@verne-build/cli`; install and document the `verne` binary                                                      |
+| Default state paths        | Use `~/.verne` for user state and `.verne` for worktree development state                                                |
+| Project files              | Prefer `verne.json`; accept and continue writing an existing `t3.json` as legacy project input                           |
+| Project schema             | Generate `verne.json` with `https://verne.build/schema/verne.json`; retain the existing schema URL inside `t3.json`      |
+| Environment variables      | Use `VERNE_*`; do not retain `T3CODE_*` as operational aliases                                                           |
+| Deep links                 | Use `verne:`, `verne-dev:`, and `verne-preview:` without operational `t3code:` aliases                                   |
+| Persisted client state     | Use Verne-prefixed keys and import legacy state only when the corresponding Verne store is uninitialized                 |
+| Database and data paths    | Use Verne names and automatically import supported state from T3 Code paths into an empty Verne destination              |
+| Bundle and application IDs | Use `build.verne.app`, `build.verne.app.dev`, and `build.verne.app.preview`, plus product-specific extension suffixes    |
+| Public web                 | Use `https://verne.build` and `https://app.verne.build`                                                                  |
+| Wire contracts             | Keep existing protocol fields and values unless they expose visible product copy                                         |
+| Telemetry                  | Report Verne as the product and use a new Verne installation identity                                                    |
+| Internal names             | Keep private `@t3tools/*` scopes, upstream-shaped source symbols, CSS hooks, and fixtures unless they become user-facing |
 
 [Verne project file compatibility](verne-project-file-compatibility.md) defines project-file
 precedence and failure behavior in detail.
 
 ## Migration rules
 
-Each client checks for legacy T3 Code state when Verne has no corresponding state. The migration
-copies or translates values, records completion, and leaves the source untouched. Existing Verne
-values win; legacy values fill only missing fields. Repeating an interrupted or completed migration
-must produce the same result.
+Each state owner checks its destination before normal initialization. When that destination is
+uninitialized, it may import the corresponding T3 Code state. Migration never merges into populated
+Verne state and never modifies the source.
 
-Platform sandboxes may prevent one application identity from reading another application's data.
-In that case, keep the compatible identity until Verne has a tested transfer path, or provide an
-explicit import flow. Do not ship a new bundle ID with an unverified claim that existing settings,
-connections, or threads transfer automatically.
+The server and CLI import supported settings, secrets, registered projects, and thread history from
+`~/.t3` into `~/.verne`. Desktop imports supported application settings into the new Verne desktop
+data directory. Web imports a legacy browser store only when the corresponding Verne store has not
+been initialized. Checked-in `t3.json` remains readable as legacy project input.
 
-Migration errors must not damage Verne state or block startup. Report the failed operation with
-enough context to diagnose it and allow a safe retry.
+Migration uses a staging destination and a consistent SQLite backup mechanism, validates the staged
+state, atomically installs it, and records a receipt. Existing Verne state always wins. Repeating a
+completed migration is a no-op; retrying an interrupted migration produces the same result.
+Migration errors leave both source and destination intact, do not block startup, and emit a focused
+diagnostic.
 
-## Precedence and conflicts
+The new mobile bundle IDs cannot read another application's iOS or Android sandbox. Verne therefore
+does not promise automatic import of legacy mobile-only credentials or preferences. Projects and
+threads migrated by a server become available to mobile after manual pairing with that server.
 
-Verne identity wins when both forms specify the same setting:
+## Runtime inputs
 
-1. Use the Verne value when present.
-2. Otherwise use the T3 Code value.
-3. Otherwise use the existing default.
+New runtime inputs use Verne names only. Verne does not accept legacy CLI commands, environment
+variables, or deep-link schemes as aliases. Legacy identifiers are read only by explicit migration
+boundaries and project-file selection. This prevents migrated state from turning into a permanent
+second product configuration model.
 
-When both values exist and disagree, use the Verne value and expose a focused diagnostic where the
-repository already reports configuration problems. Do not spread conflict handling through feature
-components; keep it beside the resolver for that identity.
+The published CLI package is `@verne-build/cli` and exposes `verne`, including commands such as
+`verne pair` and `verne service update`. Remote server updates install the exact matching Verne CLI
+package version before a client release becomes available.
+
+## Distribution and hosted services
+
+Desktop releases and Electron update metadata are published to GitHub Releases in
+`verne-build/verne`. `verne.build/download` is a static page that resolves the latest release and
+links directly to its signed `.dmg`, `.exe`, and `.AppImage` assets. Verne does not operate a custom
+desktop update service.
+
+The stable static client is deployed to `app.verne.build`. Dedicated hosted nightly routing is
+deferred until Verne needs channel-specific domains. The project schema is served from
+`verne.build/schema/verne.json` by the static marketing site.
+
+Mobile uses a new Verne-owned Expo/EAS project, project ID, update endpoint, bundle IDs, and store
+records. Download pages must not link to T3 Code store listings; Verne store actions remain absent or
+unavailable until their real URLs exist.
+
+The initial product does not ship account, Clerk, T3 Connect, or relay flows. Users connect to
+remote servers manually with the existing pair-code workflow. Provider adapters remain unchanged.
 
 ## Surfaces
 
@@ -84,8 +115,8 @@ Brand work must account for all applicable clients:
   React Native accessibility labels.
 - Server and shared packages own project-file discovery, environment compatibility, data paths, CLI
   behavior, and values that cross the wire.
-- Marketing, README, user docs, and release automation describe the shipped Verne product and retain
-  concise upstream attribution.
+- Marketing, README, user docs, and release automation describe the shipped Verne product, use
+  Verne-owned destinations, and retain concise upstream attribution.
 
 Provider names and behavior do not change as part of branding.
 
@@ -94,13 +125,17 @@ Provider names and behavior do not change as part of branding.
 Use focused tests for each changed boundary:
 
 - brand constants and channel display names;
-- `verne.json` and `t3.json` precedence, invalid files, and write-back behavior;
-- Verne-only, T3-only, matching, and conflicting environment variables;
-- generation of `verne:` links and handling of both deep-link schemes;
-- fresh state, legacy import, partial Verne state, repeated migration, and migration failure;
+- `verne.json` and `t3.json` precedence, invalid files, schema URLs, and write-back behavior;
+- Verne environment variables and rejection or non-use of obsolete aliases;
+- generation and handling of Verne deep-link schemes;
+- fresh state, legacy import into an empty destination, populated Verne state, interrupted import,
+  repeated migration, validation failure, and SQLite consistency;
+- CLI package publication, `verne` invocation, service installation, and exact-version self-update;
 - desktop and mobile manifests, packaging labels, permission copy, and accessibility labels;
+- GitHub update repository selection, release artifact names, hosted app URLs, and download links;
+- manual pairing with account and T3 Connect entry points disabled;
 - static checks that prevent visible T3 Code copy from returning outside approved attribution and
-  compatibility contexts.
+  migration contexts.
 
 Run targeted typechecks and tests for affected packages. Browser and simulator verification remain
 an explicit maintainer choice because they launch interactive clients.

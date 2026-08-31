@@ -18,10 +18,10 @@ fall back to `t3.json`. This makes configuration mistakes visible and keeps prec
 
 ## Contract and schema
 
-Both files decode through the existing `T3ProjectFile` schema and lenient JSON parser. A
-`verne.json` file may continue to reference `https://t3.codes/schema/t3.json` in `$schema`; Verne does
-not duplicate the schema or introduce a second schema-hosting dependency while the formats are
-identical.
+Both files decode through the existing `T3ProjectFile` schema and lenient JSON parser. New
+`verne.json` files reference `https://verne.build/schema/verne.json`. Existing `t3.json` files may
+continue to reference `https://t3.codes/schema/t3.json`; selecting a legacy project file does not
+rewrite its schema declaration.
 
 Shared filename constants define the ordered candidates so server, web, and mobile do not encode
 precedence independently. Selection must preserve three outcomes: missing, present and valid, and
