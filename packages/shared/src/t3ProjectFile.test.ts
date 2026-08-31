@@ -30,6 +30,12 @@ describe("buildT3ProjectFileJsonSchema", () => {
     expect(schema.additionalProperties).toBe(false);
   });
 
+  it("emits the Verne schema at its public route", () => {
+    const schema = buildT3ProjectFileJsonSchema("https://verne.build/schema/verne.json");
+
+    expect(schema.$id).toBe("https://verne.build/schema/verne.json");
+  });
+
   it("documents every supported field", () => {
     const schema = buildT3ProjectFileJsonSchema() as {
       properties: Record<

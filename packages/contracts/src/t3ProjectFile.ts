@@ -21,6 +21,9 @@ export type ProjectFileName = (typeof PROJECT_FILE_NAMES_BY_PRECEDENCE)[number];
 /** Public URL of the published JSON Schema for {@link T3ProjectFile}. */
 export const T3_PROJECT_FILE_SCHEMA_URL = "https://t3.codes/schema/t3.json";
 
+/** Public URL used by new Verne project files. */
+export const VERNE_PROJECT_FILE_SCHEMA_URL = "https://verne.build/schema/verne.json";
+
 const T3_PROJECT_FILE_PATH_MAX_LENGTH = 512;
 const T3_PROJECT_FILE_MAX_SCRIPTS = 50;
 
@@ -37,10 +40,10 @@ const trimmedNonEmpty = (annotations: { readonly description: string }, maxLengt
 
 export const T3ProjectFileScript = Schema.Struct({
   name: trimmedNonEmpty({
-    description: "Display name for the script, shown in the T3 Code scripts menu.",
+    description: "Display name for the script, shown in the Verne scripts menu.",
   }),
   command: trimmedNonEmpty({
-    description: "Shell command executed in a T3 Code terminal at the project root.",
+    description: "Shell command executed in a Verne terminal at the project root.",
   }),
   icon: Schema.optionalKey(
     ProjectScriptIcon.annotate({
@@ -66,7 +69,7 @@ export const T3ProjectFileScript = Schema.Struct({
     }),
   ),
 }).annotate({
-  description: "A project script that team members can import into T3 Code.",
+  description: "A project script that team members can import into Verne.",
 });
 export type T3ProjectFileScript = typeof T3ProjectFileScript.Type;
 
@@ -80,7 +83,7 @@ export const T3ProjectFile = Schema.Struct({
     trimmedNonEmpty(
       {
         description:
-          'Workspace-relative path to the project icon (e.g. "assets/logo.svg"). Checked before T3 Code\'s built-in icon locations.',
+          'Workspace-relative path to the project icon (e.g. "assets/logo.svg"). Checked before Verne\'s built-in icon locations.',
       },
       T3_PROJECT_FILE_PATH_MAX_LENGTH,
     ),
@@ -88,7 +91,7 @@ export const T3ProjectFile = Schema.Struct({
   defaultThreadEnvMode: Schema.optionalKey(
     ThreadEnvMode.annotate({
       description:
-        'Where new threads start for this repository: "worktree" for a fresh git worktree, "local" for the current checkout. A per-project setting in T3 Code overrides this; when neither is set, the global default applies.',
+        'Where new threads start for this repository: "worktree" for a fresh git worktree, "local" for the current checkout. A per-project setting in Verne overrides this; when neither is set, the global default applies.',
     }),
   ),
   scripts: Schema.optionalKey(
@@ -101,6 +104,6 @@ export const T3ProjectFile = Schema.Struct({
 }).annotate({
   title: "Project file",
   description:
-    "Checked-in project configuration for T3 Code (verne.json or t3.json at the repository root). See https://t3.codes for documentation.",
+    "Checked-in project configuration for Verne (verne.json or legacy t3.json at the repository root). See https://verne.build for documentation.",
 });
 export type T3ProjectFile = typeof T3ProjectFile.Type;

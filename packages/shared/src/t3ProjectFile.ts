@@ -78,11 +78,13 @@ export function selectProjectFileCandidate(
  * Served from the marketing site at {@link T3_PROJECT_FILE_SCHEMA_URL} so
  * editors get LSP support via a `$schema` reference.
  */
-export function buildT3ProjectFileJsonSchema(): Record<string, unknown> {
+export function buildT3ProjectFileJsonSchema(
+  schemaUrl = T3_PROJECT_FILE_SCHEMA_URL,
+): Record<string, unknown> {
   const document = Schema.toJsonSchemaDocument(T3ProjectFile);
   const jsonSchema: Record<string, unknown> = {
     $schema: "https://json-schema.org/draft/2020-12/schema",
-    $id: T3_PROJECT_FILE_SCHEMA_URL,
+    $id: schemaUrl,
     ...document.schema,
   };
   if (document.definitions && Object.keys(document.definitions).length > 0) {

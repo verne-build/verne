@@ -5,6 +5,7 @@ import {
   PROJECT_FILE_NAMES_BY_PRECEDENCE,
   type ProjectFileName,
   T3ProjectFile,
+  VERNE_PROJECT_FILE_SCHEMA_URL,
   VERNE_PROJECT_FILE_NAME,
 } from "./t3ProjectFile.ts";
 
@@ -27,6 +28,7 @@ describe("T3ProjectFile", () => {
   it("defines Verne-first project-file precedence", () => {
     expect(VERNE_PROJECT_FILE_NAME).toBe("verne.json");
     expect(PROJECT_FILE_NAMES_BY_PRECEDENCE).toEqual(["verne.json", "t3.json"]);
+    expect(VERNE_PROJECT_FILE_SCHEMA_URL).toBe("https://verne.build/schema/verne.json");
   });
 
   it("decodes a full project file", () => {
