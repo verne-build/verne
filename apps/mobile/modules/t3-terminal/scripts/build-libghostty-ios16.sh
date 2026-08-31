@@ -34,7 +34,7 @@ ensure_zig() {
     return
   fi
 
-  local cache_dir="${HOME}/.cache/t3code/zig-${GHOSTTY_ZIG_VERSION}"
+  local cache_dir="${HOME}/.cache/verne/zig-${GHOSTTY_ZIG_VERSION}"
   local archive_arch
   archive_arch="$(uname -m)"
   case "${archive_arch}" in

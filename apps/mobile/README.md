@@ -1,7 +1,7 @@
-# T3 Code Mobile
+# Verne Mobile
 
 > [!WARNING]
-> T3 Code Mobile is currently in development and is not distributed yet. If you want to try it out, you can build it from source.
+> Verne Mobile is currently in development and is not distributed yet. If you want to try it out, you can build it from source.
 
 ## Quickstart
 
@@ -10,15 +10,14 @@
 
 This app has three variants:
 
-- `development`: Expo dev client, installable side-by-side as `T3 Code Dev`
-- `preview`: persistent internal preview build, installable side-by-side as `T3 Code Preview`
-- `production`: store/release build as `T3 Code`
+- `development`: Expo dev client, installable side-by-side as `Verne Dev`
+- `preview`: persistent internal preview build, installable side-by-side as `Verne Preview`
+- `production`: store/release build as `Verne`
 
 Run commands from `apps/mobile`.
 
-T3 Connect is optional and disabled in a fresh clone. Public configuration belongs in the
-repository-root `.env` or `.env.local`, not an `apps/mobile/.env` file. See
-[`../../.env.example`](../../.env.example).
+Verne Mobile connects to servers with manual pairing codes. Account sign-in and managed relay
+discovery are not enabled in the initial release.
 
 ## Development
 
@@ -39,8 +38,8 @@ reduced-capability local build. Personal Team builds omit the widget and share e
 entitlement, and native Sign in with Apple entitlement; builds without this opt-in are unchanged.
 
 ```bash
-T3CODE_IOS_PERSONAL_TEAM=1 \
-T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID=com.example.t3code.dev \
+VERNE_IOS_PERSONAL_TEAM=1 \
+VERNE_IOS_PERSONAL_TEAM_BUNDLE_ID=com.example.verne.dev \
 vp run ios:dev
 ```
 
@@ -53,8 +52,8 @@ vp run ios:release
 The Personal Team equivalent also needs a unique bundle identifier:
 
 ```bash
-T3CODE_IOS_PERSONAL_TEAM=1 \
-T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID=com.example.t3code \
+VERNE_IOS_PERSONAL_TEAM=1 \
+VERNE_IOS_PERSONAL_TEAM_BUNDLE_ID=com.example.verne \
 vp run ios:release
 ```
 
@@ -89,11 +88,9 @@ The native lint task runs SwiftLint for Swift plus ktlint and detekt for Kotlin.
 
 ## EAS Builds
 
-CI uses Expo fingerprinting with the `preview:dev` profile to reuse an existing compatible build when possible, or start a new internal EAS build when native runtime inputs change. Production and default local builds continue to use the `appVersion` runtime policy.
-
-For preview or production EAS environments, set `T3CODE_CLERK_PUBLISHABLE_KEY`,
-`T3CODE_CLERK_JWT_TEMPLATE`, and `T3CODE_RELAY_URL`
-as EAS environment variables. Expo config maps the canonical values into the mobile build.
+The EAS profiles remain available for local and CI setup, but the app intentionally has no Expo
+owner or project ID yet. Create a Verne-owned EAS project before using these commands, then add its
+project ID to `app.config.ts`. OTA updates remain disabled until that project is configured.
 
 Create a PR preview dev-client build manually:
 

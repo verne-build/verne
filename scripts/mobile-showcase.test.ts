@@ -57,7 +57,7 @@ const config: ShowcaseConfig = {
       platform: "ios",
       simulator: "iPhone Test",
       appearance: "dark",
-      theme: "t3-code",
+      theme: "verne-mobile",
       scenes: ["thread", "review"],
       storeAsset: appleSpec,
     },
@@ -66,7 +66,7 @@ const config: ShowcaseConfig = {
       platform: "android",
       avd: "Pixel_Test",
       appearance: "light",
-      theme: "t3-code",
+      theme: "verne-mobile",
       scenes: ["thread", "terminal"],
       storeAsset: googleSpec,
     },
@@ -167,8 +167,8 @@ it("expands both appearances into independent upload-ready directories", () => {
       directory: showcaseCaptureDirectory("/captures", capture),
     })),
     [
-      { appearance: "light", directory: "/captures/apple/iphone-test/light/t3-code" },
-      { appearance: "dark", directory: "/captures/apple/iphone-test/dark/t3-code" },
+      { appearance: "light", directory: "/captures/apple/iphone-test/light/verne-mobile" },
+      { appearance: "dark", directory: "/captures/apple/iphone-test/dark/verne-mobile" },
     ],
   );
 });
@@ -260,7 +260,7 @@ it("enforces store screenshot count limits", () => {
 });
 
 it("defaults every device to the app's own palette", () => {
-  assert.equal(DEFAULT_SHOWCASE_THEME, "t3-code");
+  assert.equal(DEFAULT_SHOWCASE_THEME, "verne-mobile");
   assert.equal(
     showcaseConfig.devices.every((device) => device.theme === DEFAULT_SHOWCASE_THEME),
     true,
@@ -302,7 +302,7 @@ it("selects a reachable LAN IPv4 address", () => {
 it("seeds a playful multi-environment project spectrum", () => {
   assert.deepStrictEqual(
     SHOWCASE_PROJECTS.map((project) => project.title),
-    ["T3 Code", "React", "Linux"],
+    ["Verne", "React", "Linux"],
   );
   assert.deepStrictEqual(
     SHOWCASE_ENVIRONMENTS.map((environment) => environment.label),

@@ -13,8 +13,8 @@ import * as Semaphore from "effect/Semaphore";
 import * as MobileSecureStorage from "../persistence/mobile-secure-storage";
 import { migrateLegacyConnectionCatalog } from "./migration";
 
-export const CONNECTION_CATALOG_KEY = "t3code.connection-catalog.v1";
-export const LEGACY_CONNECTIONS_KEY = "t3code.connections";
+export const CONNECTION_CATALOG_KEY = "verne.connection-catalog.v1";
+export const LEGACY_CONNECTIONS_KEY = "verne.connections";
 
 function catalogError(operation: string, cause: unknown) {
   return new ConnectionTransientError({

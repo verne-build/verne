@@ -6,7 +6,7 @@ import { presentThreadPr } from "./thread-pr-presentation";
 const pullRequest: NonNullable<VcsStatusResult["pr"]> = {
   number: 3774,
   title: "Desktop-style pull request indicator",
-  url: "https://github.com/t3tools/t3code/pull/3774",
+  url: "https://github.com/t3tools/verne/pull/3774",
   baseRef: "main",
   headRef: "codex/desktop-style-pr-indicator",
   state: "merged",

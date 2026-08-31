@@ -56,9 +56,9 @@ function makeThread(
 const NOW = "2026-06-02T00:00:00.000Z";
 const linkedPullRequest = {
   projectId: ProjectId.make("project-1"),
-  repository: "pingdotgg/t3code",
+  repository: "verne-build/verne",
   number: 42,
-  url: "https://github.com/pingdotgg/t3code/pull/42",
+  url: "https://github.com/verne-build/verne/pull/42",
 };
 
 describe("resolveThreadListV2ChangeRequestState", () => {
@@ -92,7 +92,7 @@ describe("resolveThreadListV2ChangeRequestState", () => {
     ).toEqual({
       state: "merged",
       updatedAt: "2026-06-02T00:00:00.000Z",
-      linkedPullRequestKey: '["project-1","pingdotgg/t3code",42]',
+      linkedPullRequestKey: '["project-1","verne-build/verne",42]',
     });
   });
 });
@@ -334,7 +334,7 @@ describe("buildThreadListV2Items", () => {
           `${environmentId}:${thread.id}`,
           {
             state: "merged" as const,
-            linkedPullRequestKey: '["project-1","pingdotgg/t3code",41]',
+            linkedPullRequestKey: '["project-1","verne-build/verne",41]',
           },
         ],
       ]),
@@ -360,7 +360,7 @@ describe("buildThreadListV2Items", () => {
           `${environmentId}:${thread.id}`,
           {
             state: "merged" as const,
-            linkedPullRequestKey: '["project-1","pingdotgg/t3code",42]',
+            linkedPullRequestKey: '["project-1","verne-build/verne",42]',
           },
         ],
       ]),

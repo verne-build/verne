@@ -3,7 +3,7 @@ const path = require("node:path");
 
 const { withDangerousMod } = require("expo/config-plugins");
 
-const MARKER = "# t3code: repair cached CocoaPods UUID allocation before SPM integration";
+const MARKER = "# verne: repair cached CocoaPods UUID allocation before SPM integration";
 const UUID_REPAIR = `${MARKER}
     pods_project = installer.pods_project
     existing_uuids = pods_project.objects.map(&:uuid)

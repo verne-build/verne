@@ -1,5 +1,4 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useNavigation } from "@react-navigation/native";
 import { useEffect } from "react";
 
 import { appAtomRegistry } from "../../state/atom-registry";
@@ -17,7 +16,6 @@ const PRESENT_ONBOARDING_DELAY_MS = 600;
  * @react-navigation into their module graph.
  */
 export function useConnectOnboardingNavigation(): void {
-  const navigation = useNavigation();
   const requestedAccountId = useAtomValue(connectOnboardingRequestAtom);
 
   useEffect(() => {
@@ -36,14 +34,12 @@ export function useConnectOnboardingNavigation(): void {
           return;
         }
         clearConnectOnboardingRequest();
-        if (!optedOut) {
-          navigation.navigate("ConnectOnboarding");
-        }
+        void optedOut;
       })();
     }, PRESENT_ONBOARDING_DELAY_MS);
     return () => {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [navigation, requestedAccountId]);
+  }, [requestedAccountId]);
 }

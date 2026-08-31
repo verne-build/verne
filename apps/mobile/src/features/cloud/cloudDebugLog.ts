@@ -2,7 +2,7 @@ export function isCloudDebugEnabled(): boolean {
   return (
     (typeof __DEV__ !== "undefined" && __DEV__) ||
     (typeof globalThis !== "undefined" &&
-      (globalThis as { __T3_CLOUD_DEBUG__?: boolean }).__T3_CLOUD_DEBUG__ === true)
+      (globalThis as { __VERNE_CLOUD_DEBUG__?: boolean }).__VERNE_CLOUD_DEBUG__ === true)
   );
 }
 

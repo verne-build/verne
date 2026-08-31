@@ -32,12 +32,14 @@ describe("getPierreTerminalTheme", () => {
 describe("getMobileTerminalTheme", () => {
   it("preserves the Pierre terminal for the default theme", () => {
     for (const scheme of ["light", "dark"] as const) {
-      expect(getMobileTerminalTheme("t3-code", scheme)).toEqual(getPierreTerminalTheme(scheme));
+      expect(getMobileTerminalTheme("verne-mobile", scheme)).toEqual(
+        getPierreTerminalTheme(scheme),
+      );
     }
   });
 
   it("applies the selected palette without replacing ANSI status colors", () => {
-    const standard = getMobileTerminalTheme("t3-code", "dark");
+    const standard = getMobileTerminalTheme("verne-mobile", "dark");
     const ocean = getMobileTerminalTheme("ocean", "dark");
 
     expect(ocean.background).not.toBe(standard.background);

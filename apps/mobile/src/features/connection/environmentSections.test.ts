@@ -46,7 +46,7 @@ describe("relayManagedEnvironmentIds", () => {
 });
 
 describe("mobile environment settings sections", () => {
-  it("keeps saved relay-managed connections under T3 Connect", () => {
+  it("keeps saved relay-managed connections under managed relay", () => {
     const local = connectedEnvironment({
       environmentId: "environment-local",
       isRelayManaged: false,

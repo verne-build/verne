@@ -91,7 +91,7 @@ describe("mobile DPoP", () => {
 
   it.effect("rejects malformed persisted proof keys", () =>
     Effect.gen(function* () {
-      secureStore.set("t3code.cloud.dpop-proof-key", `{"kty":"EC","crv":"P-256","d":42}`);
+      secureStore.set("verne.cloud.dpop-proof-key", `{"kty":"EC","crv":"P-256","d":42}`);
 
       const error = yield* loadOrCreateDpopProofKeyPair().pipe(Effect.flip);
 

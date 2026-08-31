@@ -8,7 +8,7 @@ VENDOR_DIR="${MODULE_DIR}/../../../../native/libghostty-vt"
 PATCH_DIR="${SCRIPT_DIR}/libghostty-android-patches"
 
 GHOSTTY_REVISION="${GHOSTTY_REVISION:-9f62873bf195e4d8a762d768a1405a5f2f7b1697}"
-GHOSTTY_SOURCE_DIR="${GHOSTTY_SOURCE_DIR:-${HOME}/.cache/t3code/ghostty-${GHOSTTY_REVISION:0:8}}"
+GHOSTTY_SOURCE_DIR="${GHOSTTY_SOURCE_DIR:-${HOME}/.cache/verne/ghostty-${GHOSTTY_REVISION:0:8}}"
 GHOSTTY_ZIG_VERSION="${GHOSTTY_ZIG_VERSION:-0.15.2}"
 GHOSTTY_ZIG="${GHOSTTY_ZIG:-}"
 ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-}"
@@ -50,7 +50,7 @@ ensure_zig() {
     *) die "unsupported host architecture for Zig download: ${host_arch}" ;;
   esac
 
-  cache_dir="${HOME}/.cache/t3code/zig-${GHOSTTY_ZIG_VERSION}"
+  cache_dir="${HOME}/.cache/verne/zig-${GHOSTTY_ZIG_VERSION}"
   GHOSTTY_ZIG="${cache_dir}/zig"
   if [[ -x "${GHOSTTY_ZIG}" ]]; then
     return

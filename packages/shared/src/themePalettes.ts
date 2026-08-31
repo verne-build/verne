@@ -3,7 +3,7 @@ import { VERNE_DARK_SYNTAX_THEME } from "./verneSyntaxTheme.ts";
 export const BUILT_IN_THEME_IDS = ["t3-chat", "grove", "ocean", "ember", "iris", "verne"] as const;
 
 /** The mobile app's own hand-tuned palette, which is not part of the built-in library. */
-export const MOBILE_DEFAULT_THEME_ID = "t3-code";
+export const MOBILE_DEFAULT_THEME_ID = "verne-mobile";
 
 /**
  * Every palette the mobile app can render. Declared here so host-side tooling

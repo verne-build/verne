@@ -12,7 +12,7 @@ import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
 
 export const SHOWCASE_PENDING_TASK_DEFINITIONS = [
   {
-    projectId: "t3code",
+    projectId: "verne",
     id: "offline-launch-checklist",
     text: "Ship the offline launch checklist before touchdown ✈️",
     branch: "feat/offline-launchpad",
