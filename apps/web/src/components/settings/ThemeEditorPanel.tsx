@@ -804,6 +804,8 @@ export function ThemeEditorPanel({
               ...mergeTarget.variants,
               ...Object.fromEntries(editedModes.map((mode) => [mode, colorsForSave[mode]])),
             },
+            ...(mergeTarget.syntax ? { syntax: mergeTarget.syntax } : {}),
+            ...(mergeTarget.syntaxVariants ? { syntaxVariants: mergeTarget.syntaxVariants } : {}),
             ...(mergeTarget.managed === true && !isAdvanced ? { managed: true } : {}),
           }),
           ...(mergeTarget.collection ? { collection: mergeTarget.collection } : {}),
@@ -835,6 +837,8 @@ export function ThemeEditorPanel({
             ...(getThemeModes(editingTheme).length > 1
               ? { variants: { [variantAppearance]: colorsForSave[variantAppearance] } }
               : {}),
+            ...(editingTheme.syntax ? { syntax: editingTheme.syntax } : {}),
+            ...(editingTheme.syntaxVariants ? { syntaxVariants: editingTheme.syntaxVariants } : {}),
             ...(isAdvanced ? {} : { managed: true }),
           }),
           ...(editingTheme.collection ? { collection: editingTheme.collection } : {}),
@@ -862,6 +866,8 @@ export function ThemeEditorPanel({
               ...mergeTarget.variants,
               [activeAppearance]: colorsForSave[activeAppearance],
             },
+            ...(mergeTarget.syntax ? { syntax: mergeTarget.syntax } : {}),
+            ...(mergeTarget.syntaxVariants ? { syntaxVariants: mergeTarget.syntaxVariants } : {}),
             ...(mergeTarget.managed === true && !isAdvanced ? { managed: true } : {}),
           }),
           ...(mergeTarget.collection ? { collection: mergeTarget.collection } : {}),

@@ -2,9 +2,9 @@ import { preloadPatchFile } from "@pierre/diffs/ssr";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "../ComposerPromptEditor";
 import { terminalThemeFromApp } from "../ThreadTerminalDrawer";
+import { useCodeTheme } from "../../hooks/useCodeTheme";
 import { useTheme } from "../../hooks/useTheme";
 import { DISCONNECTED_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
-import { resolveDiffThemeName, type DiffThemeName } from "../../lib/diffRendering";
 import { GhosttyTerminalSurface } from "~/terminal/ghostty/surface";
 
 // The font previews are the real surfaces, not lookalikes: the composer's
@@ -72,9 +72,9 @@ const DIFF_PREVIEW_PATCH = [
 // (toggling Advanced) and lock in an unhighlighted frame; a static preview
 // needs none of that lifecycle, so it uses the deterministic renderer and
 // injects the finished HTML into a shadow root, exactly as FileDiff would.
-const diffPreviewHtmlByTheme = new Map<DiffThemeName, Promise<readonly string[]>>();
+const diffPreviewHtmlByTheme = new Map<string, Promise<readonly string[]>>();
 
-function loadDiffPreviewHtml(theme: DiffThemeName): Promise<readonly string[]> {
+function loadDiffPreviewHtml(theme: string): Promise<readonly string[]> {
   let promise = diffPreviewHtmlByTheme.get(theme);
   if (promise === undefined) {
     promise = preloadPatchFile({
@@ -122,18 +122,17 @@ function StaticDiffHtml({ html }: { html: string }) {
 
 /** The diff panel's file diff, statically rendered by its real pipeline. */
 export function CodeFontPreview() {
-  const { resolvedTheme } = useTheme();
-  const themeName = resolveDiffThemeName(resolvedTheme);
+  const { codeThemeName } = useCodeTheme();
   const [htmlByFile, setHtmlByFile] = useState<readonly string[] | null>(null);
   useEffect(() => {
     let cancelled = false;
-    void loadDiffPreviewHtml(themeName).then((html) => {
+    void loadDiffPreviewHtml(codeThemeName).then((html) => {
       if (!cancelled) setHtmlByFile(html);
     });
     return () => {
       cancelled = true;
     };
-  }, [themeName]);
+  }, [codeThemeName]);
   if (htmlByFile === null) return null;
   return (
     <div className="mt-1 mb-2 space-y-2">

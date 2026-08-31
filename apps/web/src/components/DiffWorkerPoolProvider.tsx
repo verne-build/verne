@@ -2,12 +2,11 @@ import { WorkerPoolContextProvider, useWorkerPool } from "@pierre/diffs/react";
 import DiffsWorker from "@pierre/diffs/worker/worker.js?worker";
 import * as Schema from "effect/Schema";
 import { useEffect, useMemo, type ReactNode } from "react";
-import { useTheme } from "../hooks/useTheme";
-import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
+import { useCodeTheme } from "../hooks/useCodeTheme";
 
 export class DiffWorkerError extends Schema.TaggedErrorClass<DiffWorkerError>()("DiffWorkerError", {
   operation: Schema.Literals(["create-worker", "get-render-options", "set-render-options"]),
-  themeName: Schema.Literals(["pierre-light", "pierre-dark"]),
+  themeName: Schema.String,
   cause: Schema.Defect(),
 }) {
   override get message(): string {
@@ -15,7 +14,7 @@ export class DiffWorkerError extends Schema.TaggedErrorClass<DiffWorkerError>()(
   }
 }
 
-function DiffWorkerThemeSync({ themeName }: { themeName: DiffThemeName }) {
+function DiffWorkerThemeSync({ themeName }: { themeName: string }) {
   const workerPool = useWorkerPool();
 
   useEffect(() => {
@@ -46,8 +45,7 @@ function DiffWorkerThemeSync({ themeName }: { themeName: DiffThemeName }) {
 }
 
 export function DiffWorkerPoolProvider({ children }: { children?: ReactNode }) {
-  const { resolvedTheme } = useTheme();
-  const diffThemeName = resolveDiffThemeName(resolvedTheme);
+  const { codeThemeName } = useCodeTheme();
   const workerPoolSize = useMemo(() => {
     const cores =
       typeof navigator === "undefined" ? 4 : Math.max(1, navigator.hardwareConcurrency || 4);
@@ -63,7 +61,7 @@ export function DiffWorkerPoolProvider({ children }: { children?: ReactNode }) {
           } catch (cause) {
             throw new DiffWorkerError({
               operation: "create-worker",
-              themeName: diffThemeName,
+              themeName: codeThemeName,
               cause,
             });
           }
@@ -72,12 +70,12 @@ export function DiffWorkerPoolProvider({ children }: { children?: ReactNode }) {
         totalASTLRUCacheSize: 240,
       }}
       highlighterOptions={{
-        theme: diffThemeName,
+        theme: codeThemeName,
         tokenizeMaxLineLength: 1_000,
         useTokenTransformer: true,
       }}
     >
-      <DiffWorkerThemeSync themeName={diffThemeName} />
+      <DiffWorkerThemeSync themeName={codeThemeName} />
       {children}
     </WorkerPoolContextProvider>
   );

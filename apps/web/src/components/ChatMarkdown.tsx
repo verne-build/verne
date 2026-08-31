@@ -75,12 +75,11 @@ import {
   usePreferredEditor,
 } from "../editorPreferences";
 import { openInEditorMenuLabel } from "../editorLabels";
-import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
 import { fnv1a32 } from "../lib/diffRendering";
 import { LRUCache } from "../lib/lruCache";
-import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
+import { getSyntaxHighlighterPromise, type SyntaxHighlightTheme } from "../lib/syntaxHighlighting";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
-import { useTheme } from "../hooks/useTheme";
+import { useCodeTheme } from "../hooks/useCodeTheme";
 import { getClientSettings } from "../hooks/useSettings";
 import {
   chatMarkdownClipboardPayload,
@@ -481,7 +480,7 @@ function extractCodeBlock(
   };
 }
 
-function createHighlightCacheKey(code: string, language: string, themeName: DiffThemeName): string {
+function createHighlightCacheKey(code: string, language: string, themeName: string): string {
   return `${fnv1a32(code).toString(36)}:${code.length}:${language}:${themeName}`;
 }
 
@@ -829,7 +828,8 @@ function MarkdownCodeBlock({
 interface SuspenseShikiCodeBlockProps {
   className: string | undefined;
   code: string;
-  themeName: DiffThemeName;
+  themeName: string;
+  syntaxTheme: SyntaxHighlightTheme | null;
   isStreaming: boolean;
 }
 
@@ -837,6 +837,7 @@ function SuspenseShikiCodeBlock({
   className,
   code,
   themeName,
+  syntaxTheme,
   isStreaming,
 }: SuspenseShikiCodeBlockProps) {
   const language = extractFenceLanguage(className);
@@ -857,6 +858,7 @@ function SuspenseShikiCodeBlock({
       code={code}
       language={language}
       themeName={themeName}
+      syntaxTheme={syntaxTheme}
       cacheKey={cacheKey}
       isStreaming={isStreaming}
     />
@@ -866,7 +868,8 @@ function SuspenseShikiCodeBlock({
 interface UncachedShikiCodeBlockProps {
   code: string;
   language: string;
-  themeName: DiffThemeName;
+  themeName: string;
+  syntaxTheme: SyntaxHighlightTheme | null;
   cacheKey: string;
   isStreaming: boolean;
 }
@@ -875,10 +878,11 @@ function UncachedShikiCodeBlock({
   code,
   language,
   themeName,
+  syntaxTheme,
   cacheKey,
   isStreaming,
 }: UncachedShikiCodeBlockProps) {
-  const highlighter = use(getSyntaxHighlighterPromise(language));
+  const highlighter = use(getSyntaxHighlighterPromise(language, syntaxTheme));
   const highlightedHtml = useMemo(() => {
     try {
       return highlighter.codeToHtml(code, { lang: language, theme: themeName });
@@ -1637,7 +1641,7 @@ function ChatMarkdown({
   lineBreaks = false,
   parseRawHtml = true,
 }: ChatMarkdownProps) {
-  const { resolvedTheme } = useTheme();
+  const { codeThemeName: syntaxThemeName, resolvedTheme, syntaxTheme } = useCodeTheme();
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
   });
@@ -1694,7 +1698,6 @@ function ChatMarkdown({
     },
     [environmentId, openInEditor],
   );
-  const diffThemeName = resolveDiffThemeName(resolvedTheme);
   const markdownFileLinkMetaByHref = useMemo(() => {
     const metaByHref = new Map<
       string,
@@ -2198,7 +2201,8 @@ function ChatMarkdown({
                 <SuspenseShikiCodeBlock
                   className={codeBlock.className}
                   code={codeBlock.code}
-                  themeName={diffThemeName}
+                  themeName={syntaxThemeName}
+                  syntaxTheme={syntaxTheme}
                   isStreaming={isStreaming}
                 />
               </Suspense>
@@ -2210,7 +2214,8 @@ function ChatMarkdown({
   }, [
     canUseShellActions,
     cwd,
-    diffThemeName,
+    syntaxTheme,
+    syntaxThemeName,
     fileLinkParentSuffixByPath,
     inlineCodeFileLinkMetaByText,
     isStreaming,

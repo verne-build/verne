@@ -52,7 +52,12 @@ const VSCODE_DARK = {
     "list.hoverBackground": "#1f3e5e59",
     "list.activeSelectionBackground": "#1f3e5e99",
   },
-  tokenColors: [],
+  tokenColors: [
+    {
+      scope: ["comment", "punctuation.definition.comment"],
+      settings: { foreground: "#6b7678", fontStyle: "italic" },
+    },
+  ],
 };
 
 describe("VS Code theme import", () => {
@@ -80,6 +85,7 @@ describe("VS Code theme import", () => {
     expect(asHex(theme.colors.accent)).toBe("#69b1ff");
     expect(asHex(theme.colors.sidebar)).toBe("#101010");
     expect(asHex(theme.colors.terminalBackground)).toBe("#101010");
+    expect(theme.syntax).toEqual(VSCODE_DARK.tokenColors);
   });
 
   it("flattens alpha overlays onto the surface they sit on", () => {

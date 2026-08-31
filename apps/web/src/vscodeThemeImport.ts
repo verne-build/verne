@@ -326,6 +326,7 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
     name: resolveName(value),
     appearance,
     colors: { ...derived, ...overrides },
+    ...(Array.isArray(value.tokenColors) ? { syntax: value.tokenColors } : {}),
   });
 }
 
@@ -380,6 +381,8 @@ export function pairVsCodeThemes(
             appearance: "light",
             colors: group.light[0]!.colors,
             variants: { dark: group.dark[0]!.colors },
+            ...(group.light[0]!.syntax ? { syntax: group.light[0]!.syntax } : {}),
+            ...(group.dark[0]!.syntax ? { syntaxVariants: { dark: group.dark[0]!.syntax } } : {}),
           }),
         });
         continue;
@@ -414,6 +417,8 @@ export function resolveThemeLabelCollisions(
         appearance: theme.appearance,
         colors: theme.colors,
         ...(theme.variants ? { variants: theme.variants } : {}),
+        ...(theme.syntax ? { syntax: theme.syntax } : {}),
+        ...(theme.syntaxVariants ? { syntaxVariants: theme.syntaxVariants } : {}),
         ...(theme.managed ? { managed: true } : {}),
       });
     } catch {

@@ -3,7 +3,7 @@ import { LoaderCircle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { useActiveProjectTarget, type ActiveProjectTarget } from "~/hooks/useActiveProjectTarget";
-import { useTheme } from "~/hooks/useTheme";
+import { useCodeTheme } from "~/hooks/useCodeTheme";
 import { cn } from "~/lib/utils";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { useProjectContentSearch } from "~/state/queries";
@@ -102,7 +102,7 @@ function OpenContentSearchDialog(props: {
   readonly target: ActiveProjectTarget;
 }) {
   const { target } = props;
-  const { resolvedTheme } = useTheme();
+  const { resolvedTheme, syntaxTheme } = useCodeTheme();
   const [query, setQuery] = useState("");
   const [caseSensitive, setCaseSensitive] = useState(false);
   const [wholeWord, setWholeWord] = useState(false);
@@ -288,6 +288,7 @@ function OpenContentSearchDialog(props: {
                           match={match}
                           path={group.path}
                           theme={resolvedTheme}
+                          syntaxTheme={syntaxTheme}
                         />
                       </span>
                     </button>

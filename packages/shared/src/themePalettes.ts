@@ -1,3 +1,5 @@
+import { VERNE_DARK_SYNTAX_THEME } from "./verneSyntaxTheme";
+
 export const BUILT_IN_THEME_IDS = ["t3-chat", "grove", "ocean", "ember", "iris", "verne"] as const;
 
 /** The mobile app's own hand-tuned palette, which is not part of the built-in library. */
@@ -78,12 +80,22 @@ export const THEME_COLOR_ROLES = [
 export type ThemeColorRole = (typeof THEME_COLOR_ROLES)[number];
 export type ThemeColors = Readonly<Record<ThemeColorRole, string>>;
 export type ThemeVariants = Readonly<Partial<Record<ThemeAppearance, ThemeColors>>>;
+export type SyntaxThemeRule = Readonly<{
+  name?: string;
+  scope?: string | ReadonlyArray<string>;
+  settings: Readonly<{ foreground?: string; background?: string; fontStyle?: string }>;
+}>;
+export type SyntaxTheme = ReadonlyArray<SyntaxThemeRule>;
 export type ThemeDefinition = Readonly<{
   id: string;
   label: string;
   appearance: ThemeAppearance;
   colors: ThemeColors;
   variants?: ThemeVariants;
+  /** TextMate token rules used by Shiki for code highlighting. */
+  syntax?: SyntaxTheme;
+  /** Syntax rules for the non-base appearance of a dual-mode theme. */
+  syntaxVariants?: Readonly<Partial<Record<ThemeAppearance, SyntaxTheme>>>;
   /** Groups related imported variants into one library card. */
   collection?: Readonly<{ id: string; label: string }>;
   /** Allows reviewed built-ins to render product artwork over their sidebar. */
@@ -731,6 +743,7 @@ export const VERNE_THEME: ThemeDefinition = {
   id: "verne",
   label: "Verne",
   appearance: "dark",
+  syntax: VERNE_DARK_SYNTAX_THEME,
   colors: {
     canvas: "oklch(0.145 0 0)",
     chrome: "oklch(0.205 0 0)",

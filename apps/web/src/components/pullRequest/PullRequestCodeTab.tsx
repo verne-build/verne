@@ -27,7 +27,7 @@ import { useAtomRefresh } from "@effect/atom-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { useClientSettings } from "~/hooks/useSettings";
-import { useTheme } from "~/hooks/useTheme";
+import { useCodeTheme } from "~/hooks/useCodeTheme";
 import { areAllDiffFilesCollapsed } from "~/lib/diffCollapse";
 import { pullRequestFindingKey, type PullRequestFinding } from "./pullRequestDetail.logic";
 import { canEditPullRequestComment } from "./pullRequestEditing.logic";
@@ -37,7 +37,6 @@ import {
   fnv1a32,
   getDiffLineStat,
   getRenderablePatch,
-  resolveDiffThemeName,
   resolveFileDiffPath,
   resolveFileDiffPreviousPath,
   type RenderablePatch,
@@ -208,7 +207,7 @@ export function PullRequestCodeTab({
   /** Bumped by the panel's refresh button: drop the accumulated pages and re-read the diff. */
   refreshToken?: number;
 }) {
-  const { resolvedTheme } = useTheme();
+  const { codeThemeName, resolvedTheme } = useCodeTheme();
   const settings = useClientSettings();
   const [toggledFiles, setToggledFiles] = useState<ReadonlySet<string>>(() => new Set());
   // A change of any size can carry hundreds of commits, and a menu that long is a scroll rather
@@ -742,7 +741,7 @@ export function PullRequestCodeTab({
       diffStyle: diffRenderMode === "split" ? ("split" as const) : ("unified" as const),
       lineDiffType: "none" as const,
       overflow: wordWrap ? ("wrap" as const) : ("scroll" as const),
-      theme: resolveDiffThemeName(resolvedTheme),
+      theme: codeThemeName,
       themeType: resolvedTheme,
       stickyHeaders: true,
       loadDiffFiles,
@@ -758,6 +757,7 @@ export function PullRequestCodeTab({
     [
       diffRenderMode,
       wordWrap,
+      codeThemeName,
       resolvedTheme,
       loadDiffFiles,
       canCommentOnLines,

@@ -6,6 +6,7 @@ import {
   applyThemePalette,
   getThemeColorsForMode,
   getThemeDefinition,
+  getAppliedThemeDefinition,
   getThemeModes,
   getThemePreviewSidebarArtwork,
   getThemePreferenceMode,
@@ -375,6 +376,8 @@ describe("theme files", () => {
 
     applyThemePalette("system", "light");
     const verne = getThemeDefinition("verne")!;
+    expect(getAppliedThemeDefinition("system")).toBe(verne);
+    expect(verne.syntax?.length).toBeGreaterThan(100);
     const light = getThemeColorsForMode(verne, "light")!;
 
     expect(root.dataset.themeId).toBe("verne");

@@ -324,6 +324,8 @@ export function ThemeImportDialog({
         appearance: theme.appearance,
         colors: theme.colors,
         ...(theme.variants ? { variants: theme.variants } : {}),
+        ...(theme.syntax ? { syntax: theme.syntax } : {}),
+        ...(theme.syntaxVariants ? { syntaxVariants: theme.syntaxVariants } : {}),
         ...(theme.managed ? { managed: true } : {}),
       });
       if (!getCustomThemes().some((existing) => existing.id === candidate.id)) return candidate;
@@ -335,6 +337,8 @@ export function ThemeImportDialog({
         appearance: theme.appearance,
         colors: theme.colors,
         ...(theme.variants ? { variants: theme.variants } : {}),
+        ...(theme.syntax ? { syntax: theme.syntax } : {}),
+        ...(theme.syntaxVariants ? { syntaxVariants: theme.syntaxVariants } : {}),
         ...(theme.managed ? { managed: true } : {}),
       });
       if (getCustomThemes().some((existing) => existing.id === candidate.id)) continue;

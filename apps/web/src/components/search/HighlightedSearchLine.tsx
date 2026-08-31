@@ -3,7 +3,7 @@ import type { ProjectContentMatch } from "@t3tools/contracts";
 import { memo, Suspense, use, useMemo, type CSSProperties } from "react";
 
 import { resolveDiffThemeName } from "~/lib/diffRendering";
-import { getSyntaxHighlighterPromise } from "~/lib/syntaxHighlighting";
+import { getSyntaxHighlighterPromise, type SyntaxHighlightTheme } from "~/lib/syntaxHighlighting";
 
 import { RenderErrorBoundary } from "../RenderErrorBoundary";
 
@@ -130,18 +130,19 @@ function SyntaxHighlightedTokens(props: {
   readonly language: string;
   readonly ranges: ReadonlyArray<Range>;
   readonly theme: "light" | "dark";
+  readonly syntaxTheme?: SyntaxHighlightTheme | null;
 }) {
-  const highlighter = use(getSyntaxHighlighterPromise(props.language));
+  const highlighter = use(getSyntaxHighlighterPromise(props.language, props.syntaxTheme));
   const tokens = useMemo(() => {
     try {
       return highlighter.codeToTokens(props.line, {
         lang: props.language,
-        theme: resolveDiffThemeName(props.theme),
+        theme: props.syntaxTheme?.name ?? resolveDiffThemeName(props.theme),
       }).tokens[0];
     } catch {
       return undefined;
     }
-  }, [highlighter, props.language, props.line, props.theme]);
+  }, [highlighter, props.language, props.line, props.syntaxTheme, props.theme]);
 
   return tokens ? (
     <HighlightedTokens line={props.line} ranges={props.ranges} tokens={tokens} />
@@ -158,6 +159,7 @@ export const HighlightedSearchLine = memo(function HighlightedSearchLine(props: 
   readonly match: ProjectContentMatch;
   readonly path: string;
   readonly theme: "light" | "dark";
+  readonly syntaxTheme?: SyntaxHighlightTheme | null;
 }) {
   const ranges = useMemo(() => normalizeRanges(props.match), [props.match]);
   const fallback = (
@@ -176,6 +178,7 @@ export const HighlightedSearchLine = memo(function HighlightedSearchLine(props: 
           language={getFiletypeFromFileName(props.path)}
           ranges={ranges}
           theme={props.theme}
+          syntaxTheme={props.syntaxTheme ?? null}
         />
       </Suspense>
     </RenderErrorBoundary>

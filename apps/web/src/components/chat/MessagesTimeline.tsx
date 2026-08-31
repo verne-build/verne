@@ -39,11 +39,7 @@ import {
   workLogEntryIsToolLike,
 } from "../../session-logic";
 import { type ChatImageAttachment, isImageAttachment, type TurnDiffSummary } from "../../types";
-import {
-  getRenderablePatch,
-  resolveDiffThemeName,
-  resolveFileDiffPath,
-} from "../../lib/diffRendering";
+import { getRenderablePatch, resolveFileDiffPath } from "../../lib/diffRendering";
 import ChatMarkdown from "../ChatMarkdown";
 import {
   BotIcon,
@@ -137,6 +133,7 @@ interface TimelineRowSharedState {
   routeThreadKey: string;
   threadRef: ScopedThreadRef | null;
   markdownCwd: string | undefined;
+  codeThemeName: string;
   resolvedTheme: "light" | "dark";
   workspaceRoot: string | undefined;
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
@@ -223,6 +220,7 @@ interface MessagesTimelineProps {
   onImageExpand: (preview: ExpandedImagePreview) => void;
   activeThreadEnvironmentId: EnvironmentId;
   markdownCwd: string | undefined;
+  codeThemeName: string;
   resolvedTheme: "light" | "dark";
   timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
@@ -268,6 +266,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onImageExpand,
   activeThreadEnvironmentId,
   markdownCwd,
+  codeThemeName,
   resolvedTheme,
   timestampFormat,
   workspaceRoot,
@@ -518,6 +517,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       routeThreadKey,
       threadRef: parseScopedThreadKey(routeThreadKey),
       markdownCwd,
+      codeThemeName,
       resolvedTheme,
       workspaceRoot,
       skills,
@@ -534,6 +534,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       timestampFormat,
       routeThreadKey,
       markdownCwd,
+      codeThemeName,
       resolvedTheme,
       workspaceRoot,
       skills,
@@ -2061,7 +2062,7 @@ function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentConte
             options={{
               collapsed: false,
               diffStyle: "unified",
-              theme: resolveDiffThemeName(ctx.resolvedTheme),
+              theme: ctx.codeThemeName,
             }}
           />
         ))}

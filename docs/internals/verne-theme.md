@@ -58,6 +58,15 @@ The stylesheet owns:
 
 Prefer custom-property overrides. Use selectors based on existing `data-slot` and named surface attributes only when a component hard-codes a material that tokens cannot reach. Do not copy or fork React primitives.
 
+## Syntax highlighting
+
+The palette contract may carry VS Code-compatible TextMate token rules separately from UI colors.
+Verne's dark variant retains the syntax rules from the original Verne editor theme. Imported VS
+Code themes preserve `tokenColors`, including paired light/dark variants, and the web and desktop
+clients register the active rules with the shared Shiki highlighter for chat code blocks and
+project-content search results. Themes without syntax rules continue to use Pierre's default light
+or dark syntax palette. React Native remains outside this web/desktop highlighting seam.
+
 ## Component boundaries
 
 Feature components remain unchanged unless inspection proves that neither a semantic token nor a stable root attribute can express a required surface. If that occurs, add one stable styling hook to the upstream-shaped component and keep the visual rule in `verne-theme.css`.

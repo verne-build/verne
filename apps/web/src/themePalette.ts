@@ -14,6 +14,7 @@ import {
   type ThemeColorRole,
   type ThemeColors,
   type ThemeDefinition,
+  type SyntaxTheme,
   type ThemeVariants,
 } from "@t3tools/shared/themePalettes";
 
@@ -26,7 +27,14 @@ export {
   THEME_COLOR_ROLES,
   VERNE_THEME,
 };
-export type { ThemeAppearance, ThemeColorRole, ThemeColors, ThemeDefinition, ThemeVariants };
+export type {
+  SyntaxTheme,
+  ThemeAppearance,
+  ThemeColorRole,
+  ThemeColors,
+  ThemeDefinition,
+  ThemeVariants,
+};
 
 export const T3_CHAT_THEME_ID = "t3-chat" as const;
 export const T3_CHAT_THEME_LABEL = "T3 Chat";
@@ -63,6 +71,8 @@ export type ThemeFile = Readonly<{
   appearance: ThemeAppearance;
   colors: ThemeColorOverrides;
   variants?: ThemeVariantOverrides;
+  syntax?: SyntaxTheme;
+  syntaxVariants?: Readonly<Partial<Record<ThemeAppearance, SyntaxTheme>>>;
   collection?: ThemeCollection;
   managed?: boolean;
 }>;
@@ -188,6 +198,8 @@ function parseStoredTheme(value: unknown): ThemeDefinition | null {
   const variants = parseStoredThemeVariants(value.variants, value.appearance);
   if (value.variants !== undefined && variants === null) return null;
   const collection = parseThemeCollection(value.collection);
+  const syntax = parseSyntaxTheme(value.syntax);
+  const syntaxVariants = parseSyntaxThemeVariants(value.syntaxVariants, value.appearance);
 
   return {
     id: value.id,
@@ -195,9 +207,52 @@ function parseStoredTheme(value: unknown): ThemeDefinition | null {
     appearance: value.appearance,
     colors,
     ...(variants ? { variants } : {}),
+    ...(syntax ? { syntax } : {}),
+    ...(syntaxVariants ? { syntaxVariants } : {}),
     ...(collection ? { collection } : {}),
     ...(value.managed === true ? { managed: true } : {}),
   };
+}
+
+function parseSyntaxTheme(value: unknown): SyntaxTheme | null {
+  if (!Array.isArray(value)) return null;
+  const rules = value.flatMap((entry) => {
+    if (!isRecord(entry) || !isRecord(entry.settings)) return [];
+    const rawSettings = entry.settings;
+    const scope =
+      typeof entry.scope === "string" ||
+      (Array.isArray(entry.scope) && entry.scope.every((item) => typeof item === "string"))
+        ? entry.scope
+        : undefined;
+    const settings = Object.fromEntries(
+      ["foreground", "background", "fontStyle"].flatMap((key) =>
+        typeof rawSettings[key] === "string" ? [[key, rawSettings[key]]] : [],
+      ),
+    );
+    if (Object.keys(settings).length === 0) return [];
+    return [
+      {
+        ...(typeof entry.name === "string" ? { name: entry.name } : {}),
+        ...(scope ? { scope } : {}),
+        settings,
+      },
+    ];
+  });
+  return rules.length > 0 ? (rules as SyntaxTheme) : null;
+}
+
+function parseSyntaxThemeVariants(
+  value: unknown,
+  baseAppearance: ThemeAppearance,
+): Readonly<Partial<Record<ThemeAppearance, SyntaxTheme>>> | null {
+  if (!isRecord(value)) return null;
+  const variants: Partial<Record<ThemeAppearance, SyntaxTheme>> = {};
+  for (const [appearance, syntax] of Object.entries(value)) {
+    if (!isThemeAppearance(appearance) || appearance === baseAppearance) continue;
+    const parsed = parseSyntaxTheme(syntax);
+    if (parsed) variants[appearance] = parsed;
+  }
+  return Object.keys(variants).length > 0 ? variants : null;
 }
 
 function parseStoredThemes(storedThemes: ReadonlyArray<unknown>): ReadonlyArray<ThemeDefinition> {
@@ -1437,6 +1492,14 @@ export function getThemeDefinition(theme: ThemePreference): ThemeDefinition | nu
   );
 }
 
+/** The palette actually worn by the product for a stored preference. */
+export function getAppliedThemeDefinition(theme: ThemePreference): ThemeDefinition | null {
+  return (
+    getThemeDefinition(theme) ??
+    (theme === "system" || theme === "light" || theme === "dark" ? VERNE_THEME : null)
+  );
+}
+
 /** Artwork palettes are reviewed alongside built-ins; user themes always use the pill fallback. */
 export function themeAllowsSidebarArtwork(theme: ThemePreference): boolean {
   const themeId = themeIdFromPreference(theme);
@@ -1723,6 +1786,8 @@ export function parseThemeFile(value: unknown): ThemeDefinition {
 
   const overrides = parseThemeColorOverrides(rawColors);
   const collection = parseThemeCollection(value.collection);
+  const syntax = parseSyntaxTheme(value.syntax);
+  const syntaxVariants = parseSyntaxThemeVariants(value.syntaxVariants, appearance);
   if (value.collection !== undefined && !collection) {
     throw new Error("Theme collections need a valid id and label.");
   }
@@ -1752,6 +1817,8 @@ export function parseThemeFile(value: unknown): ThemeDefinition {
     appearance,
     colors: { ...fallback, ...overrides },
     ...(Object.keys(variants).length > 0 ? { variants } : {}),
+    ...(syntax ? { syntax } : {}),
+    ...(syntaxVariants ? { syntaxVariants } : {}),
     ...(collection ? { collection } : {}),
     ...(value.managed === true ? { managed: true } : {}),
   };
@@ -1766,6 +1833,8 @@ export function serializeThemeFile(theme: ThemeDefinition): string {
     appearance: canonicalTheme.appearance,
     colors: canonicalTheme.colors,
     ...(canonicalTheme.variants ? { variants: canonicalTheme.variants } : {}),
+    ...(canonicalTheme.syntax ? { syntax: canonicalTheme.syntax } : {}),
+    ...(canonicalTheme.syntaxVariants ? { syntaxVariants: canonicalTheme.syntaxVariants } : {}),
     ...(canonicalTheme.collection ? { collection: canonicalTheme.collection } : {}),
     ...(canonicalTheme.managed ? { managed: true } : {}),
   };
@@ -1867,9 +1936,7 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
   if (!root?.style) return;
 
   setThemePreviewSidebarArtwork(null);
-  const palette =
-    getThemeDefinition(theme) ??
-    (theme === "system" || theme === "light" || theme === "dark" ? VERNE_THEME : null);
+  const palette = getAppliedThemeDefinition(theme);
 
   if (palette) {
     root.dataset.themeId = palette.id;
