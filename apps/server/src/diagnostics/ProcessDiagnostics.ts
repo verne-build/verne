@@ -95,7 +95,7 @@ export const make = Effect.fn("makeProcessDiagnostics")(function* () {
           pid: input.pid,
           signal: input.signal,
           signaled: false,
-          message: Option.some("Refusing to signal the T3 server process."),
+          message: Option.some("Refusing to signal the Verne server process."),
         };
       }
       const current = yield* telemetry.refresh.pipe(Effect.option);

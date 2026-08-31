@@ -181,7 +181,7 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
     }),
   );
 
-  it.effect("does not ship the T3 Connect command", () =>
+  it.effect("does not ship the managed relay command", () =>
     Effect.gen(function* () {
       const error = yield* runCliWithRuntime(["connect", "status"]).pipe(Effect.flip);
 

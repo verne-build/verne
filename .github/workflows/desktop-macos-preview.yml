@@ -52,7 +52,7 @@ jobs:
           run-install: false
 
       - name: Install desktop dependencies
-        run: vp install --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
+        run: vp install --filter=@t3tools/desktop... --filter=@verne-build/cli... --filter=@t3tools/scripts...
 
       - name: Cache resource monitor
         id: resource_monitor_cache
@@ -86,7 +86,7 @@ jobs:
         name: Build unsigned macOS DMG
         shell: bash
         env:
-          T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: ${{ steps.resource_monitor_cache.outputs.cache-hit == 'true' }}
+          VERNE_DESKTOP_REUSE_RESOURCE_MONITOR: ${{ steps.resource_monitor_cache.outputs.cache-hit == 'true' }}
           PREVIEW_VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail

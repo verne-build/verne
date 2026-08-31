@@ -207,7 +207,7 @@ describe("verne pair", () => {
       );
       assert.include(rendered, "No running Verne server found.");
       assert.include(rendered, "npx @verne-build/cli serve");
-      assert.notInclude(rendered, "T3 Connect");
+      assert.notInclude(rendered, "managed relay");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

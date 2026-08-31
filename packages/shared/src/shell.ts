@@ -12,8 +12,8 @@ import * as Path from "effect/Path";
 import { HostProcessEnvironment, HostProcessPlatform } from "./hostProcess.ts";
 import * as Context from "effect/Context";
 
-const PATH_CAPTURE_START = "__T3CODE_PATH_START__";
-const PATH_CAPTURE_END = "__T3CODE_PATH_END__";
+const PATH_CAPTURE_START = "__VERNE_PATH_START__";
+const PATH_CAPTURE_END = "__VERNE_PATH_END__";
 const SHELL_ENV_NAME_PATTERN = /^[A-Z0-9_]+$/;
 const WINDOWS_PATH_DELIMITER = ";";
 const POSIX_PATH_DELIMITER = ":";
@@ -238,11 +238,11 @@ export function mergePathEntries(
 }
 
 function envCaptureStart(name: string): string {
-  return `__T3CODE_ENV_${name}_START__`;
+  return `__VERNE_ENV_${name}_START__`;
 }
 
 function envCaptureEnd(name: string): string {
-  return `__T3CODE_ENV_${name}_END__`;
+  return `__VERNE_ENV_${name}_END__`;
 }
 
 function buildEnvironmentCaptureCommand(names: ReadonlyArray<string>): string {

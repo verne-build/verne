@@ -29,7 +29,7 @@ export const RelayObservability = Effect.gen(function* () {
   const traces = yield* Axiom.Dataset("RelayTracesDataset", {
     name: relayResourceNameForStage("t3-code-relay-traces", stage),
     kind: "otel:traces:v1",
-    description: "T3 Code relay Worker HTTP request spans.",
+    description: "Verne relay Worker HTTP request spans.",
     retentionDays: 30,
     useRetentionPeriod: true,
   });
@@ -44,7 +44,7 @@ export const RelayObservability = Effect.gen(function* () {
 
   const mobileIngestToken = yield* Axiom.ApiToken("RelayMobileAxiomIngestToken", {
     name: relayResourceNameForStage("t3-code-mobile-otel-ingest", stage),
-    description: "Owned by Alchemy. Scoped OTLP ingest token for T3 Code mobile spans.",
+    description: "Owned by Alchemy. Scoped OTLP ingest token for Verne mobile spans.",
     datasetCapabilities: Output.map(traces.name, (dataset) => ({
       [dataset]: { ingest: ["create" as const] },
     })),

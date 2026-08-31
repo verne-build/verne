@@ -1,11 +1,11 @@
 ---
-description: Cursor Cloud environment setup and run notes for T3 Code (Cursor-specific; not for other editors/CI)
+description: Cursor Cloud environment setup and run notes for Verne (Cursor-specific; not for other editors/CI)
 alwaysApply: true
 ---
 
 # Cursor Cloud specific instructions
 
-These notes apply only to Cursor Cloud agents (kept out of the shared `AGENTS.md` since T3 Code is
+These notes apply only to Cursor Cloud agents (kept out of the shared `AGENTS.md` since Verne is
 developed in many places). They cover the pre-provisioned VM environment and non-obvious run caveats.
 
 ## Toolchain
@@ -28,8 +28,8 @@ Pre-installed and wired into login shells (`~/.bashrc`/`~/.profile`): Node 24 (v
   the next free pair, so read the actual ports from stdout. Avoid production `build`/`start` in dev.
 - Auth/pairing: the server is unauthenticated by default and prints a pairing URL to stdout on startup
   (e.g. `http://localhost:5733/pair#token=XXXX`). Open that URL in the browser to pair before the web
-  UI can talk to the server. Server state (SQLite, auth, projects) lives under `~/.t3`
-  (`T3CODE_HOME`); multiple `npm run dev` instances bind different ports but share that same DB.
+  UI can talk to the server. Server state (SQLite, auth, projects) lives under `~/.verne`
+  (`VERNE_HOME`); multiple `npm run dev` instances bind different ports but share that same DB.
 - Agent providers are external CLIs (`codex`, `claude`, `cursor-agent`, `opencode`) probed on `PATH`.
   Without one installed the UI loads but no agent can run. Claude Code
   (`npm i -g @anthropic-ai/claude-code`) works headlessly using `ANTHROPIC_API_KEY` from the

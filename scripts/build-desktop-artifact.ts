@@ -1042,6 +1042,19 @@ export function resolveMacPasskeySigningConfiguration(
   };
 }
 
+export function resolveOptionalMacPasskeySigningConfiguration(
+  env: Readonly<Record<string, string | undefined>>,
+): MacPasskeySigningConfiguration | undefined {
+  const passkeyConfigurationRequested = [
+    env.VERNE_APPLE_TEAM_ID,
+    env.VERNE_MACOS_PROVISIONING_PROFILE,
+    env.VERNE_CLERK_PASSKEY_RP_DOMAINS,
+    env.VERNE_CLERK_PUBLISHABLE_KEY,
+  ].some((value) => Boolean(value?.trim()));
+
+  return passkeyConfigurationRequested ? resolveMacPasskeySigningConfiguration(env) : undefined;
+}
+
 function escapeXml(value: string): string {
   return value
     .replaceAll("&", "&amp;")
@@ -2901,7 +2914,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const configuredMacPasskeySigning =
     options.platform === "mac" && options.signed
       ? yield* Effect.try({
-          try: () => resolveMacPasskeySigningConfiguration(loadRepoEnv({ repoRoot })),
+          try: () => resolveOptionalMacPasskeySigningConfiguration(loadRepoEnv({ repoRoot })),
           catch: MacPasskeySigningConfigurationResolutionError.fromCause,
         })
       : undefined;

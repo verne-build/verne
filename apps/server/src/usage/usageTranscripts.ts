@@ -91,7 +91,7 @@ export function grokCostTicksToUsd(ticks: unknown): number | null {
 /**
  * Parses one line of a Claude Code transcript.
  *
- * T3 Code writes one record per assistant *content block*, and every one of
+ * Verne writes one record per assistant *content block*, and every one of
  * those records repeats the same complete `usage` object for the parent
  * message. Summing them overcounts by roughly 2.4x on a real workload, so the
  * caller must drop repeats by `dedupeKey` and keep the first.

@@ -1,6 +1,6 @@
 # Engineering work artifacts
 
-> For maintainers. Using T3 Code? See [docs/user](../user/).
+> For maintainers. Using Verne? See [docs/user](../user/).
 
 Keep planned work out of the source tree. Code search should return the product as it exists, not a mix of current behavior and abandoned intentions.
 

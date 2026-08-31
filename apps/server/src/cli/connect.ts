@@ -113,7 +113,7 @@ const authorizeCli = Effect.fn("cloud.cli.authorize")(function* (options: {
   const existing = yield* tokens.getExisting.pipe(
     Effect.catchTag("CloudCliCredentialRefreshError", () =>
       Console.log(
-        "The stored T3 Connect credential could not be refreshed; signing in again.",
+        "The stored managed relay credential could not be refreshed; signing in again.",
       ).pipe(Effect.as(Option.none())),
     ),
   );
@@ -193,15 +193,15 @@ function formatCloudStatus(status: CloudCliStatus, options?: { readonly json?: b
       ? "pending server startup"
       : "not provisioned";
   const nextStep = !status.authenticated
-    ? "Run `t3 connect link` to authorize and enable T3 Connect."
+    ? "Run `verne connect link` to authorize and enable managed relay."
     : !status.desired
-      ? "Run `t3 connect link` to enable T3 Connect."
+      ? "Run `verne connect link` to enable managed relay."
       : !status.linked
         ? "Start T3 to provision the environment link and launch its managed tunnel."
         : undefined;
 
   return [
-    "T3 Connect",
+    "managed relay",
     `  Exposure: ${status.desired ? "enabled" : "disabled"}`,
     `  Authorization: ${status.authenticated ? "stored credential" : "missing"}`,
     `  Environment link: ${provisioned}`,
@@ -217,7 +217,7 @@ const CLOUD_CLI_LIVE_SERVER_TIMEOUT = Duration.seconds(5);
 const confirmRelayClientInstall = (version: string) =>
   Prompt.run(
     Prompt.confirm({
-      message: `The T3 relay client is required for T3 Connect. Download and install version ${version}?`,
+      message: `The T3 relay client is required for managed relay. Download and install version ${version}?`,
       initial: false,
     }),
   );
@@ -274,7 +274,7 @@ const withCloudCliSessionToken = <A, E, R>(
     environmentAuth.issueSession({
       scopes: [AuthRelayWriteScope],
       subject: "cloud-cli",
-      label: "t3 connect cli",
+      label: "verne connect cli",
     }),
     (issued) => run(issued.token),
     (issued) => environmentAuth.revokeSession(issued.sessionId).pipe(Effect.ignore({ log: true })),
@@ -322,7 +322,7 @@ const logCloudDisconnectFailure = (
   clearAuthorization: boolean,
   cause: Cause.Cause<unknown>,
 ) =>
-  Effect.logWarning("T3 Connect disconnect operation failed.").pipe(
+  Effect.logWarning("managed relay disconnect operation failed.").pipe(
     Effect.annotateLogs({
       operation,
       clearAuthorization,
@@ -368,10 +368,10 @@ export const reportCloudDisconnectResults = Effect.fn("cloud.cli.report_disconne
         input.liveResult.cause,
       );
       yield* Console.warn(
-        "T3 Connect is disabled, but the running server could not stop its tunnel.\nRestart that server to stop the connector.",
+        "managed relay is disabled, but the running server could not stop its tunnel.\nRestart that server to stop the connector.",
       );
     } else {
-      yield* Console.log("T3 Connect is disabled locally.");
+      yield* Console.log("managed relay is disabled locally.");
     }
 
     if (Exit.isFailure(input.relayResult)) {
@@ -383,7 +383,7 @@ export const reportCloudDisconnectResults = Effect.fn("cloud.cli.report_disconne
       yield* Console.warn(
         input.clearAuthorization
           ? "Could not revoke the relay-side environment record before signing out.\nThe stored CLI authorization was still removed locally."
-          : "Could not revoke the relay-side environment record yet.\nRun `t3 connect unlink` again when the relay is reachable.",
+          : "Could not revoke the relay-side environment record yet.\nRun `verne connect unlink` again when the relay is reachable.",
       );
     } else if (input.relayResult.value.status === "revoked") {
       yield* Console.log("Revoked the relay-side environment record.");
@@ -412,7 +412,7 @@ const disconnectCloud = Effect.fn("cloud.cli.disconnect")(function* (options: {
 
   if (options.clearAuthorization) {
     yield* Console.log(
-      "Signed out of T3 Connect locally.\nThe background service is managed separately with `t3 service`.",
+      "Signed out of managed relay locally.\nThe background service is managed separately with `verne service`.",
     );
   }
 });
@@ -479,7 +479,7 @@ const linkEnvironmentForConnect = Effect.fn("cloud.cli.link_environment")(functi
       reportRelayClientInstallProgress,
     );
     if (Option.isNone(installed)) {
-      yield* Console.log("T3 Connect setup cancelled. The relay client was not installed.");
+      yield* Console.log("managed relay setup cancelled. The relay client was not installed.");
       return null;
     }
     yield* Console.log(formatRelayClientReady(installed.value.version));
@@ -498,12 +498,12 @@ const connectLoginCommand = Command.make("login", {
   ...projectLocationFlags,
   headless: headlessFlag,
 }).pipe(
-  Command.withDescription("Authorize the T3 Connect CLI without enabling remote access."),
+  Command.withDescription("Authorize the managed relay CLI without enabling remote access."),
   Command.withHandler((flags) =>
     runCloudCommand(
       flags,
       Effect.gen(function* () {
-        yield* Console.log("T3 Connect\n");
+        yield* Console.log("managed relay\n");
         const identity = yield* authorizeCli(flags);
         yield* Console.log(`✓ Signed in${connectedAs(identity)}`);
       }),
@@ -521,12 +521,12 @@ const connectLinkCommand = Command.make("link", {
     Flag.withDefault(false),
   ),
 }).pipe(
-  Command.withDescription("Authorize this environment for T3 Connect on next start."),
+  Command.withDescription("Authorize this environment for managed relay on next start."),
   Command.withHandler((flags) =>
     runCloudCommand(
       flags,
       Effect.gen(function* () {
-        yield* Console.log("T3 Connect\n");
+        yield* Console.log("managed relay\n");
         const linked = yield* linkEnvironmentForConnect(flags);
         if (linked) {
           const serveCommand = yield* resolveCliCommand("serve");
@@ -545,7 +545,7 @@ const connectStatusCommand = Command.make("status", {
   ...projectLocationFlags,
   json: jsonFlag,
 }).pipe(
-  Command.withDescription("Show persisted T3 Connect and relay client state."),
+  Command.withDescription("Show persisted managed relay and relay client state."),
   Command.withHandler((flags) =>
     runCloudCommand(
       flags,
@@ -614,7 +614,7 @@ const connectPublishCommand = Command.make("publish", {
           const linkedNow = Option.isSome(yield* secrets.get(CLOUD_LINKED_USER_ID));
           if (!linkedNow && (yield* CliState.readCliDesiredLinkMode) === "publish_only") {
             yield* CliState.setCliDesiredCloudLink(false);
-            yield* Console.log("Cancelled the pending publish-only T3 Connect link.");
+            yield* Console.log("Cancelled the pending publish-only managed relay link.");
           }
           yield* Console.log("Publishing agent activity disabled.");
           return;
@@ -629,20 +629,20 @@ const connectPublishCommand = Command.make("publish", {
         // Publishing needs the relay to know this environment belongs to you.
         // Establish a tunnel-free publish-only link automatically so signing in
         // is all it takes — the mobile client can still reach the environment
-        // out of band without T3 Connect.
+        // out of band without managed relay.
         if (!(yield* tokens.hasCredential)) {
           yield* Console.log(
-            "Run `t3 connect login` first so this environment can be authorized to publish.",
+            "Run `verne connect login` first so this environment can be authorized to publish.",
           );
           return;
         }
-        // A link may already be desired (e.g. `t3 connect link` before the
+        // A link may already be desired (e.g. `verne connect link` before the
         // server's first start). Never downgrade it: a desired managed link
         // also covers publishing, so only request a publish-only link when no
         // link is pending at all.
         if (yield* CliState.readCliDesiredCloudLink) {
           yield* Console.log(
-            "A T3 Connect link is already pending. Start T3 to finish provisioning it; publishing starts once it links.",
+            "A managed relay link is already pending. Start T3 to finish provisioning it; publishing starts once it links.",
           );
           return;
         }
@@ -658,7 +658,7 @@ const connectPublishCommand = Command.make("publish", {
 const connectUnlinkCommand = Command.make("unlink", {
   ...projectLocationFlags,
 }).pipe(
-  Command.withDescription("Disable T3 Connect while retaining the stored authorization."),
+  Command.withDescription("Disable managed relay while retaining the stored authorization."),
   Command.withHandler((flags) =>
     runCloudCommand(flags, disconnectCloud({ clearAuthorization: false })),
   ),
@@ -667,7 +667,7 @@ const connectUnlinkCommand = Command.make("unlink", {
 const connectLogoutCommand = Command.make("logout", {
   ...projectLocationFlags,
 }).pipe(
-  Command.withDescription("Disable T3 Connect and clear the stored CLI authorization."),
+  Command.withDescription("Disable managed relay and clear the stored CLI authorization."),
   Command.withHandler((flags) =>
     runCloudCommand(flags, disconnectCloud({ clearAuthorization: true })),
   ),
@@ -677,12 +677,12 @@ export const connectCommand = Command.make("connect", {
   ...projectLocationFlags,
   headless: headlessFlag,
 }).pipe(
-  Command.withDescription("Set up T3 Connect for this machine."),
+  Command.withDescription("Set up managed relay for this machine."),
   Command.withHandler((flags) =>
     runCloudCommand(
       flags,
       Effect.gen(function* () {
-        yield* Console.log("T3 Connect\n");
+        yield* Console.log("managed relay\n");
         const linked = yield* linkEnvironmentForConnect(flags);
         if (!linked) {
           return;
@@ -699,8 +699,8 @@ export const connectCommand = Command.make("connect", {
           const platform = yield* HostProcessPlatform;
           yield* Console.log(
             platform === "darwin"
-              ? "\n✓ Background service ready\n\nT3 Code will stay reachable while you are logged in to this Mac."
-              : "\n✓ Background service ready\n\nT3 Code will stay reachable after you log out.",
+              ? "\n✓ Background service ready\n\nVerne will stay reachable while you are logged in to this Mac."
+              : "\n✓ Background service ready\n\nVerne will stay reachable after you log out.",
           );
           return;
         }

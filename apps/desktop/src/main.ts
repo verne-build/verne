@@ -16,7 +16,7 @@ import * as Electron from "electron";
 
 import * as NetService from "@t3tools/shared/Net";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import { resolveRemoteT3CliPackageSpec } from "@t3tools/ssh/command";
+import { resolveRemoteVerneCliPackageSpec } from "@t3tools/ssh/command";
 import type { RemoteT3RunnerOptions } from "@t3tools/ssh/tunnel";
 import serverPackageJson from "../../server/package.json" with { type: "json" };
 
@@ -93,7 +93,7 @@ const resolveDesktopSshCliRunner = (
     };
   }
   return {
-    packageSpec: resolveRemoteT3CliPackageSpec({
+    packageSpec: resolveRemoteVerneCliPackageSpec({
       appVersion: environment.appVersion,
       updateChannel: settings.updateChannel,
       isDevelopment: environment.isDevelopment,

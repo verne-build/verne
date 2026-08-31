@@ -29,7 +29,7 @@ it.effect("round-trips and clears persisted managed relay access tokens", () =>
     const entries = [
       {
         accountId: "user-1",
-        clientId: "t3-mobile",
+        clientId: "verne-mobile",
         relayUrl: "https://relay.example.test",
         thumbprint: "thumbprint",
         scopes: ["environment:connect"],

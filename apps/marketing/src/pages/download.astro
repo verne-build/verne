@@ -1,12 +1,11 @@
 ---
 import Layout from "../layouts/Layout.astro";
 import { RELEASES_URL } from "../lib/releases";
-import { ANDROID_PLAY_STORE_URL, IOS_APP_STORE_URL } from "../lib/site";
 ---
 
-<Layout title="Download — T3 Code" description="Download T3 Code for macOS, Windows, or Linux.">
+<Layout title="Download — Verne" description="Download Verne for macOS, Windows, or Linux.">
   <div class="download-page">
-  <h1 class="heading">Download T3 Code</h1>
+  <h1 class="heading">Download Verne</h1>
   <p class="subheading">
     <span id="version-label">Loading latest release&hellip;</span>
     <a id="changelog-link" class="changelog-link" href="#" target="_blank" rel="noopener noreferrer" style="display:none">View changelog<span aria-hidden="true"> &#8599;</span></a>
@@ -64,22 +63,13 @@ import { ANDROID_PLAY_STORE_URL, IOS_APP_STORE_URL } from "../lib/site";
         <svg class="platform-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2.5"/><path d="M11 18.5h2"/></svg>
         <h2 class="platform-name">Mobile</h2>
       </div>
-      <div class="download-cards">
-        <a class="download-card" href={IOS_APP_STORE_URL} target="_blank" rel="noopener noreferrer">
-          <span class="card-arch">iPhone &amp; iPad</span>
-          <span class="card-format">App Store</span>
-        </a>
-        <a class="download-card" href={ANDROID_PLAY_STORE_URL} target="_blank" rel="noopener noreferrer">
-          <span class="card-arch">Android</span>
-          <span class="card-format">Google Play</span>
-        </a>
-      </div>
+      <p class="intel-note">iOS and Android apps are in development and are not distributed yet.</p>
     </section>
   </div>
 
   <p class="releases-link">
     Looking for older versions? Check the{" "}
-    <a href="https://github.com/pingdotgg/t3code/releases" target="_blank" rel="noopener noreferrer">
+    <a href="https://github.com/verne-build/verne/releases" target="_blank" rel="noopener noreferrer">
       GitHub releases page<span aria-hidden="true"> &#8599;</span>
     </a>
   </p>

@@ -163,9 +163,9 @@ function makeFakeCodexBinary(
             ]
           : []),
         'if [ -n "$output_path" ]; then',
-        "  cat > \"$output_path\" <<'__T3CODE_FAKE_CODEX_OUTPUT__'",
+        "  cat > \"$output_path\" <<'__VERNE_FAKE_CODEX_OUTPUT__'",
         input.output,
-        "__T3CODE_FAKE_CODEX_OUTPUT__",
+        "__VERNE_FAKE_CODEX_OUTPUT__",
         "fi",
         `exit ${input.exitCode ?? 0}`,
         "",
@@ -282,7 +282,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect("uses T3CODE_CODEX_LAUNCH_ARGS for codex exec over settings", () =>
+  it.effect("uses VERNE_CODEX_LAUNCH_ARGS for codex exec over settings", () =>
     withFakeCodexEnv(
       {
         output: JSON.stringify({
@@ -290,7 +290,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
           body: "",
         }),
         launchArgs: "--enable settings-feature",
-        environment: { T3CODE_CODEX_LAUNCH_ARGS: " --strict-config --listen off " },
+        environment: { VERNE_CODEX_LAUNCH_ARGS: " --strict-config --listen off " },
         requireArg: "--strict-config",
         forbidArg: "settings-feature",
       },

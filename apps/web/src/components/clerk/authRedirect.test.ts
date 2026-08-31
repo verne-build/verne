@@ -24,9 +24,9 @@ describe("resolveClerkSignInProps", () => {
   });
 
   it("preserves a clean development desktop route", () => {
-    expect(resolveClerkSignInProps("t3code-dev://app/#/settings/general", true)).toEqual({
-      forceRedirectUrl: "t3code-dev://app/#/settings/general",
-      signUpForceRedirectUrl: "t3code-dev://app/#/settings/general",
+    expect(resolveClerkSignInProps("verne-dev://app/#/settings/general", true)).toEqual({
+      forceRedirectUrl: "verne-dev://app/#/settings/general",
+      signUpForceRedirectUrl: "verne-dev://app/#/settings/general",
     });
   });
 });

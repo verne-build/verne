@@ -10,13 +10,12 @@ import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
 import { detectSourceControlProviderFromRemoteUrl } from "./sourceControl.ts";
 
-export const WORKTREE_BRANCH_PREFIX = "t3code";
-// Canonical form is `t3code/<8 hex>`. Older mobile builds generated `t3code/<uuid>`
-// via Crypto.randomUUID() (always RFC 4122 v4), so the matcher also accepts exactly
-// that shape — version nibble `4`, variant nibble `[89ab]` — to keep those threads
-// eligible for branch regeneration without loosening beyond what was ever generated.
+export const WORKTREE_BRANCH_PREFIX = "verne";
+// New branches use `verne/<8 hex>`. Imported T3 Code state can reference `t3code/`
+// branches, and older mobile builds generated UUID-shaped tokens. Recognize those
+// exact historical forms so imported threads remain eligible for branch regeneration.
 const TEMP_WORKTREE_BRANCH_PATTERN = new RegExp(
-  `^${WORKTREE_BRANCH_PREFIX}\\/(?:[0-9a-f]{8}|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$`,
+  `^(?:${WORKTREE_BRANCH_PREFIX}|t3code)\\/(?:[0-9a-f]{8}|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$`,
 );
 
 /**

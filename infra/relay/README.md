@@ -1,22 +1,23 @@
-# T3 Connect Relay
+# Managed Relay (Not Shipped)
 
 > [!NOTE]
-> Sign in to T3 Connect from the app under Settings > Connections.
+> This inherited service is retained for possible future development. Initial Verne releases do
+> not deploy it or expose account-based relay onboarding; use manual pairing instead.
 
-The relay is the hosted control plane for T3 Connect. It helps clients discover and connect to
+The relay is the hosted control plane for Managed Relay. It helps clients discover and connect to
 remote environments, manages the cloud-side records needed for those connections, and delivers
 optional mobile notifications and Live Activities.
 
-The relay is intentionally not in the hot path for normal T3 Code traffic. After a client connects,
+The relay is intentionally not in the hot path for normal Verne traffic. After a client connects,
 regular API and WebSocket traffic goes directly between that client and the selected environment.
-See the [T3 Connect architecture overview](../../docs/internals/t3-code-connect-auth-flow.html) for the larger system
+See the [Managed Relay architecture overview](../../docs/internals/t3-code-connect-auth-flow.html) for the larger system
 design.
 
 ## Responsibilities
 
-The relay currently owns:
+The retained relay implementation owns:
 
-- Linking T3 Code environments to a cloud account.
+- Linking Verne environments to a cloud account.
 - Provisioning and tracking managed environment endpoints.
 - Issuing short-lived credentials used to connect clients to linked environments.
 - Listing linked environments and registered mobile devices for an account.
@@ -159,8 +160,8 @@ and hosted web builds.
 
 See:
 
-- [T3 Connect Clerk Setup](../../docs/internals/t3-connect.md) for Clerk keys, JWT templates, and sign-up restrictions
+- [Managed Relay Clerk Setup](../../docs/internals/t3-connect.md) for Clerk keys, JWT templates, and sign-up restrictions
   setup.
 - [Relay Observability](../../docs/operations/relay-observability.md) for deployment tracing and diagnostics.
-- [T3 Connect Architecture Overview](../../docs/internals/t3-code-connect-auth-flow.html) for the full link,
+- [Managed Relay Architecture Overview](../../docs/internals/t3-code-connect-auth-flow.html) for the full link,
   connect, endpoint, and notification flows.

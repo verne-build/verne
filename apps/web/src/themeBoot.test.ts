@@ -154,7 +154,7 @@ const CHARCOAL_DARK_ONLY = {
 };
 
 describe("index.html boot script", () => {
-  it("imports a legacy T3 Code theme before the first paint", () => {
+  it("imports a legacy Verne theme before the first paint", () => {
     const storage = { "t3code:theme": "grove" };
     const boot = runBootScript({ storage, prefersDark: false });
 

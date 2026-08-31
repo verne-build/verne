@@ -1,19 +1,19 @@
 # Workspace layout
 
-> For maintainers. Using T3 Code? See [docs/user](../user/).
+> For maintainers. Using Verne? See [docs/user](../user/).
 
 A pnpm workspace driven by [vite-plus](https://vite.plus) (`vp`). See [scripts.md](./scripts.md) for
 the task commands.
 
 ## apps
 
-- `apps/server` (`t3`): the execution runtime and the published CLI. Owns orchestration, provider
+- `apps/server` (`@verne-build/cli`): the execution runtime and the published CLI. Owns orchestration, provider
   drivers, checkpointing, VCS, terminals, filesystem access, auth, and the HTTP + WebSocket surface.
   Also serves the built web app.
 - `apps/web` (`@t3tools/web`): React + Vite UI. Consumes the shared client runtime and adds routing,
   components, and web-specific platform layers.
-- `apps/desktop` (`@t3tools/desktop`): Electron shell. Supervises a desktop-scoped `t3` backend,
-  loads the web bundle over the `t3code://` protocol, and owns SSH-managed remote environments.
+- `apps/desktop` (`@t3tools/desktop`): Electron shell. Supervises a desktop-scoped Verne backend,
+  loads the web bundle over the `verne://` protocol, and owns SSH-managed remote environments.
 - `apps/mobile` (`@t3tools/mobile`): Expo/React Native client. Same client runtime composition as
   web, different platform layer and UI.
 - `apps/marketing` (`@t3tools/marketing`): Astro marketing site.
@@ -39,7 +39,7 @@ the task commands.
 
 ## infra
 
-- `infra/relay` (`t3code-relay`): the hosted T3 Connect relay, deployed with Alchemy. Handles
+- `infra/relay` (`t3code-relay`): dormant inherited managed-relay implementation, deployable manually with Alchemy. Handles
   environment discovery, cloud-side records, and mobile notifications. It is not in the hot path;
   after connect, client traffic goes directly to the environment. See
   [t3-connect.md](./t3-connect.md).

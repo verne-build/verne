@@ -208,7 +208,7 @@ export const announceConnectGaCommand = Command.make(
     }),
 ).pipe(
   Command.withDescription(
-    "Invite pending Clerk waitlist members now that T3 Connect is generally available.",
+    "Invite pending Clerk waitlist members now that managed relay is generally available.",
   ),
 );
 

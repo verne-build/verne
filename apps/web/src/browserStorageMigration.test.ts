@@ -17,7 +17,7 @@ const makeStorage = (initial: Record<string, string>): Storage => {
 };
 
 describe("migrateLegacyBrowserStorage", () => {
-  it("copies T3 Code values to empty Verne keys without modifying the source", () => {
+  it("copies Verne values to empty Verne keys without modifying the source", () => {
     const storage = makeStorage({
       "t3code:theme": "grove",
       "t3code:client-settings:v1": '{"timestampFormat":"24-hour"}',

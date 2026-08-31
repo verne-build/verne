@@ -1,8 +1,8 @@
 # Observability
 
-> For maintainers. Using T3 Code? See [docs/user](../user/).
+> For maintainers. Using Verne? See [docs/user](../user/).
 
-T3 Code has one server-side observability model:
+Verne has one server-side observability model:
 
 - pretty logs go to stdout for humans
 - completed spans go to a local NDJSON trace file
@@ -10,7 +10,7 @@ T3 Code has one server-side observability model:
 
 The local trace file is the persisted source of truth for normal local launches. Those launches do not
 write a separate server log file, but SSH-managed launches also persist the remote process's
-stdout/stderr at `~/.t3/ssh-launch/<state>/server.log`.
+stdout/stderr at `~/.verne/ssh-launch/<state>/server.log`.
 
 ## Where To Find Things
 
@@ -21,7 +21,7 @@ Logs are human-facing:
 - destination: stdout
 - format: `Logger.consolePretty()`
 - normal local persistence: none
-- SSH-managed launch persistence: `~/.t3/ssh-launch/<state>/server.log`
+- SSH-managed launch persistence: `~/.verne/ssh-launch/<state>/server.log`
 
 If you want a log message to show up in the trace file, emit it inside an active span with `Effect.log...`. `Logger.tracerLogger` will attach it as a span event.
 
@@ -29,10 +29,10 @@ If you want a log message to show up in the trace file, emit it inside an active
 
 Completed spans are written as NDJSON records to `serverTracePath`. The default depends on how the
 server starts: production and explicitly configured homes use
-`<home>/userdata/logs/server.trace.ndjson` (so `~/.t3/userdata/...` by default, or
+`<home>/userdata/logs/server.trace.ndjson` (so `~/.verne/userdata/...` by default, or
 `/custom/path/userdata/...` with `--home-dir /custom/path`), a linked worktree dev run uses
-`<worktree>/.t3/userdata/logs/server.trace.ndjson`, and an implicit dev run outside a linked
-worktree uses `~/.t3/dev/logs/server.trace.ndjson`.
+`<worktree>/.verne/userdata/logs/server.trace.ndjson`, and an implicit dev run outside a linked
+worktree uses `~/.verne/dev/logs/server.trace.ndjson`.
 
 Important fields common to both record types:
 
@@ -79,7 +79,7 @@ You do not need any extra env vars. Just run the app normally and inspect `serve
 Examples:
 
 ```bash
-npx t3
+npx @verne-build/cli
 ```
 
 ```bash
@@ -113,16 +113,16 @@ Default Grafana login:
 #### 2. Export OTLP env vars
 
 ```bash
-export T3CODE_OTLP_TRACES_URL=http://localhost:4318/v1/traces
-export T3CODE_OTLP_METRICS_URL=http://localhost:4318/v1/metrics
-export T3CODE_OTLP_SERVICE_NAME=t3-local
+export VERNE_OTLP_TRACES_URL=http://localhost:4318/v1/traces
+export VERNE_OTLP_METRICS_URL=http://localhost:4318/v1/metrics
+export VERNE_OTLP_SERVICE_NAME=t3-local
 ```
 
 Optional:
 
 ```bash
-export T3CODE_TRACE_MIN_LEVEL=Info
-export T3CODE_TRACE_TIMING_ENABLED=true
+export VERNE_TRACE_MIN_LEVEL=Info
+export VERNE_TRACE_TIMING_ENABLED=true
 ```
 
 #### 3. Launch the app from that same shell
@@ -130,7 +130,7 @@ export T3CODE_TRACE_TIMING_ENABLED=true
 CLI:
 
 ```bash
-npx t3
+npx @verne-build/cli
 ```
 
 Monorepo web/server dev:
@@ -147,23 +147,23 @@ node --run dev:desktop
 
 Packaged desktop app:
 
-Launch the actual app executable from the same shell so the desktop app and embedded backend inherit `T3CODE_OTLP_*`.
+Launch the actual app executable from the same shell so the desktop app and embedded backend inherit `VERNE_OTLP_*`.
 
 macOS app bundle example:
 
 ```bash
-T3CODE_OTLP_TRACES_URL=http://localhost:4318/v1/traces \
-T3CODE_OTLP_METRICS_URL=http://localhost:4318/v1/metrics \
-T3CODE_OTLP_SERVICE_NAME=t3-desktop \
-"/Applications/T3 Code.app/Contents/MacOS/T3 Code"
+VERNE_OTLP_TRACES_URL=http://localhost:4318/v1/traces \
+VERNE_OTLP_METRICS_URL=http://localhost:4318/v1/metrics \
+VERNE_OTLP_SERVICE_NAME=t3-desktop \
+"/Applications/Verne.app/Contents/MacOS/Verne"
 ```
 
 Direct binary example:
 
 ```bash
-T3CODE_OTLP_TRACES_URL=http://localhost:4318/v1/traces \
-T3CODE_OTLP_METRICS_URL=http://localhost:4318/v1/metrics \
-T3CODE_OTLP_SERVICE_NAME=t3-desktop \
+VERNE_OTLP_TRACES_URL=http://localhost:4318/v1/traces \
+VERNE_OTLP_METRICS_URL=http://localhost:4318/v1/metrics \
+VERNE_OTLP_SERVICE_NAME=t3-desktop \
 ./path/to/your/desktop-app-binary
 ```
 
@@ -183,19 +183,19 @@ Resolve the path for the launch mode once. Production and explicitly configured 
 state under the base directory's `userdata` folder:
 
 ```bash
-TRACE_FILE="${T3CODE_HOME:-$HOME/.t3}/userdata/logs/server.trace.ndjson"
+TRACE_FILE="${VERNE_HOME:-$HOME/.verne}/userdata/logs/server.trace.ndjson"
 ```
 
 A dev server started from a linked worktree defaults to that worktree's local home:
 
 ```bash
-TRACE_FILE="$WORKTREE/.t3/userdata/logs/server.trace.ndjson"
+TRACE_FILE="$WORKTREE/.verne/userdata/logs/server.trace.ndjson"
 ```
 
 Only an implicit dev run outside a linked worktree uses the shared dev directory:
 
 ```bash
-TRACE_FILE="$HOME/.t3/dev/logs/server.trace.ndjson"
+TRACE_FILE="$HOME/.verne/dev/logs/server.trace.ndjson"
 ```
 
 Tail the selected file:
@@ -385,7 +385,7 @@ If you need those later, add client-side instrumentation or a dedicated server f
 
 Usually one of these is true:
 
-- `T3CODE_OTLP_TRACES_URL` was not set
+- `VERNE_OTLP_TRACES_URL` was not set
 - the app was launched from a different environment than the one where you exported the vars
 - the app was not fully restarted after changing env
 - Grafana is looking at the wrong time range or service name
@@ -509,19 +509,19 @@ It provides:
 
 Local trace file:
 
-- `T3CODE_TRACE_FILE`: override trace file path
-- `T3CODE_TRACE_MAX_BYTES`: per-file rotation size, default `10485760`
-- `T3CODE_TRACE_MAX_FILES`: rotated file count, default `10`
-- `T3CODE_TRACE_BATCH_WINDOW_MS`: flush window, default `200`
-- `T3CODE_TRACE_MIN_LEVEL`: minimum trace level, default `Info`
-- `T3CODE_TRACE_TIMING_ENABLED`: enable timing metadata, default `true`
+- `VERNE_TRACE_FILE`: override trace file path
+- `VERNE_TRACE_MAX_BYTES`: per-file rotation size, default `10485760`
+- `VERNE_TRACE_MAX_FILES`: rotated file count, default `10`
+- `VERNE_TRACE_BATCH_WINDOW_MS`: flush window, default `200`
+- `VERNE_TRACE_MIN_LEVEL`: minimum trace level, default `Info`
+- `VERNE_TRACE_TIMING_ENABLED`: enable timing metadata, default `true`
 
 OTLP export:
 
-- `T3CODE_OTLP_TRACES_URL`: OTLP trace endpoint
-- `T3CODE_OTLP_METRICS_URL`: OTLP metric endpoint
-- `T3CODE_OTLP_EXPORT_INTERVAL_MS`: export interval, default `10000`
-- `T3CODE_OTLP_SERVICE_NAME`: service name, default `t3-server`
+- `VERNE_OTLP_TRACES_URL`: OTLP trace endpoint
+- `VERNE_OTLP_METRICS_URL`: OTLP metric endpoint
+- `VERNE_OTLP_EXPORT_INTERVAL_MS`: export interval, default `10000`
+- `VERNE_OTLP_SERVICE_NAME`: service name, default `t3-server`
 
 If the OTLP URLs are unset, local tracing still works and metrics stay in-process only.
 

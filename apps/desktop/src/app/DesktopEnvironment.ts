@@ -181,7 +181,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
     t3Home: config.t3Home,
   });
   const userDataDirName = isDevelopment ? "verne-dev" : "verne";
-  const legacyUserDataDirName = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
+  const legacyUserDataDirName = isDevelopment ? "Verne (Dev)" : "Verne (Alpha)";
   const linuxApplicationsDir = path.join(
     Option.getOrElse(config.xdgDataHome, () => path.join(homeDirectory, ".local", "share")),
     "applications",

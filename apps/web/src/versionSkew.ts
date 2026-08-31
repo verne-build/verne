@@ -87,7 +87,7 @@ export function resolveServerSelfUpdateCapability(
 
 /** The command to hand users whose server cannot update itself. */
 export function manualServerUpdateCommand(targetVersion: string): string {
-  return `npx t3@${targetVersion}`;
+  return `npx @verne-build/cli@${targetVersion}`;
 }
 
 /** One sentence telling the user how to resolve version skew for a server,

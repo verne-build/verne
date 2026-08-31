@@ -33,6 +33,7 @@ import {
   renderMacPasskeyEntitlements,
   resolveClerkPasskeyNativeArtifacts,
   resolveMacPasskeySigningConfiguration,
+  resolveOptionalMacPasskeySigningConfiguration,
   resolveDesktopRuntimeDependencies,
   resolveMacStageDependencies,
   resolveFffNativeDependencies,
@@ -1081,6 +1082,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       rpDomains: ["example.clerk.accounts.dev"],
       provisioningProfilePath: "/tmp/verne.provisionprofile",
     });
+  });
+
+  it("keeps macOS passkey entitlements optional for signed Verne builds", () => {
+    assert.isUndefined(resolveOptionalMacPasskeySigningConfiguration({}));
   });
 
   it("normalizes explicit macOS passkey RP domains and renders required entitlements", () => {

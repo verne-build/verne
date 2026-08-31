@@ -494,7 +494,7 @@ const createTrace2Monitor = Effect.fn("createTrace2Monitor")(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const traceFilePath = yield* fs.makeTempFileScoped({
-    prefix: `t3code-git-trace2-${process.pid}-`,
+    prefix: `verne-git-trace2-${process.pid}-`,
     suffix: ".json",
   });
   const hookStartByChildKey = new Map<string, { hookName: string; startedAtMs: number }>();
@@ -2966,7 +2966,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         yield* executeGit(
           "GitVcsDriver.refreshCheckedOutBranch.keepPrevious",
           input.cwd,
-          ["update-ref", "refs/t3code/pre-refresh", headCommit],
+          ["update-ref", "refs/verne/pre-refresh", headCommit],
           { fallbackErrorDetail: "git failed to record the previous checkout commit" },
         );
       }

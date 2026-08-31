@@ -6,7 +6,7 @@
  * database, then confirms the process is actually answering by fetching its
  * public environment descriptor. Inside a linked git worktree the worktree's
  * own `.verne` is checked first (matching dev-runner precedence); otherwise the
- * shared T3 home. `--tailscale` publishes the server over Tailscale Serve
+ * shared Verne home. `--tailscale` publishes the server over Tailscale Serve
  * HTTPS and pairs through the tailnet URL instead.
  */
 import {
@@ -108,7 +108,7 @@ export class ServesOtherEnvironmentError extends Schema.TaggedErrorClass<ServesO
   { servePort: Schema.Number },
 ) {
   override get message(): string {
-    return `Tailscale Serve on HTTPS port ${String(this.servePort)} already fronts a different T3 Code server. Pass --tailscale-serve-port to publish this one on another port.`;
+    return `Tailscale Serve on HTTPS port ${String(this.servePort)} already fronts a different Verne server. Pass --tailscale-serve-port to publish this one on another port.`;
   }
 }
 
@@ -126,7 +126,7 @@ export class ServePortOccupiedError extends Schema.TaggedErrorClass<ServePortOcc
   { servePort: Schema.Number },
 ) {
   override get message(): string {
-    return `HTTPS port ${String(this.servePort)} on the tailnet already serves something that is not a T3 Code server. Pass --tailscale-serve-port to publish this one on another port.`;
+    return `HTTPS port ${String(this.servePort)} on the tailnet already serves something that is not a Verne server. Pass --tailscale-serve-port to publish this one on another port.`;
   }
 }
 
@@ -195,7 +195,7 @@ export const formatPairOutput = (input: {
 /**
  * Three outcomes, because they drive different decisions: a T3 descriptor
  * (pair with it), nothing answering (safe to configure Tailscale Serve), or
- * something answering that is not a T3 server (do NOT overwrite its mapping).
+ * something answering that is not a Verne server (do NOT overwrite its mapping).
  */
 type EnvironmentProbeResult =
   | { readonly _tag: "descriptor"; readonly descriptor: ExecutionEnvironmentDescriptor }
@@ -215,7 +215,7 @@ const probeEnvironmentDescriptor = (
     );
     // Bad-gateway family means a proxy (Tailscale Serve) answered for a
     // backend that is gone — a stale mapping, not a live occupant. Treating
-    // it as unreachable lets `t3 pair --tailscale` repair its own mapping
+    // it as unreachable lets `verne pair --tailscale` repair its own mapping
     // after the server's port changed.
     if (response.status === 502 || response.status === 503 || response.status === 504) {
       return { _tag: "unreachable" } as const;
@@ -255,7 +255,7 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
     bases.push(yield* resolveBaseDir(explicitBaseDir));
   } else {
     // Same precedence as dev-runner: inside a linked worktree its own `.verne`
-    // outranks the shared home, so `t3 pair` in a worktree pairs with the dev
+    // outranks the shared home, so `verne pair` in a worktree pairs with the dev
     // server under test rather than the daily-driver install.
     const worktreeHome = yield* resolveWorktreeVerneHome(process.cwd());
     if (worktreeHome !== undefined) {

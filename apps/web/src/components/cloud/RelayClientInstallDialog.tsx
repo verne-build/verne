@@ -69,8 +69,8 @@ export function RelayClientInstallDialog() {
           </DialogTitle>
           <DialogDescription>
             {isInstalling
-              ? "Verne is preparing this environment for secure access through T3 Connect."
-              : "Verne needs the relay client to make this environment available through T3 Connect."}
+              ? "Verne is preparing this environment for secure access through managed relay."
+              : "Verne needs the relay client to make this environment available through managed relay."}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel scrollFade={false}>

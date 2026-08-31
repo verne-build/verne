@@ -503,7 +503,7 @@ export const make = (options?: StartupOptions) =>
             const startupBrowserTarget = yield* resolveStartupBrowserTarget;
             if (serverConfig.mode !== "desktop") {
               yield* Effect.logInfo(
-                "Authentication required. Open T3 Code using the pairing URL.",
+                "Authentication required. Open Verne using the pairing URL.",
               ).pipe(Effect.annotateLogs({ pairingUrl: startupBrowserTarget }));
             }
             yield* runStartupPhase("browser.open", maybeOpenBrowser(startupBrowserTarget));

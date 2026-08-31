@@ -234,7 +234,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   /**
-   * Attach the `t3-code` MCP server to the session that is about to start.
+   * Attach the `verne` MCP server to the session that is about to start.
    *
    * This is the only place a credential is minted, so withholding one here is
    * what disables agent browser access everywhere: every adapter already
@@ -615,7 +615,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         if (!instanceInfo.enabled) {
           return yield* toValidationError(
             "ProviderService.startSession",
-            `Provider instance '${resolvedInstanceId}' is disabled in T3 Code settings.`,
+            `Provider instance '${resolvedInstanceId}' is disabled in Verne settings.`,
           );
         }
         const persistedBinding = Option.getOrUndefined(yield* directory.getBinding(threadId));

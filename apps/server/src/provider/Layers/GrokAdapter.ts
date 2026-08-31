@@ -986,13 +986,13 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             cwd,
             runtimeMode: input.runtimeMode,
             ...(resumeSessionId ? { resumeSessionId } : {}),
-            clientInfo: { name: "t3-code", version: "0.0.0" },
+            clientInfo: { name: "verne", version: "0.0.0" },
             ...(mcpSession
               ? {
                   mcpServers: [
                     {
                       type: "http" as const,
-                      name: "t3-code",
+                      name: "verne",
                       url: mcpSession.endpoint,
                       headers: [
                         {

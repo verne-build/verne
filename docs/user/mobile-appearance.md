@@ -1,6 +1,6 @@
 # Mobile appearance
 
-T3 Code Mobile includes the T3 Code, T3 Chat, Grove, Ocean, Ember, and Iris themes. Each theme has
+Verne Mobile includes the Verne, T3 Chat, Grove, Ocean, Ember, and Iris themes. Each theme has
 light and dark colors that apply throughout the app, including code reviews, file previews, the
 terminal, native headers, and sheets.
 

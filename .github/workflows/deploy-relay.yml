@@ -1,9 +1,6 @@
-name: Deploy T3 Connect relay
+name: Deploy managed relay (manual only)
 
-on:
-  push:
-    branches:
-      - main
+on: workflow_dispatch
 
 permissions:
   contents: read

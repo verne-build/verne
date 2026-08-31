@@ -148,7 +148,7 @@ describe("remote environment authorization", () => {
         credential: "one-time-credential",
         dpopProof: "token-proof",
         clientMetadata: {
-          label: "T3 Code Mobile",
+          label: "Verne Mobile",
           deviceType: "mobile",
           os: "iOS",
         },
@@ -163,7 +163,7 @@ describe("remote environment authorization", () => {
         url: "https://remote.example.com/oauth/token",
         method: "POST",
         headers: { dpop: "token-proof", "content-type": "application/x-www-form-urlencoded" },
-        body: "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&subject_token=one-time-credential&subject_token_type=urn%3At3%3Aparams%3Aoauth%3Atoken-type%3Aenvironment-bootstrap&requested_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Aaccess_token&client_label=T3+Code+Mobile&client_device_type=mobile&client_os=iOS",
+        body: "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&subject_token=one-time-credential&subject_token_type=urn%3At3%3Aparams%3Aoauth%3Atoken-type%3Aenvironment-bootstrap&requested_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Aaccess_token&client_label=Verne+Mobile&client_device_type=mobile&client_os=iOS",
       });
       expectFetchCall(fetch.calls, 2, {
         url: "https://remote.example.com/api/auth/websocket-ticket",
@@ -196,7 +196,7 @@ describe("remote environment authorization", () => {
         httpBaseUrl: "https://remote.example.com/",
         credential: "pairing-token",
         clientMetadata: {
-          label: "T3 Code Mobile",
+          label: "Verne Mobile",
           deviceType: "mobile",
           os: "iOS",
         },
@@ -205,7 +205,7 @@ describe("remote environment authorization", () => {
       expectFetchCall(fetch.calls, 1, {
         url: "https://remote.example.com/oauth/token",
         method: "POST",
-        body: "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&subject_token=pairing-token&subject_token_type=urn%3At3%3Aparams%3Aoauth%3Atoken-type%3Aenvironment-bootstrap&requested_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Aaccess_token&client_label=T3+Code+Mobile&client_device_type=mobile&client_os=iOS",
+        body: "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&subject_token=pairing-token&subject_token_type=urn%3At3%3Aparams%3Aoauth%3Atoken-type%3Aenvironment-bootstrap&requested_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Aaccess_token&client_label=Verne+Mobile&client_device_type=mobile&client_os=iOS",
       });
     }),
   );
@@ -230,7 +230,7 @@ describe("remote environment authorization", () => {
           httpBaseUrl: "https://remote.example.com/",
           credential: "pairing-token",
           clientMetadata: {
-            label: "T3 Code Web",
+            label: "Verne Web",
             deviceType: "desktop",
             os,
           },

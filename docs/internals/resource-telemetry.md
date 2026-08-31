@@ -1,6 +1,6 @@
 # Resource telemetry architecture
 
-> For maintainers. Using T3 Code? See [docs/user](../user/).
+> For maintainers. Using Verne? See [docs/user](../user/).
 
 Status: implemented
 
@@ -225,7 +225,7 @@ The implementation is under `apps/server/src/resourceTelemetry`.
 
 Resolves an executable from:
 
-1. `T3CODE_RESOURCE_MONITOR_PATH`;
+1. `VERNE_RESOURCE_MONITOR_PATH`;
 2. desktop bootstrap configuration;
 3. bundled CLI resources;
 4. local Cargo build outputs.

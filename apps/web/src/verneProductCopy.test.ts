@@ -4,7 +4,6 @@ import * as NodePath from "node:path";
 import { expect, it } from "vite-plus/test";
 
 const allowedT3CodeCopy = new Map<string, ReadonlyArray<string>>([
-  ["index.css", ["original T3 Code artwork palettes"]],
   ["main.tsx", ["import T3 Code browser preferences"]],
   ["connection/storage.ts", ["legacy T3 Code connection catalog"]],
 ]);

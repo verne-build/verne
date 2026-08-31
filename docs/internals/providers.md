@@ -1,8 +1,8 @@
 # Provider architecture
 
-> For maintainers. Using T3 Code? See [docs/user](../user/).
+> For maintainers. Using Verne? See [docs/user](../user/).
 
-A provider is the agent runtime that does the actual work. T3 Code supports several, and the
+A provider is the agent runtime that does the actual work. Verne supports several, and the
 orchestration layer does not know which one is behind a thread.
 
 ## Built-in drivers

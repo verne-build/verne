@@ -117,7 +117,7 @@ const requireRelayUrl = relayUrlConfig.pipe(
   Effect.mapError(
     () =>
       new EnvironmentHttpInternalServerError({
-        message: "T3CODE_RELAY_URL must be configured as a secure absolute HTTPS origin.",
+        message: "VERNE_RELAY_URL must be configured as a secure absolute HTTPS origin.",
       }),
   ),
 );
@@ -531,7 +531,7 @@ const relayClientRequest = <A>(
     Effect.mapError(
       (cause) =>
         new EnvironmentHttpInternalServerError({
-          message: `T3 Connect relay request failed: ${String(cause)}`,
+          message: `managed relay relay request failed: ${String(cause)}`,
         }),
     ),
     withRelayClientTracing,
@@ -558,7 +558,7 @@ const reconcileDesiredCloudLinkWith = Effect.fn("environment.cloud.reconcileDesi
           onNone: () =>
             Effect.fail(
               new EnvironmentHttpUnauthorizedError({
-                message: "Run `t3 connect link` to authorize this environment.",
+                message: "Run `verne connect link` to authorize this environment.",
               }),
             ),
           onSome: Effect.succeed,
@@ -618,7 +618,7 @@ const reconcileDesiredCloudLinkWith = Effect.fn("environment.cloud.reconcileDesi
   },
   Effect.catchIf(
     ServerSecretStore.isSecretStoreError,
-    failEnvironmentCloudInternalError("Could not persist desired T3 Connect link state."),
+    failEnvironmentCloudInternalError("Could not persist desired managed relay link state."),
   ),
   Effect.catchTags({
     CloudCliCredentialRemovalError: failCloudCliTokenManagerError,
@@ -649,7 +649,7 @@ export const pendingServiceUpdateExists = Effect.gen(function* () {
 });
 
 // A pending update alone is not proof a replacement server is coming: an
-// explicit launcher stop (`t3 service uninstall`, `systemctl stop`,
+// explicit launcher stop (`verne service uninstall`, `systemctl stop`,
 // `launchctl bootout`) during
 // the pending window also tears this server down. The launcher marks that case
 // just before it signals the child, so pending + no marker is the handoff.
@@ -707,7 +707,7 @@ export const releaseManagedTunnelOnShutdown = Effect.fn(
     return false;
   }
   // The link belongs to the relay it was installed against, so target the
-  // persisted URL: T3CODE_RELAY_URL may have changed since the link was made.
+  // persisted URL: VERNE_RELAY_URL may have changed since the link was made.
   const relayUrl = yield* dependencies.secrets.get(RELAY_URL_SECRET);
   if (Option.isNone(relayUrl)) {
     return false;
@@ -1018,7 +1018,7 @@ const cloudMintCredentialHandler = Effect.fn("environment.cloud.mintCredential")
       scopes: AuthStandardClientScopes,
       subject: "cloud-connect",
       ttl: Duration.minutes(2),
-      label: "T3 Connect connect",
+      label: "managed relay connect",
       proofKeyThumbprint: proof.clientProofKeyThumbprint,
     });
     const responsePayload = {

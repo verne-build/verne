@@ -643,9 +643,9 @@ export const makeServerLayer = Layer.unwrap(
                   Schedule.upTo({ duration: "10 minutes" }),
                 ),
               }),
-              Effect.tap(() => Effect.logInfo("T3 Connect desired link reconciled on startup")),
+              Effect.tap(() => Effect.logInfo("managed relay desired link reconciled on startup")),
               Effect.catch((cause) =>
-                Effect.logWarning("Failed to reconcile T3 Connect desired link on startup", {
+                Effect.logWarning("Failed to reconcile managed relay desired link on startup", {
                   cause,
                 }),
               ),

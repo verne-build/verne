@@ -103,13 +103,13 @@ export interface RelayPublicConfig {
 
 const publicConfigEnvEntries = (config: RelayPublicConfig) =>
   ({
-    T3CODE_RELAY_URL: config.relayUrl,
-    T3CODE_MOBILE_OTLP_TRACES_URL: config.mobileTracingUrl,
-    T3CODE_MOBILE_OTLP_TRACES_DATASET: config.mobileTracingDataset,
-    T3CODE_MOBILE_OTLP_TRACES_TOKEN: config.mobileTracingToken,
-    T3CODE_RELAY_CLIENT_OTLP_TRACES_URL: config.clientTracingUrl,
-    T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET: config.clientTracingDataset,
-    T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN: config.clientTracingToken,
+    VERNE_RELAY_URL: config.relayUrl,
+    VERNE_MOBILE_OTLP_TRACES_URL: config.mobileTracingUrl,
+    VERNE_MOBILE_OTLP_TRACES_DATASET: config.mobileTracingDataset,
+    VERNE_MOBILE_OTLP_TRACES_TOKEN: config.mobileTracingToken,
+    VERNE_RELAY_CLIENT_OTLP_TRACES_URL: config.clientTracingUrl,
+    VERNE_RELAY_CLIENT_OTLP_TRACES_DATASET: config.clientTracingDataset,
+    VERNE_RELAY_CLIENT_OTLP_TRACES_TOKEN: config.clientTracingToken,
   }) as const;
 
 export function reconcileRootEnvPublicConfig(contents: string, config: RelayPublicConfig): string {
@@ -141,8 +141,8 @@ export function reconcileRootEnvRelayUrl(contents: string, relayUrl: string): st
     clientTracingToken: "",
   })
     .split("\n")
-    .filter((line) => !line.startsWith("T3CODE_MOBILE_OTLP_TRACES_"))
-    .filter((line) => !line.startsWith("T3CODE_RELAY_CLIENT_OTLP_TRACES_"))
+    .filter((line) => !line.startsWith("VERNE_MOBILE_OTLP_TRACES_"))
+    .filter((line) => !line.startsWith("VERNE_RELAY_CLIENT_OTLP_TRACES_"))
     .join("\n");
 }
 
@@ -170,9 +170,9 @@ export function serializeGithubOutput(entries: Readonly<Record<string, string | 
 
 export function serializeRelayClientTracingEnvironment(config: RelayPublicConfig): string {
   return serializeGithubOutput({
-    T3CODE_RELAY_CLIENT_OTLP_TRACES_URL: config.clientTracingUrl,
-    T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET: config.clientTracingDataset,
-    T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN: config.clientTracingToken,
+    VERNE_RELAY_CLIENT_OTLP_TRACES_URL: config.clientTracingUrl,
+    VERNE_RELAY_CLIENT_OTLP_TRACES_DATASET: config.clientTracingDataset,
+    VERNE_RELAY_CLIENT_OTLP_TRACES_TOKEN: config.clientTracingToken,
   });
 }
 
@@ -490,7 +490,7 @@ export const relayDeployCommand = Command.make(
     ),
   },
   deploy,
-).pipe(Command.withDescription("Deploy the T3 Code relay through Alchemy."));
+).pipe(Command.withDescription("Deploy the Verne relay through Alchemy."));
 
 if (import.meta.main) {
   Command.run(relayDeployCommand, { version: "0.0.0" }).pipe(
