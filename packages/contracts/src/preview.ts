@@ -9,12 +9,21 @@
  * @module Preview
  */
 import { Schema } from "effect";
-import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  IsoDateTime,
+  NonNegativeInt,
+  PositiveInt,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 
 export const PREVIEW_URL_MAX_LENGTH = 2_048;
 export const CONFIGURED_LOCAL_SERVER_URLS_MAX_ITEMS = 32;
 
 const Url = TrimmedNonEmptyString.check(Schema.isMaxLength(PREVIEW_URL_MAX_LENGTH));
+const HttpUrl = Url.check(Schema.isPattern(/^https?:\/\/\S+$/));
+const PreviewTcpPort = PositiveInt.check(Schema.isLessThanOrEqualTo(65_535));
+const PreviewTailnetLeaseId = TrimmedNonEmptyString.check(Schema.isMaxLength(256));
 
 export const ConfiguredLocalServerUrls = Schema.Array(Url).check(
   Schema.isMaxLength(CONFIGURED_LOCAL_SERVER_URLS_MAX_ITEMS),
@@ -292,8 +301,13 @@ export type PreviewEvent = typeof PreviewEvent.Type;
  * A localhost server detected by the port scanner. Used to populate the
  * "Local" recommendations in the empty-state of the preview panel.
  */
+export const LocalServerConnectHost = Schema.Literals(["127.0.0.1", "::1"]);
+export type LocalServerConnectHost = typeof LocalServerConnectHost.Type;
+
 export const DiscoveredLocalServer = Schema.Struct({
   host: TrimmedNonEmptyString,
+  /** Numeric loopback address the environment verified for server-side connections. */
+  connectHost: Schema.optionalKey(LocalServerConnectHost),
   port: Schema.Int.check(Schema.isGreaterThan(0)).check(Schema.isLessThan(65536)),
   url: Url,
   processName: Schema.NullOr(TrimmedNonEmptyString),
@@ -313,6 +327,143 @@ export const DiscoveredLocalServerList = Schema.Struct({
   configuredUrlProbing: Schema.optional(Schema.Literal(true)),
 });
 export type DiscoveredLocalServerList = typeof DiscoveredLocalServerList.Type;
+
+export const TailnetPreviewReadiness = Schema.Literals([
+  "disabled",
+  "ready",
+  "tailscale-unavailable",
+  "not-logged-in",
+  "magic-dns-unavailable",
+  "https-unavailable",
+  "permission-denied",
+  "mapping-conflict",
+  "gateway-failed",
+  "capacity-reached",
+]);
+export type TailnetPreviewReadiness = typeof TailnetPreviewReadiness.Type;
+
+// Compatibility alias while the rest of the feature work lands.
+export const PreviewTailnetReadiness = TailnetPreviewReadiness;
+export type PreviewTailnetReadiness = TailnetPreviewReadiness;
+
+export const PreviewTailnetStatusInput = Schema.Struct({});
+export type PreviewTailnetStatusInput = typeof PreviewTailnetStatusInput.Type;
+
+export const PreviewTailnetStatusResult = Schema.Struct({
+  enabled: Schema.Boolean,
+  readiness: TailnetPreviewReadiness,
+});
+export type PreviewTailnetStatusResult = typeof PreviewTailnetStatusResult.Type;
+
+export const PreviewTailnetAcquireInput = Schema.Struct({
+  threadId: ThreadId,
+  port: PreviewTcpPort,
+});
+export type PreviewTailnetAcquireInput = typeof PreviewTailnetAcquireInput.Type;
+
+export const PreviewTailnetAcquireResult = Schema.Struct({
+  leaseId: PreviewTailnetLeaseId,
+  port: PreviewTcpPort,
+  cleanUrl: HttpUrl,
+  launchUrl: HttpUrl,
+  expiresAt: IsoDateTime,
+  readiness: TailnetPreviewReadiness,
+});
+export type PreviewTailnetAcquireResult = typeof PreviewTailnetAcquireResult.Type;
+
+export const PreviewTailnetRenewInput = Schema.Struct({
+  leaseId: PreviewTailnetLeaseId,
+});
+export type PreviewTailnetRenewInput = typeof PreviewTailnetRenewInput.Type;
+
+export const PreviewTailnetReleaseInput = Schema.Struct({
+  leaseId: PreviewTailnetLeaseId,
+});
+export type PreviewTailnetReleaseInput = typeof PreviewTailnetReleaseInput.Type;
+
+export const PreviewTailnetSetPortEnabledInput = Schema.Struct({
+  threadId: ThreadId,
+  port: PreviewTcpPort,
+  enabled: Schema.Boolean,
+});
+export type PreviewTailnetSetPortEnabledInput = typeof PreviewTailnetSetPortEnabledInput.Type;
+
+export class PreviewTailnetUnavailableError extends Schema.TaggedErrorClass<PreviewTailnetUnavailableError>()(
+  "PreviewTailnetUnavailableError",
+  {
+    port: PreviewTcpPort,
+    readiness: TailnetPreviewReadiness,
+  },
+) {
+  override get message(): string {
+    switch (this.readiness) {
+      case "disabled":
+        return "Tailnet previews are disabled for this environment.";
+      case "ready":
+        return `Tailnet preview port ${this.port} is available.`;
+      case "tailscale-unavailable":
+        return "Tailscale is not available in this environment.";
+      case "not-logged-in":
+        return "This environment is not logged into Tailscale.";
+      case "magic-dns-unavailable":
+        return "MagicDNS must be enabled before Tailnet previews can be published.";
+      case "https-unavailable":
+        return "HTTPS must be enabled in Tailscale Serve before previews can be published.";
+      case "permission-denied":
+        return "This environment does not have permission to manage Tailscale Serve.";
+      case "mapping-conflict":
+        return `Tailnet preview port ${this.port} is already mapped to a different target.`;
+      case "gateway-failed":
+        return `Verne could not start the preview gateway for port ${this.port}.`;
+      case "capacity-reached":
+        return "This environment has reached its Tailnet preview publication limit.";
+    }
+  }
+}
+
+export class PreviewTailnetLeaseNotFoundError extends Schema.TaggedErrorClass<PreviewTailnetLeaseNotFoundError>()(
+  "PreviewTailnetLeaseNotFoundError",
+  {
+    leaseId: PreviewTailnetLeaseId,
+  },
+) {
+  override get message(): string {
+    return `Tailnet preview lease ${this.leaseId} was not found.`;
+  }
+}
+
+export const PreviewPortForwardLeaseInput = Schema.Struct({
+  port: PreviewTcpPort,
+});
+export type PreviewPortForwardLeaseInput = typeof PreviewPortForwardLeaseInput.Type;
+
+export const PreviewPortForwardLeaseResult = Schema.Struct({
+  leaseId: TrimmedNonEmptyString,
+  ticket: TrimmedNonEmptyString,
+  port: PreviewTcpPort,
+  connectHost: LocalServerConnectHost,
+  expiresAt: TrimmedNonEmptyString,
+});
+export type PreviewPortForwardLeaseResult = typeof PreviewPortForwardLeaseResult.Type;
+
+export const PreviewPortForwardReleaseInput = Schema.Struct({
+  leaseId: TrimmedNonEmptyString,
+});
+export type PreviewPortForwardReleaseInput = typeof PreviewPortForwardReleaseInput.Type;
+
+export class PreviewPortForwardUnavailableError extends Schema.TaggedErrorClass<PreviewPortForwardUnavailableError>()(
+  "PreviewPortForwardUnavailableError",
+  {
+    port: PreviewTcpPort,
+    reason: Schema.Literals(["not-discovered", "capacity"]),
+  },
+) {
+  override get message(): string {
+    return this.reason === "not-discovered"
+      ? `Port ${this.port} is not a discovered local web server.`
+      : "The environment has reached its port-forwarding limit.";
+  }
+}
 
 export class PreviewSessionLookupError extends Schema.TaggedErrorClass<PreviewSessionLookupError>()(
   "PreviewSessionLookupError",

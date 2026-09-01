@@ -6,10 +6,16 @@ import {
   CONFIGURED_LOCAL_SERVER_URLS_MAX_ITEMS,
   DiscoveredLocalServer,
   PREVIEW_URL_MAX_LENGTH,
+  PreviewTailnetAcquireInput,
+  PreviewTailnetAcquireResult,
+  PreviewTailnetReadiness,
+  PreviewTailnetStatusResult,
   PreviewEvent,
   PreviewNavStatus,
   PreviewSessionSnapshot,
   PreviewViewportSetting,
+  PreviewPortForwardLeaseInput,
+  PreviewPortForwardLeaseResult,
 } from "./preview.ts";
 import {
   PreviewAutomationHost,
@@ -32,6 +38,120 @@ const decodeResizeResult = Schema.decodeUnknownSync(PreviewAutomationResizeResul
 const decodeAutomationHost = Schema.decodeUnknownSync(PreviewAutomationHost);
 const decodeAutomationError = Schema.decodeUnknownSync(PreviewAutomationError);
 const decodeAutomationStatus = Schema.decodeUnknownSync(PreviewAutomationStatus);
+const decodeTailnetReadiness = Schema.decodeUnknownSync(PreviewTailnetReadiness);
+const decodeTailnetStatusResult = Schema.decodeUnknownSync(PreviewTailnetStatusResult);
+const decodeTailnetAcquireInput = Schema.decodeUnknownSync(PreviewTailnetAcquireInput);
+const decodeTailnetAcquireResult = Schema.decodeUnknownSync(PreviewTailnetAcquireResult);
+const decodePortForwardLeaseInput = Schema.decodeUnknownSync(PreviewPortForwardLeaseInput);
+const decodePortForwardLeaseResult = Schema.decodeUnknownSync(PreviewPortForwardLeaseResult);
+
+describe("Tailnet preview contracts", () => {
+  it("requires a thread-scoped TCP port acquisition request", () => {
+    expect(decodeTailnetAcquireInput({ threadId: "thread-1", port: 5173 })).toEqual({
+      threadId: "thread-1",
+      port: 5173,
+    });
+    expect(() => decodeTailnetAcquireInput({ port: 5173 })).toThrow();
+    expect(() => decodeTailnetAcquireInput({ threadId: "thread-1", port: 0 })).toThrow();
+    expect(() => decodeTailnetAcquireInput({ threadId: "thread-1", port: 65_536 })).toThrow();
+  });
+
+  it.each([
+    "disabled",
+    "ready",
+    "tailscale-unavailable",
+    "not-logged-in",
+    "magic-dns-unavailable",
+    "https-unavailable",
+    "permission-denied",
+    "mapping-conflict",
+    "gateway-failed",
+    "capacity-reached",
+  ] as const)("round-trips the closed Tailnet readiness state %s", (readiness) => {
+    expect(decodeTailnetReadiness(readiness)).toBe(readiness);
+    expect(
+      decodeTailnetStatusResult({
+        enabled: readiness !== "disabled",
+        readiness,
+      }),
+    ).toEqual({
+      enabled: readiness !== "disabled",
+      readiness,
+    });
+  });
+
+  it("accepts bounded HTTP(S) launch URLs and opaque lease ids", () => {
+    expect(
+      decodeTailnetAcquireResult({
+        leaseId: "lease-1",
+        port: 5173,
+        cleanUrl: "https://machine.tailnet.ts.net:5173/",
+        launchUrl: "https://machine.tailnet.ts.net:5173/.well-known/verne-preview/auth",
+        expiresAt: "2026-09-01T18:00:00.000Z",
+        readiness: "ready",
+      }),
+    ).toEqual({
+      leaseId: "lease-1",
+      port: 5173,
+      cleanUrl: "https://machine.tailnet.ts.net:5173/",
+      launchUrl: "https://machine.tailnet.ts.net:5173/.well-known/verne-preview/auth",
+      expiresAt: "2026-09-01T18:00:00.000Z",
+      readiness: "ready",
+    });
+  });
+
+  it("rejects non-http launch URLs", () => {
+    expect(() =>
+      decodeTailnetAcquireResult({
+        leaseId: "lease-1",
+        port: 5173,
+        cleanUrl: "ftp://machine.tailnet.ts.net:5173/",
+        launchUrl: "https://machine.tailnet.ts.net:5173/.well-known/verne-preview/auth",
+        expiresAt: "2026-09-01T18:00:00.000Z",
+        readiness: "ready",
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeTailnetAcquireResult({
+        leaseId: "lease-1",
+        port: 5173,
+        cleanUrl: "https://machine.tailnet.ts.net:5173/",
+        launchUrl: "file:///tmp/preview",
+        expiresAt: "2026-09-01T18:00:00.000Z",
+        readiness: "ready",
+      }),
+    ).toThrow();
+  });
+});
+
+describe("PreviewPortForwardLease", () => {
+  it("accepts a valid TCP port", () => {
+    expect(decodePortForwardLeaseInput({ port: 5173 })).toEqual({ port: 5173 });
+  });
+
+  it("rejects ports outside the TCP range", () => {
+    expect(() => decodePortForwardLeaseInput({ port: 0 })).toThrow();
+    expect(() => decodePortForwardLeaseInput({ port: 65_536 })).toThrow();
+  });
+
+  it("decodes a short-lived session-bound tunnel lease", () => {
+    expect(
+      decodePortForwardLeaseResult({
+        leaseId: "lease-1",
+        ticket: "single-use-ticket",
+        port: 5173,
+        connectHost: "127.0.0.1",
+        expiresAt: "2026-09-01T18:00:00.000Z",
+      }),
+    ).toEqual({
+      leaseId: "lease-1",
+      ticket: "single-use-ticket",
+      port: 5173,
+      connectHost: "127.0.0.1",
+      expiresAt: "2026-09-01T18:00:00.000Z",
+    });
+  });
+});
 
 describe("PreviewAutomationOpenInput", () => {
   it("accepts the inline preview visibility flag", () => {
@@ -301,6 +421,7 @@ describe("DiscoveredLocalServer", () => {
   it("decodes a server with process metadata", () => {
     const server = decodeServer({
       host: "localhost",
+      connectHost: "127.0.0.1",
       port: 5173,
       url: "http://localhost:5173",
       processName: "node",
@@ -309,6 +430,34 @@ describe("DiscoveredLocalServer", () => {
     });
     expect(server.port).toBe(5173);
     expect(server.processName).toBe("node");
+    expect(server.connectHost).toBe("127.0.0.1");
+  });
+
+  it("retains an IPv6 loopback dial target", () => {
+    const server = decodeServer({
+      host: "localhost",
+      connectHost: "::1",
+      port: 5173,
+      url: "http://localhost:5173",
+      processName: "node",
+      pid: 12345,
+      terminal: null,
+    });
+    expect(server.connectHost).toBe("::1");
+  });
+
+  it("rejects a non-loopback dial target", () => {
+    expect(() =>
+      decodeServer({
+        host: "localhost",
+        connectHost: "192.0.2.10",
+        port: 5173,
+        url: "http://localhost:5173",
+        processName: "node",
+        pid: 12345,
+        terminal: null,
+      }),
+    ).toThrow();
   });
 
   it("decodes a server without process metadata", () => {

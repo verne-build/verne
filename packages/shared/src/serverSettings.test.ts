@@ -2,9 +2,11 @@ import {
   DEFAULT_SERVER_SETTINGS,
   ProviderDriverKind,
   ProviderInstanceId,
+  ServerSettings,
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 import { resolveServerBackgroundActivitySettings } from "./backgroundActivitySettings.ts";
 import { createModelSelection } from "./model.ts";
@@ -17,7 +19,26 @@ import {
   resolveSourceControlWriterModelSelection,
 } from "./serverSettings.ts";
 
+const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
+
 describe("serverSettings helpers", () => {
+  it("defaults Tailnet previews off when old settings omit the opt-in", () => {
+    expect(decodeServerSettings({}).tailscalePreviewsEnabled).toBe(false);
+    expect(DEFAULT_SERVER_SETTINGS.tailscalePreviewsEnabled).toBe(false);
+  });
+
+  it("applies Tailnet preview opt-in patches in both directions", () => {
+    const enabled = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      tailscalePreviewsEnabled: true,
+    });
+    expect(enabled.tailscalePreviewsEnabled).toBe(true);
+
+    const disabled = applyServerSettingsPatch(enabled, {
+      tailscalePreviewsEnabled: false,
+    });
+    expect(disabled.tailscalePreviewsEnabled).toBe(false);
+  });
+
   it("normalizes optional persisted strings", () => {
     expect(normalizePersistedServerSettingString(undefined)).toBeUndefined();
     expect(normalizePersistedServerSettingString("   ")).toBeUndefined();

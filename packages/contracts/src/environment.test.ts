@@ -18,6 +18,10 @@ describe("ExecutionEnvironmentDescriptor", () => {
     expect(decodeDescriptor(descriptor).capabilities.pullRequests).toBeUndefined();
   });
 
+  it("treats a missing Tailnet preview capability as unsupported under version skew", () => {
+    expect(decodeDescriptor(descriptor).capabilities.tailnetPreviewPublishing).toBeUndefined();
+  });
+
   it("preserves an advertised pull-request capability", () => {
     expect(
       decodeDescriptor({
@@ -38,6 +42,63 @@ describe("ExecutionEnvironmentDescriptor", () => {
         capabilities: { ...descriptor.capabilities, attachmentUploads: true },
       }).capabilities.attachmentUploads,
     ).toBe(true);
+  });
+
+  it("preserves an advertised authenticated port-forwarding protocol", () => {
+    expect(
+      decodeDescriptor({
+        ...descriptor,
+        capabilities: {
+          ...descriptor.capabilities,
+          portForwarding: {
+            protocolVersion: 1,
+            requiredScope: "preview:access",
+          },
+        },
+      }).capabilities.portForwarding,
+    ).toEqual({ protocolVersion: 1, requiredScope: "preview:access" });
+  });
+
+  it("preserves an advertised Tailnet preview publication protocol", () => {
+    expect(
+      decodeDescriptor({
+        ...descriptor,
+        capabilities: {
+          ...descriptor.capabilities,
+          tailnetPreviewPublishing: {
+            protocolVersion: 1,
+            requiredScope: "preview:access",
+          },
+        },
+      }).capabilities.tailnetPreviewPublishing,
+    ).toEqual({ protocolVersion: 1, requiredScope: "preview:access" });
+  });
+
+  it("rejects unsupported Tailnet preview publication protocol versions and scopes", () => {
+    expect(() =>
+      decodeDescriptor({
+        ...descriptor,
+        capabilities: {
+          ...descriptor.capabilities,
+          tailnetPreviewPublishing: {
+            protocolVersion: 2,
+            requiredScope: "preview:access",
+          },
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeDescriptor({
+        ...descriptor,
+        capabilities: {
+          ...descriptor.capabilities,
+          tailnetPreviewPublishing: {
+            protocolVersion: 1,
+            requiredScope: "preview:write",
+          },
+        },
+      }),
+    ).toThrow();
   });
 
   it("preserves the server's generic attachment upload limit", () => {

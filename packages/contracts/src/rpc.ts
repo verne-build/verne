@@ -156,6 +156,19 @@ import {
   PreviewReportStatusInput,
   PreviewResizeInput,
   PreviewSessionSnapshot,
+  PreviewTailnetAcquireInput,
+  PreviewTailnetAcquireResult,
+  PreviewTailnetLeaseNotFoundError,
+  PreviewTailnetReleaseInput,
+  PreviewTailnetRenewInput,
+  PreviewTailnetSetPortEnabledInput,
+  PreviewTailnetStatusInput,
+  PreviewTailnetStatusResult,
+  PreviewTailnetUnavailableError,
+  PreviewPortForwardLeaseInput,
+  PreviewPortForwardLeaseResult,
+  PreviewPortForwardReleaseInput,
+  PreviewPortForwardUnavailableError,
 } from "./preview.ts";
 import {
   PreviewAutomationError,
@@ -265,6 +278,13 @@ export const WS_METHODS = {
   previewClose: "preview.close",
   previewList: "preview.list",
   previewReportStatus: "preview.reportStatus",
+  previewTailnetStatus: "preview.tailnet.status",
+  previewTailnetAcquire: "preview.tailnet.acquire",
+  previewTailnetRenew: "preview.tailnet.renew",
+  previewTailnetRelease: "preview.tailnet.release",
+  previewTailnetSetPortEnabled: "preview.tailnet.setPortEnabled",
+  previewPortForwardAcquire: "preview.portForward.acquire",
+  previewPortForwardRelease: "preview.portForward.release",
   previewAutomationConnect: "previewAutomation.connect",
   previewAutomationRespond: "previewAutomation.respond",
   previewAutomationFocusHost: "previewAutomation.focusHost",
@@ -867,6 +887,50 @@ export const WsPreviewReportStatusRpc = Rpc.make(WS_METHODS.previewReportStatus,
   error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
 });
 
+export const WsPreviewTailnetStatusRpc = Rpc.make(WS_METHODS.previewTailnetStatus, {
+  payload: PreviewTailnetStatusInput,
+  success: PreviewTailnetStatusResult,
+  error: EnvironmentAuthorizationError,
+});
+
+export const WsPreviewTailnetAcquireRpc = Rpc.make(WS_METHODS.previewTailnetAcquire, {
+  payload: PreviewTailnetAcquireInput,
+  success: PreviewTailnetAcquireResult,
+  error: Schema.Union([PreviewTailnetUnavailableError, EnvironmentAuthorizationError]),
+});
+
+export const WsPreviewTailnetRenewRpc = Rpc.make(WS_METHODS.previewTailnetRenew, {
+  payload: PreviewTailnetRenewInput,
+  success: PreviewTailnetAcquireResult,
+  error: Schema.Union([
+    PreviewTailnetLeaseNotFoundError,
+    PreviewTailnetUnavailableError,
+    EnvironmentAuthorizationError,
+  ]),
+});
+
+export const WsPreviewTailnetReleaseRpc = Rpc.make(WS_METHODS.previewTailnetRelease, {
+  payload: PreviewTailnetReleaseInput,
+  error: Schema.Union([PreviewTailnetLeaseNotFoundError, EnvironmentAuthorizationError]),
+});
+
+export const WsPreviewTailnetSetPortEnabledRpc = Rpc.make(WS_METHODS.previewTailnetSetPortEnabled, {
+  payload: PreviewTailnetSetPortEnabledInput,
+  success: PreviewTailnetStatusResult,
+  error: Schema.Union([PreviewTailnetUnavailableError, EnvironmentAuthorizationError]),
+});
+
+export const WsPreviewPortForwardAcquireRpc = Rpc.make(WS_METHODS.previewPortForwardAcquire, {
+  payload: PreviewPortForwardLeaseInput,
+  success: PreviewPortForwardLeaseResult,
+  error: Schema.Union([PreviewPortForwardUnavailableError, EnvironmentAuthorizationError]),
+});
+
+export const WsPreviewPortForwardReleaseRpc = Rpc.make(WS_METHODS.previewPortForwardRelease, {
+  payload: PreviewPortForwardReleaseInput,
+  error: EnvironmentAuthorizationError,
+});
+
 export const WsPreviewAutomationConnectRpc = Rpc.make(WS_METHODS.previewAutomationConnect, {
   payload: PreviewAutomationHost,
   success: PreviewAutomationStreamEvent,
@@ -1111,6 +1175,13 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewCloseRpc,
   WsPreviewListRpc,
   WsPreviewReportStatusRpc,
+  WsPreviewTailnetStatusRpc,
+  WsPreviewTailnetAcquireRpc,
+  WsPreviewTailnetRenewRpc,
+  WsPreviewTailnetReleaseRpc,
+  WsPreviewTailnetSetPortEnabledRpc,
+  WsPreviewPortForwardAcquireRpc,
+  WsPreviewPortForwardReleaseRpc,
   WsPreviewAutomationConnectRpc,
   WsPreviewAutomationRespondRpc,
   WsPreviewAutomationFocusHostRpc,

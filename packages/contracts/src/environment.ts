@@ -109,6 +109,20 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       this is false — no update would ever repaint it. Absent on older
       servers, which may still publish, so only an explicit false skips. */
   agentActivityPublishing: Schema.optionalKey(Schema.Boolean),
+  /** Server supports Tailnet-published dev-server previews for web clients. */
+  tailnetPreviewPublishing: Schema.optionalKey(
+    Schema.Struct({
+      protocolVersion: Schema.Literal(1),
+      requiredScope: Schema.Literal("preview:access"),
+    }),
+  ),
+  /** Server supports authenticated preview TCP tunnels for paired clients. */
+  portForwarding: Schema.optionalKey(
+    Schema.Struct({
+      protocolVersion: Schema.Literal(1),
+      requiredScope: Schema.Literal("preview:access"),
+    }),
+  ),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 
