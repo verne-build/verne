@@ -1,23 +1,17 @@
 name: Web Preview
 
-# Label a PR `preview:web` to get a hosted-web preview deployment on Vercel for
-# that push and every subsequent push. The deployment is a plain (non-prod,
-# non-aliased) deploy into the existing hosted-web Vercel project, so the
-# latest/nightly channel aliases are never touched.
+# Label a same-repository PR `preview:web` to deploy an isolated hosted-web
+# preview. Each preview uses a deterministic Workers.dev origin and is removed
+# when its label is removed or the PR closes.
 #
-# The build intentionally omits managed relay configuration. Verne previews
-# URL): previews boot as the hosted-static app with manual pairing only. Pair a
-# server into a preview with `verne pair --tailscale` (or any reachable HTTPS
-# backend) and open the pairing URL against the preview origin.
-#
-# The preview must be opened at the exact deployment URL from the PR comment.
-# Vite bakes that URL in as the hosted origin (via VERCEL_URL), and
-# `isHostedStaticApp` matches on origin, so branch-alias URLs will not
-# self-identify as the hosted app.
+# The build intentionally omits managed relay configuration: previews boot as
+# the hosted-static app with manual pairing only. Pair a server into a preview
+# with `verne pair --tailscale` (or any reachable HTTPS backend), or paste a
+# host + pairing code under Settings → Connections.
 
 on:
   pull_request:
-    types: [labeled, synchronize, reopened]
+    types: [labeled, unlabeled, synchronize, reopened, closed]
 
 permissions:
   contents: read
@@ -30,20 +24,23 @@ concurrency:
 jobs:
   deploy:
     name: Deploy web preview
-    # Same-repo PRs only: fork PRs do not receive the Vercel secrets, and this
-    # workflow should skip rather than fail for them. On `labeled` events, only
-    # the preview label itself triggers a deploy.
+    # Same-repo PRs only: fork PRs do not receive the Cloudflare secrets, and
+    # this workflow should skip rather than fail for them. The label remains
+    # opt-in: only its addition, new commits, and PR reopen events deploy.
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository &&
       contains(github.event.pull_request.labels.*.name, 'preview:web') &&
-      (github.event.action != 'labeled' || github.event.label.name == 'preview:web')
+      (
+        github.event.action == 'synchronize' ||
+        github.event.action == 'reopened' ||
+        (github.event.action == 'labeled' && github.event.label.name == 'preview:web')
+      )
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     env:
-      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-      VERCEL_TEAM_SLUG: ${{ vars.VERCEL_TEAM_SLUG }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_WORKERS_SUBDOMAIN: ${{ vars.CLOUDFLARE_WORKERS_SUBDOMAIN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -63,27 +60,39 @@ jobs:
             args:
               - --filter=@t3tools/scripts...
               - --filter=@t3tools/web...
+              - --filter=@verne-build/cloudflare...
 
       - id: deploy
-        name: Deploy preview
+        name: Build and deploy preview
         shell: bash
         run: |
           set -euo pipefail
 
-          if [[ -z "${VERCEL_TOKEN:-}" || -z "${VERCEL_ORG_ID:-}" || -z "${VERCEL_PROJECT_ID:-}" ]]; then
-            echo "Missing one or more required Vercel secrets: VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID." >&2
+          if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then
+            echo "Missing CLOUDFLARE_API_TOKEN." >&2
             exit 1
           fi
 
-          vercel_scope="${VERCEL_TEAM_SLUG:-$VERCEL_ORG_ID}"
+          if [[ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
+            echo "Missing CLOUDFLARE_ACCOUNT_ID." >&2
+            exit 1
+          fi
 
-          deployment_url="$(
-            vp dlx vercel@53.1.1 deploy \
-              --archive=tgz \
-              --yes \
-              --token "$VERCEL_TOKEN" \
-              --scope "$vercel_scope"
-          )"
+          if [[ -z "${CLOUDFLARE_WORKERS_SUBDOMAIN:-}" ]]; then
+            echo "Missing CLOUDFLARE_WORKERS_SUBDOMAIN." >&2
+            exit 1
+          fi
+
+          worker_name="verne-app-pr-${{ github.event.pull_request.number }}"
+          deployment_url="https://${worker_name}.${CLOUDFLARE_WORKERS_SUBDOMAIN}.workers.dev"
+
+          export APP_VERSION="0.0.0-pr.${{ github.event.pull_request.number }}.${{ github.run_number }}"
+          export VITE_HOSTED_APP_URL="$deployment_url"
+          export VITE_HOSTED_APP_CHANNEL="preview"
+
+          vp run --filter @t3tools/web build
+          node scripts/apply-web-brand-assets.ts --channel preview
+          vp run --filter @verne-build/cloudflare deploy:channel --name "$worker_name"
 
           echo "Deployed $deployment_url"
           echo "deployment_url=$deployment_url" >> "$GITHUB_OUTPUT"
@@ -102,9 +111,10 @@ jobs:
               "",
               `${process.env.DEPLOYMENT_URL} (for ${process.env.HEAD_SHA.slice(0, 7)})`,
               "",
-              "Open this exact URL — the hosted-app origin is baked in at build time.",
               "Pair a server into it with `verne pair --tailscale`, or paste a host + pairing",
               "code under Settings → Connections.",
+              "",
+              "This Worker is deleted when the `preview:web` label is removed or the PR closes.",
             ].join("\n");
 
             const { data: comments } = await github.rest.issues.listComments({
@@ -128,5 +138,100 @@ jobs:
                 repo: context.repo.repo,
                 issue_number: context.payload.pull_request.number,
                 body,
+              });
+            }
+
+  cleanup:
+    name: Remove web preview
+    # Fork PRs never receive Cloudflare secrets. Only PR closure or removal of
+    # the opt-in label can remove a same-repository preview Worker.
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      (
+        github.event.action == 'closed' ||
+        (github.event.action == 'unlabeled' && github.event.label.name == 'preview:web')
+      )
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@verne-build/cloudflare...
+
+      - name: Delete preview Worker
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then
+            echo "Missing CLOUDFLARE_API_TOKEN." >&2
+            exit 1
+          fi
+
+          if [[ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
+            echo "Missing CLOUDFLARE_ACCOUNT_ID." >&2
+            exit 1
+          fi
+
+          worker_name="verne-app-pr-${{ github.event.pull_request.number }}"
+          status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+            --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$worker_name")"
+
+          case "$status" in
+            200)
+              vp run --filter @verne-build/cloudflare delete:worker --name "$worker_name"
+              ;;
+            404)
+              echo "Preview Worker $worker_name is already absent."
+              ;;
+            *)
+              echo "Cloudflare Worker lookup failed with HTTP $status." >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Mark preview removed
+        uses: actions/github-script@v8
+        env:
+          WORKER_NAME: verne-app-pr-${{ github.event.pull_request.number }}
+        with:
+          script: |
+            const marker = "<!-- web-preview-deploy -->";
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              per_page: 100,
+            });
+            const existing = comments.find((comment) => comment.body?.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: [
+                  marker,
+                  "### Web preview",
+                  "",
+                  `Preview Worker \`${process.env.WORKER_NAME}\` was removed.`,
+                ].join("\n"),
               });
             }
