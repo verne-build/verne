@@ -12,7 +12,11 @@ import pkg from "./package.json" with { type: "json" };
 import upstreamJson from "../../config/verne-upstream.json" with { type: "json" };
 
 import { DEV_PROXIED_PATH_PREFIXES } from "@t3tools/shared/devProxy";
-import { decodeUpstreamProvenance, resolveBuildRevision } from "@t3tools/shared/releaseIdentity";
+import {
+  decodeUpstreamProvenance,
+  requireBuildRevision,
+  resolveBuildRevision,
+} from "@t3tools/shared/releaseIdentity";
 
 import { loadRepoEnv } from "../../scripts/lib/public-config";
 
@@ -43,10 +47,14 @@ const configuredRelayTracingToken = repoEnv.VITE_RELAY_OTLP_TRACES_TOKEN?.trim()
 const configuredHostedAppChannel = process.env.VITE_HOSTED_APP_CHANNEL?.trim() || "";
 const configuredAppVersion = process.env.APP_VERSION?.trim() || pkg.version;
 const upstreamProvenance = decodeUpstreamProvenance(upstreamJson);
-const configuredAppRevision = resolveBuildRevision({
+const buildRevisionInput = {
   explicitRevision: process.env.VERNE_REVISION,
   githubRevision: process.env.GITHUB_SHA,
-});
+};
+const configuredAppRevision =
+  process.env.VERNE_RELEASE_BUILD === "1"
+    ? requireBuildRevision(buildRevisionInput)
+    : resolveBuildRevision(buildRevisionInput);
 const configuredHostedAppUrl = (() => {
   const explicitHostedAppUrl = process.env.VITE_HOSTED_APP_URL?.trim();
   if (explicitHostedAppUrl) {

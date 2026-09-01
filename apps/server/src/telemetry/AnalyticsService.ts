@@ -7,7 +7,6 @@
  * @module AnalyticsService
  */
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import { decodeUpstreamProvenance } from "@t3tools/shared/releaseIdentity";
 import type { ClientOs } from "@t3tools/contracts";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
@@ -20,8 +19,7 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
-import packageJson from "../../package.json" with { type: "json" };
-import upstreamJson from "../../../../config/verne-upstream.json" with { type: "json" };
+import { buildIdentity } from "../buildIdentity.ts";
 import * as ServerConfig from "../config.ts";
 import { getTelemetryIdentifier } from "./Identify.ts";
 
@@ -43,7 +41,6 @@ const TelemetryEnvConfig = Config.all({
   ),
   wslDistroName: Config.string("WSL_DISTRO_NAME").pipe(Config.option),
 });
-const upstreamProvenance = decodeUpstreamProvenance(upstreamJson);
 
 export class AnalyticsService extends Context.Service<
   AnalyticsService,
@@ -136,13 +133,13 @@ export const make = Effect.gen(function* () {
           platform: hostPlatform,
           wsl: Option.getOrUndefined(telemetryConfig.wslDistroName),
           arch: hostArchitecture,
-          verneVersion: packageJson.version,
-          upstreamT3CodeVersion: upstreamProvenance.version,
+          verneVersion: buildIdentity.version,
+          upstreamT3CodeVersion: buildIdentity.upstream.version,
           clientType,
           serverOs: serverOsFromNodePlatform(hostPlatform),
           serverArch: hostArchitecture,
           serverWslDistro: Option.getOrUndefined(telemetryConfig.wslDistroName),
-          serverAppVersion: packageJson.version,
+          serverAppVersion: buildIdentity.version,
           serverMode: serverConfig.mode,
         },
         timestamp: event.capturedAt,

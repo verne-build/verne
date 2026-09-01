@@ -81,6 +81,8 @@ jobs:
       contents: read
     env:
       APP_VARIANT: production
+      VERNE_RELEASE_BUILD: "1"
+      VERNE_REVISION: ${{ github.sha }}
       NODE_OPTIONS: --max-old-space-size=8192
     steps:
       - id: expo-token

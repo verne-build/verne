@@ -338,6 +338,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     env:
+      VERNE_RELEASE_BUILD: "1"
+      VERNE_REVISION: ${{ needs.preflight.outputs.ref }}
       VERNE_CLERK_PUBLISHABLE_KEY: ${{ needs.client_public_config.outputs.clerk_publishable_key }}
       VERNE_CLERK_JWT_TEMPLATE: ${{ needs.client_public_config.outputs.clerk_jwt_template }}
       VERNE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ needs.client_public_config.outputs.clerk_cli_oauth_client_id }}
@@ -687,6 +689,8 @@ jobs:
       contents: read
       id-token: write
     env:
+      VERNE_RELEASE_BUILD: "1"
+      VERNE_REVISION: ${{ needs.preflight.outputs.ref }}
       VERNE_CLERK_PUBLISHABLE_KEY: ${{ needs.client_public_config.outputs.clerk_publishable_key }}
       VERNE_CLERK_JWT_TEMPLATE: ${{ needs.client_public_config.outputs.clerk_jwt_template }}
       VERNE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ needs.client_public_config.outputs.clerk_cli_oauth_client_id }}
@@ -877,6 +881,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
+      VERNE_RELEASE_BUILD: "1"
+      VERNE_REVISION: ${{ needs.preflight.outputs.ref }}
       VERNE_CLERK_PUBLISHABLE_KEY: ${{ needs.client_public_config.outputs.clerk_publishable_key }}
       VERNE_CLERK_JWT_TEMPLATE: ${{ needs.client_public_config.outputs.clerk_jwt_template }}
       VERNE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ needs.client_public_config.outputs.clerk_cli_oauth_client_id }}

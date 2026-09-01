@@ -51,4 +51,21 @@ describe("ExecutionEnvironmentDescriptor", () => {
       }).capabilities.fileAttachments,
     ).toEqual({ maxUploadBytes: 50 * 1024 * 1024 });
   });
+
+  it("preserves optional Verne server build identity diagnostics", () => {
+    expect(
+      decodeDescriptor({
+        ...descriptor,
+        buildIdentity: {
+          revision: "0123456789abcdef0123456789abcdef01234567",
+          upstreamVersion: "0.0.37",
+          upstreamRevision: "b883fc066ea5c9bebbe1c3e9b4bc2471aab3685f",
+        },
+      }).buildIdentity,
+    ).toEqual({
+      revision: "0123456789abcdef0123456789abcdef01234567",
+      upstreamVersion: "0.0.37",
+      upstreamRevision: "b883fc066ea5c9bebbe1c3e9b4bc2471aab3685f",
+    });
+  });
 });

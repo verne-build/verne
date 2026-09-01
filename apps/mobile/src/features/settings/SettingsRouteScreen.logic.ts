@@ -20,3 +20,7 @@ export function formatMobileVersionLabel(input: {
       : ` · ${input.variant.charAt(0).toUpperCase()}${input.variant.slice(1)}`;
   return `${input.version}${buildLabel}${variantLabel}`;
 }
+
+export function formatDiagnosticRevision(revision: string | null | undefined): string {
+  return revision && revision !== "unknown" ? revision.slice(0, 7) : "unknown";
+}

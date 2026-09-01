@@ -41,6 +41,17 @@ export function resolveBuildRevision(input: {
   return exactRevision(input.explicitRevision) ?? exactRevision(input.githubRevision) ?? "unknown";
 }
 
+export function requireBuildRevision(input: {
+  readonly explicitRevision?: string | undefined;
+  readonly githubRevision?: string | undefined;
+}): typeof FullGitRevision.Type {
+  const revision = resolveBuildRevision(input);
+  if (revision === "unknown") {
+    throw new Error("Publishable Verne builds require a full Git revision");
+  }
+  return revision;
+}
+
 const shortRevision = (revision: string) =>
   FULL_GIT_REVISION_PATTERN.test(revision) ? revision.slice(0, 7) : revision;
 

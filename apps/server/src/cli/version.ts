@@ -1,29 +1,15 @@
-import { PRODUCT_BASE_NAME } from "@t3tools/shared/productIdentity";
-import {
-  decodeUpstreamProvenance,
-  formatBuildIdentity,
-  resolveBuildRevision,
-} from "@t3tools/shared/releaseIdentity";
+import { formatBuildIdentity, resolveBuildRevision } from "@t3tools/shared/releaseIdentity";
 import * as Console from "effect/Console";
 import { Command, Flag } from "effect/unstable/cli";
 
-import upstreamJson from "../../../../config/verne-upstream.json" with { type: "json" };
-import packageJson from "../../package.json" with { type: "json" };
-
-declare const __VERNE_BUILD_REVISION__: string;
-
-export const upstreamProvenance = decodeUpstreamProvenance(upstreamJson);
+import { buildIdentity } from "../buildIdentity.ts";
 
 export const createVersionReport = (revision: string | undefined) => ({
-  product: PRODUCT_BASE_NAME,
-  version: packageJson.version,
+  ...buildIdentity,
   revision: resolveBuildRevision({ explicitRevision: revision }),
-  upstream: upstreamProvenance,
 });
 
-const versionReport = createVersionReport(
-  typeof __VERNE_BUILD_REVISION__ === "undefined" ? undefined : __VERNE_BUILD_REVISION__,
-);
+const versionReport = buildIdentity;
 
 export const versionCommand = Command.make(
   "version",

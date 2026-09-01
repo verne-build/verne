@@ -19,6 +19,8 @@ jobs:
       pull-requests: write
     env:
       APP_VARIANT: preview
+      VERNE_RELEASE_BUILD: "1"
+      VERNE_REVISION: ${{ github.event.pull_request.head.sha }}
       NODE_OPTIONS: --max-old-space-size=8192
       MOBILE_VERSION_POLICY: fingerprint
     steps:

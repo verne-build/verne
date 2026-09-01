@@ -6,6 +6,7 @@ import {
 } from "../../packages/shared/src/productIdentity.ts";
 import {
   decodeUpstreamProvenance,
+  requireBuildRevision,
   resolveBuildRevision,
 } from "../../packages/shared/src/releaseIdentity.ts";
 import upstreamJson from "../../config/verne-upstream.json" with { type: "json" };
@@ -24,10 +25,14 @@ const runtimeVersionPolicy =
   process.env.MOBILE_VERSION_POLICY ??
   (APP_VARIANT === "development" ? "appVersion" : "fingerprint");
 const upstreamProvenance = decodeUpstreamProvenance(upstreamJson);
-const verneRevision = resolveBuildRevision({
+const buildRevisionInput = {
   explicitRevision: process.env.VERNE_REVISION,
-  githubRevision: process.env.GITHUB_SHA,
-});
+  githubRevision: process.env.GITHUB_SHA ?? process.env.EAS_BUILD_GIT_COMMIT_HASH,
+};
+const verneRevision =
+  process.env.VERNE_RELEASE_BUILD === "1"
+    ? requireBuildRevision(buildRevisionInput)
+    : resolveBuildRevision(buildRevisionInput);
 
 const personalTeamBundleIdentifier = repoEnv.VERNE_IOS_PERSONAL_TEAM_BUNDLE_ID?.trim();
 const IOS_BUNDLE_IDENTIFIER_PATTERN = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;

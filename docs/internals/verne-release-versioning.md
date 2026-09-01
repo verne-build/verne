@@ -73,6 +73,10 @@ Build tooling validates its schema and embeds it alongside the Verne revision su
 environment. Local development may report the Verne revision as `dirty` or `unknown`; publishable
 artifacts must have an exact revision and valid committed upstream provenance.
 
+Release and preview automation sets `VERNE_RELEASE_BUILD=1` and supplies `VERNE_REVISION` (or uses
+the exact Git revision supplied by GitHub Actions/EAS). Build configuration rejects a publishable
+artifact when that revision is missing or malformed instead of embedding `unknown`.
+
 ## User-visible behavior
 
 Normal product labels lead with the version relevant to the user:
@@ -95,7 +99,8 @@ T3 Code revision: b883fc0
 The CLI keeps `verne --version` short and script-friendly. Structured or verbose diagnostics expose
 the remaining fields. A remote client distinguishes its own version from the connected server
 version; mobile therefore reports both Verne Mobile identity and the remote Verne core identity when
-a connection is available.
+a connection is available. Servers predating this model expose their Verne version but have no
+revision or upstream provenance, which clients render as unavailable rather than guessing.
 
 ## Operational boundaries
 

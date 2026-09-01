@@ -35,6 +35,7 @@ import { WorkspaceSidebarToolbar } from "../layout/workspace-sidebar-toolbar";
 import { runtime } from "../../lib/runtime";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { serverEnvironment } from "../../state/server";
+import { useServerConfigs } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
@@ -49,6 +50,7 @@ import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import {
+  formatDiagnosticRevision,
   formatMobileVersionLabel,
   resolveAgentAwarenessPlatformPresentation,
 } from "./SettingsRouteScreen.logic";
@@ -629,6 +631,13 @@ function AppSettingsSection() {
     buildVersion: Constants.nativeBuildVersion,
     variant,
   });
+  const releaseIdentity = Constants.expoConfig?.extra?.releaseIdentity as
+    | {
+        readonly verneRevision?: string;
+        readonly upstream?: { readonly version?: string; readonly revision?: string };
+      }
+    | undefined;
+  const serverConfigs = useServerConfigs();
   const updateCheckAvailable = isAppUpdateCheckAvailable();
   const busy =
     updateState === "checking" || updateState === "downloading" || updateState === "restarting";
@@ -718,6 +727,31 @@ function AppSettingsSection() {
       ) : (
         versionRow
       )}
+      <View className="gap-1 px-4 pb-4">
+        <Text className="text-sm text-foreground-muted">
+          Verne Mobile revision: {formatDiagnosticRevision(releaseIdentity?.verneRevision)}
+        </Text>
+        <Text className="text-sm text-foreground-muted">
+          Based on T3 Code {releaseIdentity?.upstream?.version ?? "unknown"} ·{" "}
+          {formatDiagnosticRevision(releaseIdentity?.upstream?.revision)}
+        </Text>
+        {[...serverConfigs.values()]
+          .toSorted((left, right) => left.environment.label.localeCompare(right.environment.label))
+          .map((config) => (
+            <View key={config.environment.environmentId} className="pt-2">
+              <Text className="text-sm text-foreground-muted">
+                {config.environment.label} server: {config.environment.serverVersion} ·{" "}
+                {formatDiagnosticRevision(config.environment.buildIdentity?.revision)}
+              </Text>
+              {config.environment.buildIdentity ? (
+                <Text className="text-xs text-foreground-muted/70">
+                  Based on T3 Code {config.environment.buildIdentity.upstreamVersion} ·{" "}
+                  {formatDiagnosticRevision(config.environment.buildIdentity.upstreamRevision)}
+                </Text>
+              ) : null}
+            </View>
+          ))}
+      </View>
     </SettingsSection>
   );
 }

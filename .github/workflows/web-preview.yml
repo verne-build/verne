@@ -87,6 +87,8 @@ jobs:
           deployment_url="https://${worker_name}.${CLOUDFLARE_WORKERS_SUBDOMAIN}.workers.dev"
 
           export APP_VERSION="0.0.0-pr.${{ github.event.pull_request.number }}.${{ github.run_number }}"
+          export VERNE_RELEASE_BUILD="1"
+          export VERNE_REVISION="${{ github.event.pull_request.head.sha }}"
           export VITE_HOSTED_APP_URL="$deployment_url"
           export VITE_HOSTED_APP_CHANNEL="preview"
 

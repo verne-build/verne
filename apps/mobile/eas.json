@@ -19,6 +19,7 @@
       "corepack": true,
       "env": {
         "APP_VARIANT": "preview",
+        "VERNE_RELEASE_BUILD": "1",
         "NODE_OPTIONS": "--max-old-space-size=4096"
       },
       "channel": "preview",
@@ -29,6 +30,7 @@
       "corepack": true,
       "env": {
         "APP_VARIANT": "preview",
+        "VERNE_RELEASE_BUILD": "1",
         "MOBILE_VERSION_POLICY": "fingerprint",
         "NODE_OPTIONS": "--max-old-space-size=4096"
       },
@@ -44,6 +46,7 @@
       "corepack": true,
       "env": {
         "APP_VARIANT": "production",
+        "VERNE_RELEASE_BUILD": "1",
         "NODE_OPTIONS": "--max-old-space-size=4096"
       },
       "channel": "production",

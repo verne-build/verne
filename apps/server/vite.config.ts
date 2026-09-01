@@ -5,7 +5,11 @@ import baseConfig from "../../vite.config.ts";
 import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
 import packageJson from "./package.json" with { type: "json" };
 import upstreamJson from "../../config/verne-upstream.json" with { type: "json" };
-import { decodeUpstreamProvenance, resolveBuildRevision } from "@t3tools/shared/releaseIdentity";
+import {
+  decodeUpstreamProvenance,
+  requireBuildRevision,
+  resolveBuildRevision,
+} from "@t3tools/shared/releaseIdentity";
 
 // The bundle used to inline only workspace packages, leaving every third-party
 // runtime dep external. External deps must exist on the real filesystem (the WSL
@@ -25,10 +29,14 @@ export { shouldBundleCliDependency };
 const repoEnv = loadRepoEnv();
 const cliBuildChannel = packageJson.version.includes("-nightly.") ? "nightly" : "latest";
 decodeUpstreamProvenance(upstreamJson);
-const buildRevision = resolveBuildRevision({
+const buildRevisionInput = {
   explicitRevision: process.env.VERNE_REVISION,
   githubRevision: process.env.GITHUB_SHA,
-});
+};
+const buildRevision =
+  process.env.VERNE_RELEASE_BUILD === "1"
+    ? requireBuildRevision(buildRevisionInput)
+    : resolveBuildRevision(buildRevisionInput);
 
 export default mergeConfig(
   baseConfig,

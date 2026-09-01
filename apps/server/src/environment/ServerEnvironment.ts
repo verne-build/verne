@@ -13,6 +13,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import packageJson from "../../package.json" with { type: "json" };
+import { buildIdentity } from "../buildIdentity.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { readAgentActivityPublishingActive } from "../cloud/config.ts";
 import { resolveServerSelfUpdateCapability } from "../cloud/selfUpdate.ts";
@@ -202,6 +203,11 @@ export const make = Effect.gen(function* () {
       arch: platformArch(hostArchitecture),
     },
     serverVersion: packageJson.version,
+    buildIdentity: {
+      revision: buildIdentity.revision,
+      upstreamVersion: buildIdentity.upstream.version,
+      upstreamRevision: buildIdentity.upstream.revision,
+    },
     capabilities: {
       repositoryIdentity: true,
       connectionProbe: true,

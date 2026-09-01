@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  formatDiagnosticRevision,
   formatMobileVersionLabel,
   resolveAgentAwarenessPlatformPresentation,
 } from "./SettingsRouteScreen.logic";
@@ -18,6 +19,14 @@ describe("resolveAgentAwarenessPlatformPresentation", () => {
       supported: true,
       subtitle: undefined,
     });
+  });
+});
+
+describe("formatDiagnosticRevision", () => {
+  it("shortens exact revisions and preserves unavailable values", () => {
+    expect(formatDiagnosticRevision("0123456789abcdef0123456789abcdef01234567")).toBe("0123456");
+    expect(formatDiagnosticRevision("unknown")).toBe("unknown");
+    expect(formatDiagnosticRevision(undefined)).toBe("unknown");
   });
 });
 

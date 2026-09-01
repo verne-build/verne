@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { expect, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
@@ -26,6 +27,7 @@ const makeServerEnvironmentLayer = (baseDir: string) =>
   ServerEnvironment.layer.pipe(
     Layer.provide(ServerSecretStore.layer),
     Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
+    Layer.provide(Layer.succeed(HostProcessEnvironment, {})),
   );
 
 const emptySecretStoreLayer = Layer.succeed(
@@ -182,6 +184,9 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
         ServerEnvironment.layer.pipe(Layer.provide(ServerSecretStore.layer)),
         ServerSecretStore.layer,
       ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)));
+      const isolatedTestLayer = testLayer.pipe(
+        Layer.provide(Layer.succeed(HostProcessEnvironment, {})),
+      );
 
       yield* Effect.gen(function* () {
         const secrets = yield* ServerSecretStore.ServerSecretStore;
@@ -214,7 +219,7 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
         yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, encode("false"));
         const disabled = yield* serverEnvironment.getDescriptor;
         expect(disabled.capabilities.agentActivityPublishing).toBe(false);
-      }).pipe(Effect.provide(testLayer));
+      }).pipe(Effect.provide(isolatedTestLayer));
     }),
   );
 

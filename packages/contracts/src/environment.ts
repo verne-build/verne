@@ -19,6 +19,18 @@ export const ExecutionEnvironmentPlatform = Schema.Struct({
   arch: ExecutionEnvironmentPlatformArch,
 });
 
+const FullGitRevision = Schema.String.check(Schema.isPattern(/^[0-9a-f]{40}$/));
+const ReleaseVersion = Schema.String.check(
+  Schema.isPattern(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/),
+);
+
+export const ServerBuildIdentity = Schema.Struct({
+  revision: Schema.Union([FullGitRevision, Schema.Literal("unknown")]),
+  upstreamVersion: ReleaseVersion,
+  upstreamRevision: FullGitRevision,
+});
+export type ServerBuildIdentity = typeof ServerBuildIdentity.Type;
+
 /**
  * Where a new thread runs: the project's current checkout ("local") or a
  * fresh git worktree ("worktree"). Lives here (not settings.ts) so
@@ -105,6 +117,9 @@ export const ExecutionEnvironmentDescriptor = Schema.Struct({
   label: TrimmedNonEmptyString,
   platform: ExecutionEnvironmentPlatform,
   serverVersion: TrimmedNonEmptyString,
+  /** Build provenance for diagnostics. Absent on servers predating Verne's
+      independent release model. */
+  buildIdentity: Schema.optionalKey(ServerBuildIdentity),
   capabilities: ExecutionEnvironmentCapabilities,
 });
 export type ExecutionEnvironmentDescriptor = typeof ExecutionEnvironmentDescriptor.Type;

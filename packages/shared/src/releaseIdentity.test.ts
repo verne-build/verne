@@ -4,6 +4,7 @@ import upstreamFixture from "../../../config/verne-upstream.json" with { type: "
 import {
   decodeUpstreamProvenance,
   formatBuildIdentity,
+  requireBuildRevision,
   resolveBuildRevision,
 } from "./releaseIdentity.ts";
 
@@ -43,6 +44,17 @@ describe("Verne release identity", () => {
     expect(resolveBuildRevision({ explicitRevision: "dirty", githubRevision: "short" })).toBe(
       "unknown",
     );
+  });
+
+  it("rejects publishable builds without an exact Verne revision", () => {
+    expect(() => requireBuildRevision({ explicitRevision: "dirty" })).toThrow(
+      "Publishable Verne builds require a full Git revision",
+    );
+    expect(
+      requireBuildRevision({
+        explicitRevision: "0123456789abcdef0123456789abcdef01234567",
+      }),
+    ).toBe("0123456789abcdef0123456789abcdef01234567");
   });
 
   it("formats Verne first and upstream provenance as secondary diagnostics", () => {
