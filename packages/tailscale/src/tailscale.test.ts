@@ -12,15 +12,20 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   buildTailscaleHttpsBaseUrl,
   disableTailscaleServe,
+  disableOwnedTailscaleServe,
   ensureTailscaleServe,
+  ensureOwnedTailscaleServe,
   isTailscaleIpv4Address,
   parseTailscaleMagicDnsName,
   parseTailscaleStatus,
   readTailscaleStatus,
+  readTailscaleServeConfig,
   TAILSCALE_STATUS_TIMEOUT,
   TailscaleCommandExitError,
   TailscaleCommandSpawnError,
   TailscaleCommandTimeoutError,
+  TailscaleServeConfigParseError,
+  TailscaleServeConflictError,
   TailscaleStatusParseError,
 } from "./tailscale.ts";
 
@@ -65,6 +70,18 @@ function assertCarriesNoSecret(error: object, secret: string): void {
 }
 const tailscaleStatusJson = `{"Self":{"DNSName":"desktop.tail.ts.net.","TailscaleIPs":["100.100.100.100","fd7a:115c:a1e0::1","192.168.1.20"]}}`;
 const tailscaleStatusWithSingleIpJson = `{"Self":{"DNSName":"desktop.tail.ts.net.","TailscaleIPs":["100.90.1.2"]}}`;
+const tailscaleServeStatusJson = JSON.stringify({
+  TCP: { "3000": { HTTPS: true }, "8443": { HTTPS: true } },
+  Web: {
+    "host.tailnet.ts.net:3000": {
+      Handlers: { "/": { Proxy: "http://127.0.0.1:43121/" } },
+    },
+    "host.tailnet.ts.net:8443": {
+      Handlers: { "/": { Proxy: "http://127.0.0.1:9999" } },
+    },
+  },
+  UnknownFutureField: { ignored: true },
+});
 
 function mockHandle(result: { stdout?: string; stderr?: string; code?: number }) {
   return ChildProcessSpawner.makeHandle({
@@ -112,6 +129,26 @@ function mockSpawnerLayer(
         readonly args: ReadonlyArray<string>;
       };
       return Effect.succeed(mockHandle(handler(childProcess.command, childProcess.args)));
+    }),
+  );
+}
+
+function sequenceSpawnerLayer(
+  results: ReadonlyArray<{ stdout?: string; stderr?: string; code?: number }>,
+  onCommand?: (args: ReadonlyArray<string>) => void,
+) {
+  let index = 0;
+  return Layer.succeed(
+    ChildProcessSpawner.ChildProcessSpawner,
+    ChildProcessSpawner.make((command) => {
+      const childProcess = command as unknown as {
+        readonly command: string;
+        readonly args: ReadonlyArray<string>;
+      };
+      onCommand?.(childProcess.args);
+      const result = results[index++];
+      assert.isDefined(result);
+      return Effect.succeed(mockHandle(result ?? {}));
     }),
   );
 }
@@ -374,6 +411,172 @@ describe("tailscale", () => {
       assert.deepEqual(commands, [
         { command: "tailscale", args: ["serve", "--https=8443", "off"] },
       ]);
+    });
+  });
+
+  it.effect("reads and parses the JSON Serve config while tolerating unknown fields", () => {
+    const layer = mockSpawnerLayer((command, args) => {
+      assert.equal(command, "tailscale");
+      assert.deepEqual(args, ["serve", "status", "--json"]);
+      return { stdout: tailscaleServeStatusJson };
+    });
+
+    return Effect.gen(function* () {
+      const config = yield* readTailscaleServeConfig.pipe(Effect.provide(layer));
+      assert.deepEqual(
+        [...config.entries()],
+        [
+          [3000, { servePort: 3000, proxyUrl: "http://127.0.0.1:43121" }],
+          [8443, { servePort: 8443, proxyUrl: "http://127.0.0.1:9999" }],
+        ],
+      );
+    });
+  });
+
+  it.effect("treats no existing Serve handler output as an empty config", () => {
+    const layer = mockSpawnerLayer(() => ({
+      code: 1,
+      stderr: "error: failed to get web serve: handler does not exist",
+    }));
+
+    return Effect.gen(function* () {
+      const config = yield* readTailscaleServeConfig.pipe(Effect.provide(layer));
+      assert.equal(config.size, 0);
+    });
+  });
+
+  it.effect("treats empty Serve status output as an empty config", () => {
+    const layer = mockSpawnerLayer(() => ({ stdout: "\n" }));
+
+    return Effect.gen(function* () {
+      const config = yield* readTailscaleServeConfig.pipe(Effect.provide(layer));
+      assert.equal(config.size, 0);
+    });
+  });
+
+  it.effect("keeps missing-daemon Serve diagnostics classified and secret-free", () => {
+    const secret = "tskey-auth-secret-token-value";
+    const layer = mockSpawnerLayer(() => ({
+      code: 1,
+      stderr: `failed to connect to local tailscaled: ${secret}`,
+    }));
+
+    return Effect.gen(function* () {
+      const error = yield* readTailscaleServeConfig.pipe(Effect.flip, Effect.provide(layer));
+      assert.instanceOf(error, TailscaleCommandExitError);
+      assert.equal(error.stderrDiagnostic, "unknown");
+      assertCarriesNoSecret(error, secret);
+    });
+  });
+
+  it.effect("reports malformed Serve JSON as a typed parse error without raw output", () => {
+    const secret = "tskey-auth-secret-token-value";
+    const layer = mockSpawnerLayer(() => ({ stdout: `{not-json ${secret}` }));
+
+    return Effect.gen(function* () {
+      const error = yield* readTailscaleServeConfig.pipe(Effect.flip, Effect.provide(layer));
+      assert.instanceOf(error, TailscaleServeConfigParseError);
+      assert.equal(error.message, "Failed to decode tailscale serve status JSON.");
+      assertCarriesNoSecret(error, secret);
+    });
+  });
+
+  it.effect("does not mutate an exact owned mapping", () => {
+    const commands: Array<ReadonlyArray<string>> = [];
+    const layer = sequenceSpawnerLayer([{ stdout: tailscaleServeStatusJson }], (args) => {
+      commands.push(args);
+    });
+
+    return Effect.gen(function* () {
+      const result = yield* ensureOwnedTailscaleServe({
+        servePort: 3000,
+        localHost: "127.0.0.1",
+        localPort: 43121,
+      }).pipe(Effect.provide(layer));
+      assert.equal(result, "existing");
+      assert.deepEqual(commands, [["serve", "status", "--json"]]);
+    });
+  });
+
+  it.effect("creates an absent owned mapping after reading config", () => {
+    const commands: Array<ReadonlyArray<string>> = [];
+    const layer = sequenceSpawnerLayer([{ stdout: tailscaleServeStatusJson }, {}], (args) => {
+      commands.push(args);
+    });
+
+    return Effect.gen(function* () {
+      const result = yield* ensureOwnedTailscaleServe({
+        servePort: 5000,
+        localHost: "127.0.0.1",
+        localPort: 43121,
+      }).pipe(Effect.provide(layer));
+      assert.equal(result, "created");
+      assert.deepEqual(commands, [
+        ["serve", "status", "--json"],
+        ["serve", "--bg", "--https=5000", "http://127.0.0.1:43121"],
+      ]);
+    });
+  });
+
+  it.effect("refuses to overwrite a different target", () => {
+    const layer = sequenceSpawnerLayer([{ stdout: tailscaleServeStatusJson }]);
+
+    return Effect.gen(function* () {
+      const error = yield* ensureOwnedTailscaleServe({
+        servePort: 8443,
+        localHost: "127.0.0.1",
+        localPort: 43121,
+      }).pipe(Effect.flip, Effect.provide(layer));
+      assert.instanceOf(error, TailscaleServeConflictError);
+      assert.equal(error.servePort, 8443);
+      assert.equal(error.message, "Tailscale Serve port 8443 is owned by a different target.");
+    });
+  });
+
+  it.effect("removes only an exact owned mapping", () => {
+    const commands: Array<ReadonlyArray<string>> = [];
+    const layer = sequenceSpawnerLayer([{ stdout: tailscaleServeStatusJson }, {}], (args) => {
+      commands.push(args);
+    });
+
+    return Effect.gen(function* () {
+      const result = yield* disableOwnedTailscaleServe({
+        servePort: 3000,
+        localHost: "127.0.0.1",
+        localPort: 43121,
+      }).pipe(Effect.provide(layer));
+      assert.equal(result, "removed");
+      assert.deepEqual(commands, [
+        ["serve", "status", "--json"],
+        ["serve", "--https=3000", "off"],
+      ]);
+    });
+  });
+
+  it.effect("does not mutate when the owned mapping is absent", () => {
+    const layer = sequenceSpawnerLayer([{ stdout: tailscaleServeStatusJson }]);
+
+    return Effect.gen(function* () {
+      const result = yield* disableOwnedTailscaleServe({
+        servePort: 5000,
+        localHost: "127.0.0.1",
+        localPort: 43121,
+      }).pipe(Effect.provide(layer));
+      assert.equal(result, "absent");
+    });
+  });
+
+  it.effect("refuses to remove a mismatched target", () => {
+    const layer = sequenceSpawnerLayer([{ stdout: tailscaleServeStatusJson }]);
+
+    return Effect.gen(function* () {
+      const error = yield* disableOwnedTailscaleServe({
+        servePort: 3000,
+        localHost: "127.0.0.1",
+        localPort: 43122,
+      }).pipe(Effect.flip, Effect.provide(layer));
+      assert.instanceOf(error, TailscaleServeConflictError);
+      assert.equal(error.servePort, 3000);
     });
   });
 });

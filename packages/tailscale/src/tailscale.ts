@@ -41,7 +41,10 @@ export type TailscaleStderrDiagnostic = typeof TailscaleStderrDiagnostic.Type;
 const STDERR_DIAGNOSTIC_PATTERNS: ReadonlyArray<
   readonly [RegExp, Exclude<TailscaleStderrDiagnostic, "unknown">]
 > = [
-  [/handler does not exist/i, "no-existing-handler"],
+  [
+    /handler does not exist|no (?:existing )?(?:web )?handler|no serve config/i,
+    "no-existing-handler",
+  ],
   [/not logged in|logged out|needs? login/i, "not-logged-in"],
   [/permission denied|access denied|must be root|operation not permitted/i, "permission-denied"],
 ];
@@ -125,6 +128,24 @@ export class TailscaleStatusParseError extends Schema.TaggedErrorClass<Tailscale
 ) {
   override get message(): string {
     return "Failed to decode tailscale status JSON.";
+  }
+}
+
+export class TailscaleServeConfigParseError extends Schema.TaggedErrorClass<TailscaleServeConfigParseError>()(
+  "TailscaleServeConfigParseError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Failed to decode tailscale serve status JSON.";
+  }
+}
+
+export class TailscaleServeConflictError extends Schema.TaggedErrorClass<TailscaleServeConflictError>()(
+  "TailscaleServeConflictError",
+  { servePort: Schema.Number },
+) {
+  override get message(): string {
+    return `Tailscale Serve port ${this.servePort} is owned by a different target.`;
   }
 }
 
@@ -291,7 +312,7 @@ export function buildTailscaleHttpsBaseUrl(input: {
 const runTailscaleCommand = (
   args: readonly string[],
   timeoutInput: Duration.Input,
-): Effect.Effect<void, TailscaleCommandError, ChildProcessSpawner.ChildProcessSpawner> =>
+): Effect.Effect<string, TailscaleCommandError, ChildProcessSpawner.ChildProcessSpawner> =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const hostPlatform = yield* HostProcessPlatform;
@@ -309,8 +330,12 @@ const runTailscaleCommand = (
           Effect.fail(new TailscaleCommandSpawnError({ ...commandContext, cause })),
         ),
       );
-      const [stderr, exitCode] = yield* Effect.all(
-        [collectStderr(child.stderr), child.exitCode.pipe(Effect.map(Number))],
+      const [stdout, stderr, exitCode] = yield* Effect.all(
+        [
+          collectStdout(child.stdout),
+          collectStderr(child.stderr),
+          child.exitCode.pipe(Effect.map(Number)),
+        ],
         { concurrency: "unbounded" },
       ).pipe(
         Effect.mapError((cause) => new TailscaleCommandOutputError({ ...commandContext, cause })),
@@ -319,12 +344,14 @@ const runTailscaleCommand = (
         return yield* new TailscaleCommandExitError({
           ...commandContext,
           exitCode,
+          stdoutLength: stdout.length,
           stderrLength: stderr.length,
           ...(stderrDiagnosticOf(stderr) !== undefined
             ? { stderrDiagnostic: stderrDiagnosticOf(stderr) }
             : {}),
         });
       }
+      return stdout;
     }).pipe(
       Effect.scoped,
       Effect.timeout(timeout),
@@ -341,6 +368,162 @@ const runTailscaleCommand = (
     );
   });
 
+const normalizeServeProxyUrl = (proxyUrl: string): string | null => {
+  try {
+    const url = new URL(proxyUrl);
+    // Keep path/query differences visible for ownership comparisons. Never
+    // retain credentials from a CLI-provided target, though: they are not
+    // needed to distinguish a target from the local loopback URL.
+    const redactedUserInfo = url.username || url.password ? "redacted@" : "";
+    const path = url.pathname === "/" ? "" : url.pathname;
+    return `${url.protocol}//${redactedUserInfo}${url.host}${path}${url.search}${url.hash}`;
+  } catch {
+    return null;
+  }
+};
+
+const normalizeOwnedServeProxyUrl = (input: {
+  readonly localHost: string;
+  readonly localPort: number;
+}): string => normalizeServeProxyUrl(`http://${input.localHost}:${input.localPort}`) ?? "";
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+const UNKNOWN_SERVE_PROXY_URL = "<unrecognized-serve-target>";
+
+const parseTailscaleServeConfigJson = (
+  raw: string,
+): Effect.Effect<ReadonlyMap<number, TailscaleServeMapping>, TailscaleServeConfigParseError> => {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    // Deliberately do not retain the parser's error: it can quote input and
+    // the input comes directly from a CLI that may include sensitive values.
+    return Effect.fail(new TailscaleServeConfigParseError({ cause: new Error("invalid JSON") }));
+  }
+
+  if (!isRecord(parsed)) {
+    return Effect.fail(
+      new TailscaleServeConfigParseError({ cause: new Error("serve status is not an object") }),
+    );
+  }
+
+  const tcp = parsed.TCP;
+  const mappings = new Map<number, TailscaleServeMapping>();
+  if (!isRecord(tcp)) return Effect.succeed(mappings);
+  const web = isRecord(parsed.Web) ? parsed.Web : {};
+
+  for (const [rawPort, rawTcpConfig] of Object.entries(tcp)) {
+    const servePort = Number(rawPort);
+    if (
+      !/^\d+$/u.test(rawPort) ||
+      !Number.isInteger(servePort) ||
+      servePort < 1 ||
+      servePort > 65_535 ||
+      !isRecord(rawTcpConfig) ||
+      rawTcpConfig.HTTPS !== true
+    ) {
+      continue;
+    }
+
+    let proxyUrl = UNKNOWN_SERVE_PROXY_URL;
+    for (const [webKey, rawWebConfig] of Object.entries(web)) {
+      if (!webKey.endsWith(`:${String(servePort)}`) || !isRecord(rawWebConfig)) continue;
+      const handlers = rawWebConfig.Handlers;
+      const rootHandler = isRecord(handlers) && handlers["/"];
+      const proxy = isRecord(rootHandler) ? rootHandler.Proxy : undefined;
+      if (typeof proxy !== "string") continue;
+      const normalizedProxy = normalizeServeProxyUrl(proxy);
+      proxyUrl = normalizedProxy ?? UNKNOWN_SERVE_PROXY_URL;
+      if (normalizedProxy !== null) break;
+    }
+    mappings.set(servePort, { servePort, proxyUrl });
+  }
+  return Effect.succeed(mappings);
+};
+
+export interface TailscaleServeMapping {
+  readonly servePort: number;
+  readonly proxyUrl: string;
+}
+
+export type TailscaleServeMutationError =
+  | TailscaleCommandError
+  | TailscaleServeConfigParseError
+  | TailscaleServeConflictError;
+
+export const readTailscaleServeConfig: Effect.Effect<
+  ReadonlyMap<number, TailscaleServeMapping>,
+  TailscaleCommandError | TailscaleServeConfigParseError,
+  ChildProcessSpawner.ChildProcessSpawner
+> = Effect.gen(function* () {
+  const output = yield* runTailscaleCommand(
+    ["serve", "status", "--json"],
+    TAILSCALE_SERVE_TIMEOUT,
+  ).pipe(
+    Effect.catchTags({
+      TailscaleCommandExitError: (error) =>
+        error.stderrDiagnostic === "no-existing-handler" ? Effect.succeed("") : Effect.fail(error),
+    }),
+  );
+  if (output.trim().length === 0) return new Map<number, TailscaleServeMapping>();
+  return yield* parseTailscaleServeConfigJson(output);
+});
+
+export const ensureOwnedTailscaleServe = (input: {
+  readonly servePort: number;
+  readonly localHost: string;
+  readonly localPort: number;
+}): Effect.Effect<
+  "created" | "existing",
+  TailscaleServeMutationError,
+  ChildProcessSpawner.ChildProcessSpawner
+> =>
+  Effect.gen(function* () {
+    const expectedProxyUrl = normalizeOwnedServeProxyUrl(input);
+    const config = yield* readTailscaleServeConfig;
+    const existing = config.get(input.servePort);
+    if (existing !== undefined) {
+      if (existing.proxyUrl === expectedProxyUrl) return "existing" as const;
+      return yield* new TailscaleServeConflictError({ servePort: input.servePort });
+    }
+    yield* runTailscaleCommand(
+      [
+        "serve",
+        "--bg",
+        `--https=${String(input.servePort)}`,
+        `http://${input.localHost}:${String(input.localPort)}`,
+      ],
+      TAILSCALE_SERVE_TIMEOUT,
+    );
+    return "created" as const;
+  });
+
+export const disableOwnedTailscaleServe = (input: {
+  readonly servePort: number;
+  readonly localHost: string;
+  readonly localPort: number;
+}): Effect.Effect<
+  "removed" | "absent",
+  TailscaleServeMutationError,
+  ChildProcessSpawner.ChildProcessSpawner
+> =>
+  Effect.gen(function* () {
+    const expectedProxyUrl = normalizeOwnedServeProxyUrl(input);
+    const config = yield* readTailscaleServeConfig;
+    const existing = config.get(input.servePort);
+    if (existing === undefined) return "absent" as const;
+    if (existing.proxyUrl !== expectedProxyUrl) {
+      return yield* new TailscaleServeConflictError({ servePort: input.servePort });
+    }
+    yield* runTailscaleCommand(
+      ["serve", `--https=${String(input.servePort)}`, "off"],
+      TAILSCALE_SERVE_TIMEOUT,
+    );
+    return "removed" as const;
+  });
+
 export const ensureTailscaleServe = (input: {
   readonly localPort: number;
   readonly servePort?: number;
@@ -349,21 +532,20 @@ export const ensureTailscaleServe = (input: {
   const servePort = input.servePort ?? DEFAULT_TAILSCALE_SERVE_PORT;
   const localHost = input.localHost ?? "127.0.0.1";
   const args = ["serve", "--bg", `--https=${servePort}`, `http://${localHost}:${input.localPort}`];
-  return runTailscaleCommand(args, TAILSCALE_SERVE_TIMEOUT);
+  return runTailscaleCommand(args, TAILSCALE_SERVE_TIMEOUT).pipe(Effect.asVoid);
 };
 
 export const disableTailscaleServe = (
   input: {
     readonly servePort?: number;
   } = {},
-): Effect.Effect<void, TailscaleCommandError, ChildProcessSpawner.ChildProcessSpawner> =>
-  Effect.gen(function* () {
-    const servePort = input.servePort ?? DEFAULT_TAILSCALE_SERVE_PORT;
-    return yield* runTailscaleCommand(
-      ["serve", `--https=${servePort}`, "off"],
-      TAILSCALE_SERVE_TIMEOUT,
-    );
-  });
+): Effect.Effect<void, TailscaleCommandError, ChildProcessSpawner.ChildProcessSpawner> => {
+  const servePort = input.servePort ?? DEFAULT_TAILSCALE_SERVE_PORT;
+  return runTailscaleCommand(
+    ["serve", `--https=${servePort}`, "off"],
+    TAILSCALE_SERVE_TIMEOUT,
+  ).pipe(Effect.asVoid);
+};
 
 export const probeTailscaleHttpsEndpoint = (input: {
   readonly baseUrl: string;
