@@ -47,6 +47,7 @@ export interface ServerDerivedPaths {
   readonly anonymousIdPath: string;
   readonly environmentIdPath: string;
   readonly serverRuntimeStatePath: string;
+  readonly tailnetPreviewMappingsPath: string;
   readonly secretsDir: string;
 }
 
@@ -134,6 +135,7 @@ export const deriveServerPaths = Effect.fn(function* (
     anonymousIdPath: join(stateDir, "anonymous-id"),
     environmentIdPath: join(stateDir, "environment-id"),
     serverRuntimeStatePath: join(stateDir, "server-runtime.json"),
+    tailnetPreviewMappingsPath: join(stateDir, "tailnet-preview-mappings.json"),
     secretsDir: join(stateDir, "secrets"),
   };
 });

@@ -64,6 +64,23 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     );
   });
 
+  it.effect("derives the Tailnet preview ownership registry inside each state directory", () =>
+    Effect.gen(function* () {
+      const { join } = yield* Path.Path;
+      const baseDir = join(NodeOS.tmpdir(), "verne-tailnet-preview-paths");
+
+      const userdata = yield* deriveServerPaths(baseDir, undefined);
+      const dev = yield* deriveServerPaths(baseDir, new URL("http://127.0.0.1:5173"));
+
+      expect(userdata.tailnetPreviewMappingsPath).toBe(
+        join(baseDir, "userdata", "tailnet-preview-mappings.json"),
+      );
+      expect(dev.tailnetPreviewMappingsPath).toBe(
+        join(baseDir, "dev", "tailnet-preview-mappings.json"),
+      );
+    }),
+  );
+
   it.effect("falls back to effect/config values when flags are omitted", () =>
     Effect.gen(function* () {
       const { join } = yield* Path.Path;
