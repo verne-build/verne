@@ -9,6 +9,7 @@ import {
   PreviewTailnetAcquireInput,
   PreviewTailnetAcquireResult,
   PreviewTailnetReadiness,
+  PreviewTailnetRenewInput,
   PreviewTailnetStatusResult,
   PreviewEvent,
   PreviewNavStatus,
@@ -42,6 +43,7 @@ const decodeTailnetReadiness = Schema.decodeUnknownSync(PreviewTailnetReadiness)
 const decodeTailnetStatusResult = Schema.decodeUnknownSync(PreviewTailnetStatusResult);
 const decodeTailnetAcquireInput = Schema.decodeUnknownSync(PreviewTailnetAcquireInput);
 const decodeTailnetAcquireResult = Schema.decodeUnknownSync(PreviewTailnetAcquireResult);
+const decodeTailnetRenewInput = Schema.decodeUnknownSync(PreviewTailnetRenewInput);
 const decodePortForwardLeaseInput = Schema.decodeUnknownSync(PreviewPortForwardLeaseInput);
 const decodePortForwardLeaseResult = Schema.decodeUnknownSync(PreviewPortForwardLeaseResult);
 
@@ -121,6 +123,15 @@ describe("Tailnet preview contracts", () => {
         readiness: "ready",
       }),
     ).toThrow();
+  });
+
+  it("renews a Tailnet preview lease by thread and port rather than by lease id", () => {
+    expect(decodeTailnetRenewInput({ threadId: "thread-1", port: 5173 })).toEqual({
+      threadId: "thread-1",
+      port: 5173,
+    });
+    expect(() => decodeTailnetRenewInput({ leaseId: "lease-1" })).toThrow();
+    expect(() => decodeTailnetRenewInput({ threadId: "thread-1" })).toThrow();
   });
 });
 

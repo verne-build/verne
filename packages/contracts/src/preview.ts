@@ -372,7 +372,8 @@ export const PreviewTailnetAcquireResult = Schema.Struct({
 export type PreviewTailnetAcquireResult = typeof PreviewTailnetAcquireResult.Type;
 
 export const PreviewTailnetRenewInput = Schema.Struct({
-  leaseId: PreviewTailnetLeaseId,
+  threadId: ThreadId,
+  port: PreviewTcpPort,
 });
 export type PreviewTailnetRenewInput = typeof PreviewTailnetRenewInput.Type;
 
