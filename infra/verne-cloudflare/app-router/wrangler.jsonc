@@ -5,6 +5,6 @@
   "workers_dev": false,
   "services": [
     { "binding": "LATEST", "service": "verne-app-latest" },
-    { "binding": "NIGHTLY", "service": "verne-app-nightly" },
-  ],
+    { "binding": "NIGHTLY", "service": "verne-app-nightly" }
+  ]
 }
