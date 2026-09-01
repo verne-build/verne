@@ -1,4 +1,5 @@
 import type { ExpoConfig } from "expo/config";
+import * as NodeChildProcess from "node:child_process";
 import {
   PRODUCT_BASE_NAME,
   VERNE_APP_IDS,
@@ -25,9 +26,21 @@ const runtimeVersionPolicy =
   process.env.MOBILE_VERSION_POLICY ??
   (APP_VARIANT === "development" ? "appVersion" : "fingerprint");
 const upstreamProvenance = decodeUpstreamProvenance(upstreamJson);
+const localGitRevision = () => {
+  try {
+    return NodeChildProcess.execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: import.meta.dirname,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return undefined;
+  }
+};
 const buildRevisionInput = {
   explicitRevision: process.env.VERNE_REVISION,
-  githubRevision: process.env.GITHUB_SHA ?? process.env.EAS_BUILD_GIT_COMMIT_HASH,
+  githubRevision:
+    process.env.GITHUB_SHA ?? process.env.EAS_BUILD_GIT_COMMIT_HASH ?? localGitRevision(),
 };
 const verneRevision =
   process.env.VERNE_RELEASE_BUILD === "1"
