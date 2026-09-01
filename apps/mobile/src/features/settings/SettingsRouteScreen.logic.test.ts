@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveAgentAwarenessPlatformPresentation } from "./SettingsRouteScreen.logic";
+import {
+  formatMobileVersionLabel,
+  resolveAgentAwarenessPlatformPresentation,
+} from "./SettingsRouteScreen.logic";
 
 describe("resolveAgentAwarenessPlatformPresentation", () => {
   it("explains that agent awareness settings are unavailable on Android", () => {
@@ -15,5 +18,27 @@ describe("resolveAgentAwarenessPlatformPresentation", () => {
       supported: true,
       subtitle: undefined,
     });
+  });
+});
+
+describe("formatMobileVersionLabel", () => {
+  it("shows the independent mobile version and native build identifier", () => {
+    expect(
+      formatMobileVersionLabel({
+        version: "0.1.0",
+        buildVersion: "42",
+        variant: "production",
+      }),
+    ).toBe("0.1.0 (42)");
+  });
+
+  it("keeps non-production variants visible and tolerates local builds", () => {
+    expect(
+      formatMobileVersionLabel({
+        version: "0.1.0",
+        buildVersion: null,
+        variant: "development",
+      }),
+    ).toBe("0.1.0 · Development");
   });
 });

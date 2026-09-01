@@ -1,10 +1,10 @@
 # Product analytics
 
-Verne sends anonymous product events from the server to PostHog. The server
-uses the first available hashed Codex account ID, hashed Claude user ID, or
-installation-scoped anonymous ID as the distinct ID. It also keeps the
-telemetry opt-out, event buffer, and batch delivery. Clients do not load the
-PostHog browser SDK.
+Verne can send anonymous product events from the server to PostHog. Collection
+is disabled by default and starts only when `VERNE_TELEMETRY_ENABLED=true` and
+`VERNE_POSTHOG_KEY` is configured. The server uses the first available hashed
+Codex account ID, hashed Claude user ID, or installation-scoped anonymous ID as
+the distinct ID. Clients do not load the PostHog browser SDK.
 
 ## Client events
 
@@ -43,13 +43,15 @@ reports them. Older clients can omit every client property.
 Server properties appear on all events, including server boot and background
 events.
 
-| Property           | Values and meaning                                             |
-| ------------------ | -------------------------------------------------------------- |
-| `serverOs`         | Server process OS, normalized to the same names as `clientOs`. |
-| `serverArch`       | Server process architecture.                                   |
-| `serverWslDistro`  | WSL distribution from `WSL_DISTRO_NAME`, when present.         |
-| `serverAppVersion` | Verne server version.                                          |
-| `serverMode`       | Server runtime mode: `desktop` or `web`.                       |
+| Property                | Values and meaning                                             |
+| ----------------------- | -------------------------------------------------------------- |
+| `serverOs`              | Server process OS, normalized to the same names as `clientOs`. |
+| `serverArch`            | Server process architecture.                                   |
+| `serverWslDistro`       | WSL distribution from `WSL_DISTRO_NAME`, when present.         |
+| `serverAppVersion`      | Verne server version.                                          |
+| `verneVersion`          | Verne server release version.                                  |
+| `upstreamT3CodeVersion` | T3 Code version incorporated into this Verne release.          |
+| `serverMode`            | Server runtime mode: `desktop` or `web`.                       |
 
 ## Legacy properties
 
@@ -58,8 +60,10 @@ Existing property meanings do not change:
 - `clientType` describes how the server runs. It is `desktop-app` for a desktop
   server and `cli-web-client` for a CLI web server. It does not describe the
   connected client. Use `surface` and `webDeployment` for new reports.
-- `platform`, `arch`, `wsl`, and `t3CodeVersion` describe the server. Use the
-  new `server*` names for new reports.
+- `platform`, `arch`, and `wsl` describe the server. Use the new `server*`
+  names for new reports. T3 Code installations may also have emitted
+  `t3CodeVersion`; Verne emits `verneVersion` and `upstreamT3CodeVersion`
+  separately so product releases are not confused with upstream provenance.
 - `appVersion` describes the connected client. Use `clientAppVersion` for new
   reports.
 - Mobile connection events keep `os`, `osMajorVersion`, and `deviceModel`.

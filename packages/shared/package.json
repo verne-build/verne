@@ -223,6 +223,10 @@
       "types": "./src/productIdentity.ts",
       "import": "./src/productIdentity.ts"
     },
+    "./releaseIdentity": {
+      "types": "./src/releaseIdentity.ts",
+      "import": "./src/releaseIdentity.ts"
+    },
     "./legacyStateMigration": {
       "types": "./src/legacyStateMigration.ts",
       "import": "./src/legacyStateMigration.ts"

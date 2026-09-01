@@ -4,6 +4,11 @@ import {
   VERNE_APP_IDS,
   VERNE_SCHEMES,
 } from "../../packages/shared/src/productIdentity.ts";
+import {
+  decodeUpstreamProvenance,
+  resolveBuildRevision,
+} from "../../packages/shared/src/releaseIdentity.ts";
+import upstreamJson from "../../config/verne-upstream.json" with { type: "json" };
 
 import { BRAND_ASSET_PATHS } from "../../scripts/lib/brand-assets.ts";
 import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
@@ -18,6 +23,11 @@ const isIosPersonalTeamBuild = repoEnv.VERNE_IOS_PERSONAL_TEAM === "1";
 const runtimeVersionPolicy =
   process.env.MOBILE_VERSION_POLICY ??
   (APP_VARIANT === "development" ? "appVersion" : "fingerprint");
+const upstreamProvenance = decodeUpstreamProvenance(upstreamJson);
+const verneRevision = resolveBuildRevision({
+  explicitRevision: process.env.VERNE_REVISION,
+  githubRevision: process.env.GITHUB_SHA,
+});
 
 const personalTeamBundleIdentifier = repoEnv.VERNE_IOS_PERSONAL_TEAM_BUNDLE_ID?.trim();
 const IOS_BUNDLE_IDENTIFIER_PATTERN = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
@@ -161,7 +171,7 @@ const config: ExpoConfig = {
   slug: "verne",
   platforms: ["ios", "android"],
   scheme: variant.scheme,
-  version: "1.0.4",
+  version: "0.1.0",
   runtimeVersion: {
     // Development manifests resolve on every launch, so avoid fingerprint's
     // expensive native-project calculation there. Preview and production stay
@@ -337,6 +347,10 @@ const config: ExpoConfig = {
   extra: {
     appVariant: APP_VARIANT,
     iosPersonalTeamBuild: isIosPersonalTeamBuild,
+    releaseIdentity: {
+      verneRevision,
+      upstream: upstreamProvenance,
+    },
     observability: {
       tracesUrl: repoEnv.EXPO_PUBLIC_OTLP_TRACES_URL ?? "https://api.axiom.co/v1/traces",
       tracesDataset: repoEnv.EXPO_PUBLIC_OTLP_TRACES_DATASET ?? null,

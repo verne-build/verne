@@ -69,6 +69,18 @@ describe("branding", () => {
     expect(branding.HOSTED_APP_CHANNEL).toBeNull();
     expect(branding.HOSTED_APP_CHANNEL_LABEL).toBeNull();
   });
+
+  it("exposes injected Verne and upstream revisions for diagnostics", async () => {
+    vi.stubEnv("VERNE_REVISION", "0123456789abcdef0123456789abcdef01234567");
+    vi.stubEnv("UPSTREAM_VERSION", "0.0.37");
+    vi.stubEnv("UPSTREAM_REVISION", "b883fc066ea5c9bebbe1c3e9b4bc2471aab3685f");
+
+    const branding = await import("./branding");
+
+    expect(branding.APP_REVISION).toBe("0123456789abcdef0123456789abcdef01234567");
+    expect(branding.UPSTREAM_VERSION).toBe("0.0.37");
+    expect(branding.UPSTREAM_REVISION).toBe("b883fc066ea5c9bebbe1c3e9b4bc2471aab3685f");
+  });
 });
 
 describe("branding logic", () => {

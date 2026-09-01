@@ -9,8 +9,10 @@ import { defineProject, type TestProjectInlineConfiguration } from "vite-plus/te
 import "vite-plus/test/config";
 import { defineConfig, type Connect, type Plugin } from "vite-plus";
 import pkg from "./package.json" with { type: "json" };
+import upstreamJson from "../../config/verne-upstream.json" with { type: "json" };
 
 import { DEV_PROXIED_PATH_PREFIXES } from "@t3tools/shared/devProxy";
+import { decodeUpstreamProvenance, resolveBuildRevision } from "@t3tools/shared/releaseIdentity";
 
 import { loadRepoEnv } from "../../scripts/lib/public-config";
 
@@ -40,6 +42,11 @@ const configuredRelayTracingDataset = repoEnv.VITE_RELAY_OTLP_TRACES_DATASET?.tr
 const configuredRelayTracingToken = repoEnv.VITE_RELAY_OTLP_TRACES_TOKEN?.trim() || "";
 const configuredHostedAppChannel = process.env.VITE_HOSTED_APP_CHANNEL?.trim() || "";
 const configuredAppVersion = process.env.APP_VERSION?.trim() || pkg.version;
+const upstreamProvenance = decodeUpstreamProvenance(upstreamJson);
+const configuredAppRevision = resolveBuildRevision({
+  explicitRevision: process.env.VERNE_REVISION,
+  githubRevision: process.env.GITHUB_SHA,
+});
 const configuredHostedAppUrl = (() => {
   const explicitHostedAppUrl = process.env.VITE_HOSTED_APP_URL?.trim();
   if (explicitHostedAppUrl) {
@@ -202,6 +209,9 @@ export default defineConfig(() => {
       "import.meta.env.VITE_HOSTED_APP_URL": JSON.stringify(configuredHostedAppUrl ?? ""),
       "import.meta.env.VITE_HOSTED_APP_CHANNEL": JSON.stringify(configuredHostedAppChannel),
       "import.meta.env.APP_VERSION": JSON.stringify(configuredAppVersion),
+      "import.meta.env.VERNE_REVISION": JSON.stringify(configuredAppRevision),
+      "import.meta.env.UPSTREAM_VERSION": JSON.stringify(upstreamProvenance.version),
+      "import.meta.env.UPSTREAM_REVISION": JSON.stringify(upstreamProvenance.revision),
     },
     resolve: {
       tsconfigPaths: true,

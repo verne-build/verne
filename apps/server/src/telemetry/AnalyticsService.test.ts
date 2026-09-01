@@ -25,6 +25,8 @@ interface RecordedBatchRequest {
         readonly serverArch?: string;
         readonly serverAppVersion?: string;
         readonly serverMode?: string;
+        readonly verneVersion?: string;
+        readonly upstreamT3CodeVersion?: string;
         readonly t3CodeVersion?: string;
       };
     }>;
@@ -41,6 +43,8 @@ interface RecordedBatchBody {
       readonly serverArch?: string;
       readonly serverAppVersion?: string;
       readonly serverMode?: string;
+      readonly verneVersion?: string;
+      readonly upstreamT3CodeVersion?: string;
       readonly t3CodeVersion?: string;
     };
   }>;
@@ -140,7 +144,9 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
             (event) =>
               event.properties?.serverOs === "Linux" &&
               event.properties.serverArch === "arm64" &&
-              event.properties.serverAppVersion === event.properties.t3CodeVersion &&
+              event.properties.serverAppVersion === event.properties.verneVersion &&
+              event.properties.upstreamT3CodeVersion === "0.0.37" &&
+              event.properties.t3CodeVersion === undefined &&
               event.properties.serverMode === "web",
           ),
         ),

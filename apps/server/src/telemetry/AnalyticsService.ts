@@ -7,6 +7,7 @@
  * @module AnalyticsService
  */
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { decodeUpstreamProvenance } from "@t3tools/shared/releaseIdentity";
 import type { ClientOs } from "@t3tools/contracts";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
@@ -20,6 +21,7 @@ import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import packageJson from "../../package.json" with { type: "json" };
+import upstreamJson from "../../../../config/verne-upstream.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import { getTelemetryIdentifier } from "./Identify.ts";
 
@@ -30,19 +32,18 @@ interface BufferedAnalyticsEvent {
 }
 
 const TelemetryEnvConfig = Config.all({
-  posthogKey: Config.string("VERNE_POSTHOG_KEY").pipe(
-    Config.withDefault("phc_XOWci4oZP4VvLiEyrFqkFjP4CZn55mjYYBMREK5Wd6m"),
-  ),
+  posthogKey: Config.string("VERNE_POSTHOG_KEY").pipe(Config.withDefault("")),
   posthogHost: Config.string("VERNE_POSTHOG_HOST").pipe(
     Config.withDefault("https://us.i.posthog.com"),
   ),
-  enabled: Config.boolean("VERNE_TELEMETRY_ENABLED").pipe(Config.withDefault(true)),
+  enabled: Config.boolean("VERNE_TELEMETRY_ENABLED").pipe(Config.withDefault(false)),
   flushBatchSize: Config.number("VERNE_TELEMETRY_FLUSH_BATCH_SIZE").pipe(Config.withDefault(20)),
   maxBufferedEvents: Config.number("VERNE_TELEMETRY_MAX_BUFFERED_EVENTS").pipe(
     Config.withDefault(1_000),
   ),
   wslDistroName: Config.string("WSL_DISTRO_NAME").pipe(Config.option),
 });
+const upstreamProvenance = decodeUpstreamProvenance(upstreamJson);
 
 export class AnalyticsService extends Context.Service<
   AnalyticsService,
@@ -122,7 +123,7 @@ export const make = Effect.gen(function* () {
   const sendBatch = Effect.fn("AnalyticsService.sendBatch")(function* (
     events: ReadonlyArray<BufferedAnalyticsEvent>,
   ) {
-    if (!telemetryConfig.enabled || !identifier) return;
+    if (!telemetryConfig.enabled || !telemetryConfig.posthogKey || !identifier) return;
 
     const payload = {
       api_key: telemetryConfig.posthogKey,
@@ -135,7 +136,8 @@ export const make = Effect.gen(function* () {
           platform: hostPlatform,
           wsl: Option.getOrUndefined(telemetryConfig.wslDistroName),
           arch: hostArchitecture,
-          t3CodeVersion: packageJson.version,
+          verneVersion: packageJson.version,
+          upstreamT3CodeVersion: upstreamProvenance.version,
           clientType,
           serverOs: serverOsFromNodePlatform(hostPlatform),
           serverArch: hostArchitecture,
@@ -181,7 +183,7 @@ export const make = Effect.gen(function* () {
 
   const record: AnalyticsService["Service"]["record"] = Effect.fn("AnalyticsService.record")(
     function* (event, properties) {
-      if (!telemetryConfig.enabled || !identifier) return;
+      if (!telemetryConfig.enabled || !telemetryConfig.posthogKey || !identifier) return;
 
       const enqueueResult = yield* enqueueBufferedEvent(event, properties);
       if (enqueueResult.dropped) {

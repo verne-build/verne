@@ -40,7 +40,14 @@ import { createModelSelection } from "@t3tools/shared/model";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
 import * as Schema from "effect/Schema";
-import { APP_VERSION, HOSTED_APP_CHANNEL, HOSTED_APP_CHANNEL_LABEL } from "../../branding";
+import {
+  APP_REVISION,
+  APP_VERSION,
+  HOSTED_APP_CHANNEL,
+  HOSTED_APP_CHANNEL_LABEL,
+  UPSTREAM_REVISION,
+  UPSTREAM_VERSION,
+} from "../../branding";
 import {
   canCheckForUpdate,
   getDesktopUpdateButtonTooltip,
@@ -226,6 +233,31 @@ function AboutVersionTitle() {
   );
 }
 
+function AboutBuildIdentityRows() {
+  return (
+    <>
+      <SettingsRow
+        title="Verne revision"
+        description="Exact Verne source revision used for this build."
+        control={
+          <code className="text-[11px] font-medium text-muted-foreground">
+            {APP_REVISION === "unknown" ? APP_REVISION : APP_REVISION.slice(0, 7)}
+          </code>
+        }
+      />
+      <SettingsRow
+        title={`Based on T3 Code ${UPSTREAM_VERSION}`}
+        description="Upstream provenance for diagnostics; Verne controls updates and compatibility."
+        control={
+          <code className="text-[11px] font-medium text-muted-foreground">
+            {UPSTREAM_REVISION === "unknown" ? UPSTREAM_REVISION : UPSTREAM_REVISION.slice(0, 7)}
+          </code>
+        }
+      />
+    </>
+  );
+}
+
 function AboutVersionSection() {
   const updateState = useDesktopUpdateState();
   const [isChangingUpdateChannel, setIsChangingUpdateChannel] = useState(false);
@@ -393,6 +425,7 @@ function AboutVersionSection() {
           </Tooltip>
         }
       />
+      <AboutBuildIdentityRows />
       {hasDesktopBridge ? (
         <SettingsRow
           title="Update track"
@@ -2523,10 +2556,13 @@ export function GeneralSettingsPanel() {
         {isElectron || HOSTED_APP_CHANNEL ? (
           <AboutVersionSection />
         ) : (
-          <SettingsRow
-            title={<AboutVersionTitle />}
-            description="Current version of the application."
-          />
+          <>
+            <SettingsRow
+              title={<AboutVersionTitle />}
+              description="Current version of the application."
+            />
+            <AboutBuildIdentityRows />
+          </>
         )}
         <SettingsRow
           {...searchableSetting("diagnostics")}

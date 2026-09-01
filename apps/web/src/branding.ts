@@ -26,3 +26,6 @@ export const APP_DISPLAY_NAME =
   injectedDesktopAppBranding?.displayName ??
   formatAppDisplayName({ baseName: APP_BASE_NAME, stageLabel: APP_STAGE_LABEL });
 export const APP_VERSION = import.meta.env.APP_VERSION || "0.0.0";
+export const APP_REVISION = import.meta.env.VERNE_REVISION || "unknown";
+export const UPSTREAM_VERSION = import.meta.env.UPSTREAM_VERSION || "unknown";
+export const UPSTREAM_REVISION = import.meta.env.UPSTREAM_REVISION || "unknown";
