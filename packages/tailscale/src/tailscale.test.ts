@@ -82,6 +82,17 @@ const tailscaleServeStatusJson = JSON.stringify({
   },
   UnknownFutureField: { ignored: true },
 });
+const tailscaleServeStatusWithSiblingHandlerJson = JSON.stringify({
+  TCP: { "3000": { HTTPS: true } },
+  Web: {
+    "host.tailnet.ts.net:3000": {
+      Handlers: {
+        "/": { Proxy: "http://127.0.0.1:43121" },
+        "/metrics": { Proxy: "http://127.0.0.1:9999" },
+      },
+    },
+  },
+});
 
 function mockHandle(result: { stdout?: string; stderr?: string; code?: number }) {
   return ChildProcessSpawner.makeHandle({
@@ -577,6 +588,104 @@ describe("tailscale", () => {
       }).pipe(Effect.flip, Effect.provide(layer));
       assert.instanceOf(error, TailscaleServeConflictError);
       assert.equal(error.servePort, 3000);
+    });
+  });
+
+  it.effect("refuses to ensure an owned root when a sibling handler shares its port", () => {
+    const commands: Array<ReadonlyArray<string>> = [];
+    const layer = sequenceSpawnerLayer(
+      [{ stdout: tailscaleServeStatusWithSiblingHandlerJson }],
+      (args) => commands.push(args),
+    );
+
+    return Effect.gen(function* () {
+      const error = yield* ensureOwnedTailscaleServe({
+        servePort: 3000,
+        localHost: "127.0.0.1",
+        localPort: 43121,
+      }).pipe(Effect.flip, Effect.provide(layer));
+      assert.instanceOf(error, TailscaleServeConflictError);
+      assert.deepEqual(commands, [["serve", "status", "--json"]]);
+    });
+  });
+
+  it.effect("refuses to disable an owned root when a sibling handler shares its port", () => {
+    const commands: Array<ReadonlyArray<string>> = [];
+    const layer = sequenceSpawnerLayer(
+      [{ stdout: tailscaleServeStatusWithSiblingHandlerJson }],
+      (args) => commands.push(args),
+    );
+
+    return Effect.gen(function* () {
+      const error = yield* disableOwnedTailscaleServe({
+        servePort: 3000,
+        localHost: "127.0.0.1",
+        localPort: 43121,
+      }).pipe(Effect.flip, Effect.provide(layer));
+      assert.instanceOf(error, TailscaleServeConflictError);
+      assert.deepEqual(commands, [["serve", "status", "--json"]]);
+    });
+  });
+
+  it.effect("rejects a LAN target before reading or mutating Serve", () => {
+    const commands: Array<ReadonlyArray<string>> = [];
+    const layer = sequenceSpawnerLayer([], (args) => commands.push(args));
+
+    return Effect.gen(function* () {
+      const ensureError = yield* ensureOwnedTailscaleServe({
+        servePort: 3000,
+        localHost: "192.168.1.20",
+        localPort: 43121,
+      }).pipe(Effect.flip, Effect.provide(layer));
+      assert.instanceOf(ensureError, TailscaleServeConflictError);
+      assert.equal(commands.length, 0);
+    });
+  });
+
+  it.effect("rejects a LAN target before disabling Serve", () => {
+    const commands: Array<ReadonlyArray<string>> = [];
+    const layer = sequenceSpawnerLayer([], (args) => commands.push(args));
+
+    return Effect.gen(function* () {
+      const error = yield* disableOwnedTailscaleServe({
+        servePort: 3000,
+        localHost: "10.0.0.8",
+        localPort: 43121,
+      }).pipe(Effect.flip, Effect.provide(layer));
+      assert.instanceOf(error, TailscaleServeConflictError);
+      assert.equal(commands.length, 0);
+    });
+  });
+
+  it.effect("supports localhost and IPv6 loopback targets", () => {
+    const commands: Array<ReadonlyArray<string>> = [];
+    const layer = sequenceSpawnerLayer([{ stdout: "{}" }, {}, { stdout: "{}" }, {}], (args) =>
+      commands.push(args),
+    );
+
+    return Effect.gen(function* () {
+      assert.equal(
+        yield* ensureOwnedTailscaleServe({
+          servePort: 3000,
+          localHost: "localhost",
+          localPort: 43121,
+        }).pipe(Effect.provide(layer)),
+        "created",
+      );
+      assert.equal(
+        yield* ensureOwnedTailscaleServe({
+          servePort: 3001,
+          localHost: "::1",
+          localPort: 43121,
+        }).pipe(Effect.provide(layer)),
+        "created",
+      );
+      assert.deepEqual(commands, [
+        ["serve", "status", "--json"],
+        ["serve", "--bg", "--https=3000", "http://localhost:43121"],
+        ["serve", "status", "--json"],
+        ["serve", "--bg", "--https=3001", "http://[::1]:43121"],
+      ]);
     });
   });
 });

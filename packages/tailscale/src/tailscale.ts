@@ -142,9 +142,16 @@ export class TailscaleServeConfigParseError extends Schema.TaggedErrorClass<Tail
 
 export class TailscaleServeConflictError extends Schema.TaggedErrorClass<TailscaleServeConflictError>()(
   "TailscaleServeConflictError",
-  { servePort: Schema.Number },
+  {
+    servePort: Schema.Number,
+    reason: Schema.optional(Schema.Literals(["different-target", "non-exclusive", "non-loopback"])),
+  },
 ) {
   override get message(): string {
+    if (this.reason === "non-loopback") return "Tailscale Serve targets must use loopback.";
+    if (this.reason === "non-exclusive") {
+      return `Tailscale Serve port ${this.servePort} has additional configuration.`;
+    }
     return `Tailscale Serve port ${this.servePort} is owned by a different target.`;
   }
 }
@@ -382,18 +389,18 @@ const normalizeServeProxyUrl = (proxyUrl: string): string | null => {
   }
 };
 
-const normalizeOwnedServeProxyUrl = (input: {
-  readonly localHost: string;
-  readonly localPort: number;
-}): string => normalizeServeProxyUrl(`http://${input.localHost}:${input.localPort}`) ?? "";
-
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 const UNKNOWN_SERVE_PROXY_URL = "<unrecognized-serve-target>";
 
+interface TailscaleServeConfigDetails {
+  readonly mappings: ReadonlyMap<number, TailscaleServeMapping>;
+  readonly exclusivePorts: ReadonlySet<number>;
+}
+
 const parseTailscaleServeConfigJson = (
   raw: string,
-): Effect.Effect<ReadonlyMap<number, TailscaleServeMapping>, TailscaleServeConfigParseError> => {
+): Effect.Effect<TailscaleServeConfigDetails, TailscaleServeConfigParseError> => {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -411,7 +418,8 @@ const parseTailscaleServeConfigJson = (
 
   const tcp = parsed.TCP;
   const mappings = new Map<number, TailscaleServeMapping>();
-  if (!isRecord(tcp)) return Effect.succeed(mappings);
+  const exclusivePorts = new Set<number>();
+  if (!isRecord(tcp)) return Effect.succeed({ mappings, exclusivePorts });
   const web = isRecord(parsed.Web) ? parsed.Web : {};
 
   for (const [rawPort, rawTcpConfig] of Object.entries(tcp)) {
@@ -427,7 +435,11 @@ const parseTailscaleServeConfigJson = (
       continue;
     }
 
+    const matchingWebEntries = Object.entries(web).filter(([webKey]) =>
+      webKey.endsWith(`:${String(servePort)}`),
+    );
     let proxyUrl = UNKNOWN_SERVE_PROXY_URL;
+    let hasExactRootHandler = false;
     for (const [webKey, rawWebConfig] of Object.entries(web)) {
       if (!webKey.endsWith(`:${String(servePort)}`) || !isRecord(rawWebConfig)) continue;
       const handlers = rawWebConfig.Handlers;
@@ -436,11 +448,28 @@ const parseTailscaleServeConfigJson = (
       if (typeof proxy !== "string") continue;
       const normalizedProxy = normalizeServeProxyUrl(proxy);
       proxyUrl = normalizedProxy ?? UNKNOWN_SERVE_PROXY_URL;
-      if (normalizedProxy !== null) break;
+      hasExactRootHandler = normalizedProxy !== null;
+      if (hasExactRootHandler) break;
     }
     mappings.set(servePort, { servePort, proxyUrl });
+    const tcpHasAdditionalConfig = Object.keys(rawTcpConfig).some((key) => key !== "HTTPS");
+    const hasOnlyRootHandler =
+      matchingWebEntries.length === 1 &&
+      (() => {
+        const rawWebConfig = matchingWebEntries[0]?.[1];
+        if (!isRecord(rawWebConfig) || !isRecord(rawWebConfig.Handlers)) return false;
+        return Object.keys(rawWebConfig.Handlers).length === 1;
+      })();
+    if (
+      !tcpHasAdditionalConfig &&
+      hasOnlyRootHandler &&
+      hasExactRootHandler &&
+      proxyUrl !== UNKNOWN_SERVE_PROXY_URL
+    ) {
+      exclusivePorts.add(servePort);
+    }
   }
-  return Effect.succeed(mappings);
+  return Effect.succeed({ mappings, exclusivePorts });
 };
 
 export interface TailscaleServeMapping {
@@ -453,8 +482,8 @@ export type TailscaleServeMutationError =
   | TailscaleServeConfigParseError
   | TailscaleServeConflictError;
 
-export const readTailscaleServeConfig: Effect.Effect<
-  ReadonlyMap<number, TailscaleServeMapping>,
+const readTailscaleServeConfigDetails: Effect.Effect<
+  TailscaleServeConfigDetails,
   TailscaleCommandError | TailscaleServeConfigParseError,
   ChildProcessSpawner.ChildProcessSpawner
 > = Effect.gen(function* () {
@@ -467,9 +496,37 @@ export const readTailscaleServeConfig: Effect.Effect<
         error.stderrDiagnostic === "no-existing-handler" ? Effect.succeed("") : Effect.fail(error),
     }),
   );
-  if (output.trim().length === 0) return new Map<number, TailscaleServeMapping>();
+  if (output.trim().length === 0) {
+    return {
+      mappings: new Map<number, TailscaleServeMapping>(),
+      exclusivePorts: new Set<number>(),
+    };
+  }
   return yield* parseTailscaleServeConfigJson(output);
 });
+
+export const readTailscaleServeConfig: Effect.Effect<
+  ReadonlyMap<number, TailscaleServeMapping>,
+  TailscaleCommandError | TailscaleServeConfigParseError,
+  ChildProcessSpawner.ChildProcessSpawner
+> = readTailscaleServeConfigDetails.pipe(Effect.map(({ mappings }) => mappings));
+
+const normalizeLoopbackHost = (localHost: string): string | null => {
+  const trimmed = localHost.trim().toLowerCase();
+  const host = trimmed.startsWith("[") && trimmed.endsWith("]") ? trimmed.slice(1, -1) : trimmed;
+  return host === "127.0.0.1" || host === "localhost" || host === "::1" ? host : null;
+};
+
+const ownedServeTarget = (input: {
+  readonly localHost: string;
+  readonly localPort: number;
+}): { readonly host: string; readonly proxyUrl: string } | null => {
+  const host = normalizeLoopbackHost(input.localHost);
+  if (host === null) return null;
+  const targetHost = host.includes(":") ? `[${host}]` : host;
+  const proxyUrl = normalizeServeProxyUrl(`http://${targetHost}:${String(input.localPort)}`);
+  return proxyUrl === null ? null : { host, proxyUrl };
+};
 
 export const ensureOwnedTailscaleServe = (input: {
   readonly servePort: number;
@@ -481,11 +538,19 @@ export const ensureOwnedTailscaleServe = (input: {
   ChildProcessSpawner.ChildProcessSpawner
 > =>
   Effect.gen(function* () {
-    const expectedProxyUrl = normalizeOwnedServeProxyUrl(input);
-    const config = yield* readTailscaleServeConfig;
-    const existing = config.get(input.servePort);
+    const target = ownedServeTarget(input);
+    if (target === null) {
+      return yield* new TailscaleServeConflictError({
+        servePort: input.servePort,
+        reason: "non-loopback",
+      });
+    }
+    const config = yield* readTailscaleServeConfigDetails;
+    const existing = config.mappings.get(input.servePort);
     if (existing !== undefined) {
-      if (existing.proxyUrl === expectedProxyUrl) return "existing" as const;
+      if (config.exclusivePorts.has(input.servePort) && existing.proxyUrl === target.proxyUrl) {
+        return "existing" as const;
+      }
       return yield* new TailscaleServeConflictError({ servePort: input.servePort });
     }
     yield* runTailscaleCommand(
@@ -493,7 +558,7 @@ export const ensureOwnedTailscaleServe = (input: {
         "serve",
         "--bg",
         `--https=${String(input.servePort)}`,
-        `http://${input.localHost}:${String(input.localPort)}`,
+        `http://${target.host.includes(":") ? `[${target.host}]` : target.host}:${String(input.localPort)}`,
       ],
       TAILSCALE_SERVE_TIMEOUT,
     );
@@ -510,11 +575,17 @@ export const disableOwnedTailscaleServe = (input: {
   ChildProcessSpawner.ChildProcessSpawner
 > =>
   Effect.gen(function* () {
-    const expectedProxyUrl = normalizeOwnedServeProxyUrl(input);
-    const config = yield* readTailscaleServeConfig;
-    const existing = config.get(input.servePort);
+    const target = ownedServeTarget(input);
+    if (target === null) {
+      return yield* new TailscaleServeConflictError({
+        servePort: input.servePort,
+        reason: "non-loopback",
+      });
+    }
+    const config = yield* readTailscaleServeConfigDetails;
+    const existing = config.mappings.get(input.servePort);
     if (existing === undefined) return "absent" as const;
-    if (existing.proxyUrl !== expectedProxyUrl) {
+    if (!config.exclusivePorts.has(input.servePort) || existing.proxyUrl !== target.proxyUrl) {
       return yield* new TailscaleServeConflictError({ servePort: input.servePort });
     }
     yield* runTailscaleCommand(
