@@ -1,0 +1,149 @@
+name: Bootstrap Verne CLI publication
+
+on:
+  push:
+    branches:
+      - rewrite/t3
+    paths:
+      - .github/workflows/bootstrap-cli-publish.yml
+
+concurrency:
+  group: bootstrap-verne-cli-publish
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: none
+
+jobs:
+  build_resource_monitor:
+    name: Build resource monitor (${{ matrix.resource_key }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-26
+            platform: mac
+            rust_target: aarch64-apple-darwin
+            resource_key: darwin-arm64
+          - runner: macos-26-intel
+            platform: mac
+            rust_target: x86_64-apple-darwin
+            resource_key: darwin-x64
+          - runner: ubuntu-24.04
+            platform: linux
+            rust_target: x86_64-unknown-linux-gnu
+            resource_key: linux-x64
+          - runner: windows-2025
+            platform: win
+            rust_target: x86_64-pc-windows-msvc
+            resource_key: win32-x64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Cache resource monitor
+        id: resource_monitor_cache
+        uses: actions/cache@v6
+        with:
+          path: native/resource-monitor/target/${{ matrix.rust_target }}/release/t3-resource-monitor${{ matrix.platform == 'win' && '.exe' || '' }}
+          key: bootstrap-resource-monitor-${{ matrix.rust_target }}-${{ hashFiles('native/resource-monitor/Cargo.lock', 'native/resource-monitor/Cargo.toml', 'native/resource-monitor/src/**') }}
+
+      - name: Setup Rust
+        if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Build resource monitor
+        if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
+        run: cargo build --locked --release --manifest-path native/resource-monitor/Cargo.toml --target ${{ matrix.rust_target }}
+
+      - name: Collect resource monitor
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary_name="t3-resource-monitor"
+          if [[ "${{ matrix.platform }}" == "win" ]]; then
+            binary_name="${binary_name}.exe"
+          fi
+          source_path="native/resource-monitor/target/${{ matrix.rust_target }}/release/${binary_name}"
+          target_dir="resource-monitor-publish/${{ matrix.resource_key }}"
+          mkdir -p "$target_dir"
+          cp "$source_path" "$target_dir/$binary_name"
+
+      - name: Upload resource monitor
+        uses: actions/upload-artifact@v7
+        with:
+          name: resource-monitor-${{ matrix.resource_key }}
+          path: resource-monitor-publish/${{ matrix.resource_key }}/*
+          if-no-files-found: error
+
+  publish_cli:
+    name: Publish @verne-build/cli@0.0.35
+    needs: build_resource_monitor
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Verify publication target
+        run: |
+          node -e "const p = require('./apps/server/package.json'); if (p.name !== '@verne-build/cli' || p.version !== '0.0.35') process.exit(1)"
+          test "$GITHUB_REF" = "refs/heads/rewrite/t3"
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@verne-build/cli...
+              - --filter=@t3tools/web...
+              - --filter=@t3tools/scripts...
+
+      - name: Build CLI package
+        run: vp run --filter @verne-build/cli build
+
+      - name: Download resource monitors
+        uses: actions/download-artifact@v8
+        with:
+          pattern: resource-monitor-*
+          path: ${{ runner.temp }}/resource-monitors
+
+      - name: Bundle resource monitors into CLI package
+        shell: bash
+        run: |
+          set -euo pipefail
+          for artifact_dir in "$RUNNER_TEMP"/resource-monitors/resource-monitor-*; do
+            resource_key="${artifact_dir##*/resource-monitor-}"
+            target_dir="apps/server/dist/resource-monitor/${resource_key}"
+            mkdir -p "$target_dir"
+            cp "$artifact_dir"/t3-resource-monitor* "$target_dir/"
+            chmod +x "$target_dir"/t3-resource-monitor 2>/dev/null || true
+          done
+
+          test -s apps/server/dist/resource-monitor/darwin-arm64/t3-resource-monitor
+          test -s apps/server/dist/resource-monitor/darwin-x64/t3-resource-monitor
+          test -s apps/server/dist/resource-monitor/linux-x64/t3-resource-monitor
+          test -s apps/server/dist/resource-monitor/win32-x64/t3-resource-monitor.exe
+
+      - name: Publish CLI package
+        run: node apps/server/scripts/cli.ts publish --tag latest --app-version 0.0.35 --verbose
