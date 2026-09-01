@@ -27,15 +27,30 @@ const runtimeVersionPolicy =
   (APP_VARIANT === "development" ? "appVersion" : "fingerprint");
 const upstreamProvenance = decodeUpstreamProvenance(upstreamJson);
 const localGitRevision = () => {
+  let revision: string;
+  let status: string;
   try {
-    return NodeChildProcess.execFileSync("git", ["rev-parse", "HEAD"], {
+    revision = NodeChildProcess.execFileSync("git", ["rev-parse", "HEAD"], {
       cwd: import.meta.dirname,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();
+    status = NodeChildProcess.execFileSync(
+      "git",
+      ["status", "--porcelain", "--untracked-files=normal"],
+      {
+        cwd: import.meta.dirname,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      },
+    ).trim();
   } catch {
     return undefined;
   }
+  if (status) {
+    throw new Error("Publishable local Verne Mobile builds require a clean Git worktree");
+  }
+  return revision;
 };
 const buildRevisionInput = {
   explicitRevision: process.env.VERNE_REVISION,
