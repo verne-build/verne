@@ -27,9 +27,9 @@ This document covers the unified release workflow for stable and nightly desktop
 - Publishes the CLI package (`apps/server`, npm package `@verne-build/cli`) with OIDC trusted publishing from the same workflow file:
   - stable releases publish npm dist-tag `latest`
   - nightly releases publish npm dist-tag `nightly`
-- Deploys the hosted web app to Vercel only after a release is published:
-  - stable releases are aliased to the `latest` hosted app channel
-  - nightly releases are aliased to the `nightly` hosted app channel
+- Deploys the hosted web app to Cloudflare Workers only after a release is published:
+  - stable-channel releases, including suffixed tagged prereleases, deploy `verne-app-latest`
+  - scheduled or manually dispatched nightly releases deploy `verne-app-nightly`
 - Signing is optional and auto-detected per platform from secrets.
 
 ## Required release credentials
@@ -53,55 +53,100 @@ Desktop, web, mobile, and CLI releases must remain usable through direct manual 
 
 ## Hosted web app release deployment
 
-The hosted app is intentionally not deployed by Vercel's Git integration. The
-web project disables automatic Git deployments in `apps/web/vercel.ts` via
-`git.deploymentEnabled: false`, and `.github/workflows/release.yml` deploys the
-web app with Vercel CLI after the GitHub Release succeeds.
+The hosted app and public website use Cloudflare Workers. `.github/workflows/release.yml` deploys the
+selected hosted-app channel after the GitHub Release succeeds; `.github/workflows/verne-marketing.yml`
+deploys the website on every push to `main` and by manual dispatch. Channel releases do not deploy
+the router.
 
 Required GitHub Actions secrets:
 
-- `VERCEL_TOKEN`
-- `VERCEL_ORG_ID`
-- `VERCEL_PROJECT_ID`
+- `CLOUDFLARE_API_TOKEN`: scoped to deploy and delete Workers and manage their bindings.
+- `CLOUDFLARE_ACCOUNT_ID`: the account containing all four production Workers.
 
-Optional GitHub Actions variables:
+Required GitHub Actions variable:
 
-- `VERCEL_TEAM_SLUG`: overrides the Vercel CLI scope when the team slug is preferred over the `VERCEL_ORG_ID` secret.
-- `VERNE_WEB_ROUTER_URL`: defaults to `https://app.verne.build`.
-- `VERNE_WEB_LATEST_DOMAIN`: defaults to `latest.app.verne.build`.
-- `VERNE_WEB_NIGHTLY_DOMAIN`: defaults to `nightly.app.verne.build`.
+- `CLOUDFLARE_WORKERS_SUBDOMAIN`: the account's enabled `workers.dev` subdomain, without
+  `.workers.dev`; preview comments use it to construct the deployed Worker URL.
 
-Required Vercel domains:
+`VERNE_WEB_ROUTER_URL` remains an optional public build variable and defaults to
+`https://app.verne.build`.
 
-- `app.verne.build`: the router domain users open, updated by stable releases.
-- `latest.app.verne.build`: channel alias updated by stable releases.
-- `nightly.app.verne.build`: channel alias updated by nightly releases.
+The production topology is:
 
-The router domain uses `apps/web/vercel.ts` routes. Users opt into a channel by
-visiting `/__verne/channel?channel=latest` or
-`/__verne/channel?channel=nightly`; the router stores the
-`verne_web_channel` cookie and rewrites future requests on `app.verne.build` to
-the matching channel alias.
+| Worker              | Custom Domain             | Deployment owner                        |
+| ------------------- | ------------------------- | --------------------------------------- |
+| `verne-app-latest`  | `latest.app.verne.build`  | Stable-channel release runs.            |
+| `verne-app-nightly` | `nightly.app.verne.build` | Scheduled or manual nightly runs.       |
+| `verne-app-router`  | `app.verne.build`         | Manual maintainer deployment.           |
+| `verne-marketing`   | `verne.build`             | Marketing workflow or manual bootstrap. |
 
-The release deploy job rewrites release package versions before upload so the
-hosted app's About panel renders the release version. Stable deploys alias the
-same deployment to both the `latest` channel and the router domain so the router
-rules stay current. Nightly deploys only alias the `nightly` channel. The job
-also passes `VITE_HOSTED_APP_CHANNEL=latest|nightly`, which renders the hosted
-update track selector in the About panel. Changing the selector navigates
-through `/__verne/channel` on the router domain so the user's channel cookie is
-updated before redirecting to the hosted app root.
+The release job aligns package versions so the hosted app's About panel renders the release version,
+builds `apps/web`, applies channel-specific brand assets, and deploys only the mapped channel Worker.
+It passes `VITE_HOSTED_APP_CHANNEL=latest|nightly`, which renders the hosted update track selector in
+the About panel. Changing the selector navigates through
+`/__verne/channel?channel=latest|nightly` on the router domain; the router stores the
+`verne_web_channel` cookie and redirects to `/` before forwarding subsequent requests through the
+selected service binding.
 
-One-time Vercel dashboard setup:
+### One-time Cloudflare bootstrap
 
-1. Confirm the web project root directory remains `apps/web`.
-2. Add the three domains above to the web project.
-3. Disable automatic Git deployments in the dashboard if desired; the committed
-   `vercel.ts` setting is the source-of-truth, but disconnecting Git in the
-   dashboard is also safe.
-4. Run one stable release deployment, or manually alias the current stable
-   deployment, so `app.verne.build` points at a deployment containing the router
-   rules in `apps/web/vercel.ts`. Future stable releases keep this alias current.
+Wrangler `4.127.1` is pinned in `infra/verne-cloudflare`. Before bootstrap, create the scoped API
+token, add both secrets and `CLOUDFLARE_WORKERS_SUBDOMAIN` to the GitHub repository, and confirm the
+account's `workers.dev` subdomain. With Cloudflare credentials exported locally, bootstrap in this
+dependency order from the repository root:
+
+1. Build and deploy latest:
+
+   ```bash
+   export APP_VERSION=<release-version>
+   export VITE_HOSTED_APP_URL=https://app.verne.build
+   export VITE_HOSTED_APP_CHANNEL=latest
+   vp run --filter @t3tools/web build
+   node scripts/apply-web-brand-assets.ts --channel latest
+   vp run --filter @verne-build/cloudflare deploy:channel --name verne-app-latest
+   ```
+
+2. Build and deploy nightly:
+
+   ```bash
+   export APP_VERSION=<nightly-version>
+   export VITE_HOSTED_APP_URL=https://app.verne.build
+   export VITE_HOSTED_APP_CHANNEL=nightly
+   vp run --filter @t3tools/web build
+   node scripts/apply-web-brand-assets.ts --channel nightly
+   vp run --filter @verne-build/cloudflare deploy:channel --name verne-app-nightly
+   ```
+
+3. After both channel Workers exist, manually deploy the router:
+
+   ```bash
+   vp run --filter @verne-build/cloudflare deploy:router
+   ```
+
+4. Build and deploy marketing:
+
+   ```bash
+   vp run --filter @verne-build/marketing build
+   vp run --filter @verne-build/cloudflare wrangler deploy \
+     --config ../../apps/verne-marketing/wrangler.jsonc
+   ```
+
+5. In Cloudflare, manually attach the four Custom Domains shown in the topology table. Repository
+   automation does not create zones, mutate DNS or nameservers, or attach production domains.
+
+The router deploy remains manual after bootstrap. Run it only when router source or service bindings
+change, and only after both channel Workers exist. Stable and nightly releases update their channel
+Workers independently without changing router configuration.
+
+### Pull-request previews
+
+Adding `preview:web` to a same-repository pull request builds the web app and deploys
+`verne-app-pr-<number>` to
+`https://verne-app-pr-<number>.<CLOUDFLARE_WORKERS_SUBDOMAIN>.workers.dev`. Subsequent pushes redeploy
+the same Worker while the label remains. The workflow maintains one marker comment containing the
+exact preview URL and commit SHA. Removing the label or closing the pull request deletes the Worker
+and updates that comment; an already-absent Worker is treated as a successful no-op. Fork pull
+requests are skipped because GitHub does not expose Cloudflare credentials to them.
 
 ## Nightly builds
 
@@ -221,14 +266,14 @@ Checklist:
 
 There is no dry-run tag path. Pushing any accepted non-nightly tag, including
 `v0.0.0-test.1`, classifies the run as the stable channel. It publishes `@verne-build/cli` with npm dist-tag
-`latest`, creates a real GitHub Release, aliases the hosted app to `latest.app.verne.build` and
-`app.verne.build`, and can commit a version bump to `main` in the finalize job. Do not push a test tag
+`latest`, creates a real GitHub Release, deploys `verne-app-latest`, and can commit a version bump to
+`main` in the finalize job. Do not push a test tag
 to validate the workflow.
 
 The workflow has no non-publishing `workflow_dispatch` mode. Use normal CI or local quality gates to
 validate checks and builds without shipping. To exercise the complete release graph at lower stable
 risk, manually dispatch `channel=nightly`; this still publishes a real nightly npm package, GitHub
-prerelease, desktop updater release, and hosted nightly alias, but it does not update stable aliases or
+prerelease, desktop updater release, and `verne-app-nightly`, but it does not update the latest Worker or
 commit a version bump to `main`. Only run it when a real nightly release is acceptable.
 
 Manual `channel=stable` with a version input is also a real stable-channel release. Omitting signing

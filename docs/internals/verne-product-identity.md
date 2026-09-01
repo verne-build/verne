@@ -94,9 +94,11 @@ Desktop releases and Electron update metadata are published to GitHub Releases i
 links directly to its signed `.dmg`, `.exe`, and `.AppImage` assets. Verne does not operate a custom
 desktop update service.
 
-The stable static client is deployed to `app.verne.build`. Dedicated hosted nightly routing is
-deferred until Verne needs channel-specific domains. The project schema is served from
-`verne.build/schema/verne.json` by the static marketing site.
+The hosted client uses separate `latest.app.verne.build` and `nightly.app.verne.build` channel
+Workers behind `app.verne.build`. The router defaults to latest and uses the `verne_web_channel`
+cookie to preserve a user's selection; `GET /__verne/channel?channel=latest|nightly` updates that
+selection and redirects to the hosted app root. The project schema is served from
+`verne.build/schema/verne.json` by the independent Verne marketing site.
 
 Mobile uses a new Verne-owned Expo/EAS project, project ID, update endpoint, bundle IDs, and store
 records. Download pages must not link to T3 Code store listings; Verne store actions remain absent or

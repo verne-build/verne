@@ -28,4 +28,10 @@ signing only when platform credentials are present. macOS passkey builds additio
 `APPLE_TEAM_ID` and the `MACOS_PROVISIONING_PROFILE` secret; Windows uses Azure Trusted Signing.
 Without the core signing credentials, it still releases unsigned artifacts.
 
+Workflows use four standard GitHub-hosted runner labels: `ubuntu-24.04`, `windows-2025`, `macos-26`,
+and `macos-26-intel`. The desktop matrix runs Apple Silicon builds on `macos-26` and x64 builds on
+`macos-26-intel`; Linux and Windows x64 builds use their matching standard labels. Desktop artifact
+and macOS preview jobs allow 60 minutes because standard runner capacity is more variable, while
+shorter orchestration jobs retain focused timeouts.
+
 See [Release Checklist](../operations/release.md) for the full release/signing setup checklist.

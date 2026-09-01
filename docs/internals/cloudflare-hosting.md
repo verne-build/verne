@@ -89,12 +89,40 @@ The existing release workflow continues to decide the release channel. After the
 are published, it builds `apps/web` with the same release version and public client configuration as
 the desktop artifacts, applies the channel-specific brand assets, and deploys the result:
 
-- stable releases deploy `verne-app-latest`;
-- prereleases deploy `verne-app-nightly`.
+- stable-channel releases, including suffixed tagged prereleases, deploy `verne-app-latest`;
+- scheduled or manually dispatched nightly releases deploy `verne-app-nightly`.
 
 Deploying a channel does not redeploy or reconfigure the router. The router changes only when its own
 source or bindings change, which keeps channel releases small and prevents a nightly deployment from
 affecting the stable route.
+
+The repository pins Wrangler `4.127.1` in `infra/verne-cloudflare/package.json`. That package exposes
+the deployment operations used locally and in GitHub Actions:
+
+| Script           | Command                                               | Purpose                                |
+| ---------------- | ----------------------------------------------------- | -------------------------------------- |
+| `deploy:channel` | `wrangler deploy --config app-channel/wrangler.jsonc` | Deploy a channel or preview Worker.    |
+| `deploy:router`  | `wrangler deploy --config app-router/wrangler.jsonc`  | Deploy the channel router.             |
+| `delete:worker`  | `wrangler delete`                                     | Delete a named preview Worker.         |
+| `wrangler`       | `wrangler`                                            | Deploy the separately configured site. |
+
+Pass additional Wrangler arguments through Vite+ after the package script. For example, validate the
+three channel shapes and the router without deploying:
+
+```bash
+vp run --filter @verne-build/cloudflare deploy:channel --dry-run --name verne-app-latest
+vp run --filter @verne-build/cloudflare deploy:channel --dry-run --name verne-app-nightly
+vp run --filter @verne-build/cloudflare deploy:channel --dry-run --name verne-app-pr-1
+vp run --filter @verne-build/cloudflare deploy:router --dry-run
+```
+
+The release workflow deploys only the channel selected by that release. The router is a manual
+maintainer deployment after both `verne-app-latest` and `verne-app-nightly` exist, and thereafter only
+when its source or service bindings change:
+
+```bash
+vp run --filter @verne-build/cloudflare deploy:router
+```
 
 ### Pull-request previews
 
@@ -106,11 +134,13 @@ preview URL and commit SHA.
 The preview is redeployed after subsequent pushes while the label remains. Removing the label or
 closing the pull request deletes that Worker and updates the marker comment. Fork pull requests are
 skipped because Cloudflare credentials are not exposed to them. Preview Workers use direct static
-asset serving and do not participate in latest/nightly routing.
+asset serving and do not participate in latest/nightly routing. The repository variable
+`CLOUDFLARE_WORKERS_SUBDOMAIN` supplies the account-specific portion of each preview URL; it must
+match the account's enabled `workers.dev` subdomain.
 
 ## GitHub-hosted runners
 
-Verne workflows use GitHub-hosted runners instead of Blacksmith:
+Verne workflows use standard GitHub-hosted runners:
 
 - Linux jobs use `ubuntu-24.04`.
 - Windows jobs use `windows-2025`.
@@ -122,24 +152,28 @@ standard hosted runners. This is a runner substitution, not a redesign of the bu
 
 ## Credentials and Cloudflare setup
 
-GitHub environments provide `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. The API token is
-limited to deploying and deleting Workers, updating Worker bindings and routes, and reading the
-account information Wrangler needs. It does not need general DNS or zone administration when custom
-domains are attached separately during bootstrap.
+GitHub Actions provides the secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`, plus the
+repository variable `CLOUDFLARE_WORKERS_SUBDOMAIN` for preview URLs. The API token is limited to
+deploying and deleting Workers, updating Worker bindings and routes, and reading the account
+information Wrangler needs. It does not need general DNS or zone administration when Custom Domains
+are attached separately during bootstrap.
 
-Wrangler is pinned in the repository so local validation and GitHub Actions use the same release.
-Deployment commands fail immediately when either Cloudflare secret is missing. Build-time public
-client configuration continues to use the existing GitHub variables and release outputs; secrets
-that are embedded into a browser bundle are not introduced by this hosting change.
+Wrangler `4.127.1` is pinned so local validation and GitHub Actions use the same release. Deployment
+commands fail immediately when either Cloudflare secret is missing, and preview deployment also
+fails when `CLOUDFLARE_WORKERS_SUBDOMAIN` is missing. Build-time public client configuration continues
+to use the existing GitHub variables and release outputs; secrets that are embedded into a browser
+bundle are not introduced by this hosting change.
 
 One-time bootstrap proceeds in dependency order:
 
-1. Deploy `verne-app-latest` and `verne-app-nightly`.
-2. Deploy `verne-app-router` with service bindings to both channel Workers.
-3. Deploy `verne-marketing`.
-4. Attach `latest.app.verne.build`, `nightly.app.verne.build`, `app.verne.build`, and `verne.build` as
+1. Build and deploy `verne-app-latest`.
+2. Build and deploy `verne-app-nightly`.
+3. Manually deploy `verne-app-router` with service bindings to both channel Workers.
+4. Build and deploy `verne-marketing`.
+5. Attach `latest.app.verne.build`, `nightly.app.verne.build`, `app.verne.build`, and `verne.build` as
    Worker Custom Domains in Cloudflare.
-5. Enable the `workers.dev` subdomain for temporary preview Workers.
+6. Confirm the account's `workers.dev` subdomain is enabled and record its subdomain value in
+   `CLOUDFLARE_WORKERS_SUBDOMAIN`.
 
 The repository documents these steps, but automation does not create zones, change nameservers, or
 attach production domains. Those are deliberate one-time account operations.
@@ -164,7 +198,8 @@ Changes to this seam use focused checks rather than repository-wide validation:
 - hosted-web static Worker tests for asset serving and SPA fallback;
 - targeted typechecks for the Worker packages and affected web or marketing package;
 - production builds for `apps/web` and `apps/verne-marketing`;
-- Wrangler configuration validation or dry runs for all four production Workers and a preview Worker;
+- Wrangler dry runs for both channel Workers, the router, and a preview Worker;
+- the marketing schema test at `apps/verne-marketing/test/verne-schema.test.ts`;
 - formatting validation for modified workflow files.
 
 Local verification does not deploy Workers, modify Cloudflare domains, or open a browser. A live
