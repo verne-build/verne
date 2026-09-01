@@ -396,7 +396,19 @@ const UNKNOWN_SERVE_PROXY_URL = "<unrecognized-serve-target>";
 interface TailscaleServeConfigDetails {
   readonly mappings: ReadonlyMap<number, TailscaleServeMapping>;
   readonly exclusivePorts: ReadonlySet<number>;
+  readonly occupiedPorts: ReadonlySet<number>;
 }
+
+const parseServePort = (rawPort: string): number | null => {
+  if (!/^\d+$/u.test(rawPort)) return null;
+  const port = Number(rawPort);
+  return Number.isInteger(port) && port >= 1 && port <= 65_535 ? port : null;
+};
+
+const parseWebServePort = (webKey: string): number | null => {
+  const match = /:(\d+)$/u.exec(webKey);
+  return match?.[1] === undefined ? null : parseServePort(match[1]);
+};
 
 const parseTailscaleServeConfigJson = (
   raw: string,
@@ -419,29 +431,41 @@ const parseTailscaleServeConfigJson = (
   const tcp = parsed.TCP;
   const mappings = new Map<number, TailscaleServeMapping>();
   const exclusivePorts = new Set<number>();
-  if (!isRecord(tcp)) return Effect.succeed({ mappings, exclusivePorts });
+  const occupiedPorts = new Set<number>();
+  if (!isRecord(tcp) && !isRecord(parsed.Web)) {
+    return Effect.succeed({ mappings, exclusivePorts, occupiedPorts });
+  }
   const web = isRecord(parsed.Web) ? parsed.Web : {};
 
-  for (const [rawPort, rawTcpConfig] of Object.entries(tcp)) {
-    const servePort = Number(rawPort);
-    if (
-      !/^\d+$/u.test(rawPort) ||
-      !Number.isInteger(servePort) ||
-      servePort < 1 ||
-      servePort > 65_535 ||
-      !isRecord(rawTcpConfig) ||
-      rawTcpConfig.HTTPS !== true
-    ) {
-      continue;
+  const tcpEntriesByPort = new Map<number, Array<Record<string, unknown> | null>>();
+  if (isRecord(tcp)) {
+    for (const [rawPort, rawTcpConfig] of Object.entries(tcp)) {
+      const servePort = parseServePort(rawPort);
+      if (servePort === null) continue;
+      occupiedPorts.add(servePort);
+      const entries = tcpEntriesByPort.get(servePort) ?? [];
+      entries.push(isRecord(rawTcpConfig) ? rawTcpConfig : null);
+      tcpEntriesByPort.set(servePort, entries);
     }
+  }
 
-    const matchingWebEntries = Object.entries(web).filter(([webKey]) =>
-      webKey.endsWith(`:${String(servePort)}`),
-    );
+  const webEntriesByPort = new Map<number, Array<[string, unknown]>>();
+  for (const [webKey, rawWebConfig] of Object.entries(web)) {
+    const servePort = parseWebServePort(webKey);
+    if (servePort === null) continue;
+    occupiedPorts.add(servePort);
+    const entries = webEntriesByPort.get(servePort) ?? [];
+    entries.push([webKey, rawWebConfig]);
+    webEntriesByPort.set(servePort, entries);
+  }
+
+  for (const servePort of occupiedPorts) {
+    const tcpEntries = tcpEntriesByPort.get(servePort) ?? [];
+    const matchingWebEntries = webEntriesByPort.get(servePort) ?? [];
     let proxyUrl = UNKNOWN_SERVE_PROXY_URL;
     let hasExactRootHandler = false;
-    for (const [webKey, rawWebConfig] of Object.entries(web)) {
-      if (!webKey.endsWith(`:${String(servePort)}`) || !isRecord(rawWebConfig)) continue;
+    for (const [, rawWebConfig] of matchingWebEntries) {
+      if (!isRecord(rawWebConfig)) continue;
       const handlers = rawWebConfig.Handlers;
       const rootHandler = isRecord(handlers) && handlers["/"];
       const proxy = isRecord(rootHandler) ? rootHandler.Proxy : undefined;
@@ -452,7 +476,13 @@ const parseTailscaleServeConfigJson = (
       if (hasExactRootHandler) break;
     }
     mappings.set(servePort, { servePort, proxyUrl });
-    const tcpHasAdditionalConfig = Object.keys(rawTcpConfig).some((key) => key !== "HTTPS");
+    const tcpConfig = tcpEntries[0];
+    const onlyTcpHttpsConfig =
+      tcpEntries.length === 1 &&
+      tcpConfig !== undefined &&
+      tcpConfig !== null &&
+      tcpConfig.HTTPS === true &&
+      Object.keys(tcpConfig).every((key) => key === "HTTPS");
     const hasOnlyRootHandler =
       matchingWebEntries.length === 1 &&
       (() => {
@@ -461,7 +491,7 @@ const parseTailscaleServeConfigJson = (
         return Object.keys(rawWebConfig.Handlers).length === 1;
       })();
     if (
-      !tcpHasAdditionalConfig &&
+      onlyTcpHttpsConfig &&
       hasOnlyRootHandler &&
       hasExactRootHandler &&
       proxyUrl !== UNKNOWN_SERVE_PROXY_URL
@@ -469,7 +499,7 @@ const parseTailscaleServeConfigJson = (
       exclusivePorts.add(servePort);
     }
   }
-  return Effect.succeed({ mappings, exclusivePorts });
+  return Effect.succeed({ mappings, exclusivePorts, occupiedPorts });
 };
 
 export interface TailscaleServeMapping {
@@ -500,6 +530,7 @@ const readTailscaleServeConfigDetails: Effect.Effect<
     return {
       mappings: new Map<number, TailscaleServeMapping>(),
       exclusivePorts: new Set<number>(),
+      occupiedPorts: new Set<number>(),
     };
   }
   return yield* parseTailscaleServeConfigJson(output);
@@ -546,23 +577,29 @@ export const ensureOwnedTailscaleServe = (input: {
       });
     }
     const config = yield* readTailscaleServeConfigDetails;
-    const existing = config.mappings.get(input.servePort);
-    if (existing !== undefined) {
-      if (config.exclusivePorts.has(input.servePort) && existing.proxyUrl === target.proxyUrl) {
-        return "existing" as const;
-      }
-      return yield* new TailscaleServeConflictError({ servePort: input.servePort });
+    if (!config.occupiedPorts.has(input.servePort)) {
+      yield* runTailscaleCommand(
+        [
+          "serve",
+          "--bg",
+          `--https=${String(input.servePort)}`,
+          `http://${target.host.includes(":") ? `[${target.host}]` : target.host}:${String(input.localPort)}`,
+        ],
+        TAILSCALE_SERVE_TIMEOUT,
+      );
+      return "created" as const;
     }
-    yield* runTailscaleCommand(
-      [
-        "serve",
-        "--bg",
-        `--https=${String(input.servePort)}`,
-        `http://${target.host.includes(":") ? `[${target.host}]` : target.host}:${String(input.localPort)}`,
-      ],
-      TAILSCALE_SERVE_TIMEOUT,
-    );
-    return "created" as const;
+    const existing = config.mappings.get(input.servePort);
+    if (existing === undefined) {
+      return yield* new TailscaleServeConflictError({
+        servePort: input.servePort,
+        reason: "non-exclusive",
+      });
+    }
+    if (config.exclusivePorts.has(input.servePort) && existing.proxyUrl === target.proxyUrl) {
+      return "existing" as const;
+    }
+    return yield* new TailscaleServeConflictError({ servePort: input.servePort });
   });
 
 export const disableOwnedTailscaleServe = (input: {
@@ -583,8 +620,14 @@ export const disableOwnedTailscaleServe = (input: {
       });
     }
     const config = yield* readTailscaleServeConfigDetails;
+    if (!config.occupiedPorts.has(input.servePort)) return "absent" as const;
     const existing = config.mappings.get(input.servePort);
-    if (existing === undefined) return "absent" as const;
+    if (existing === undefined) {
+      return yield* new TailscaleServeConflictError({
+        servePort: input.servePort,
+        reason: "non-exclusive",
+      });
+    }
     if (!config.exclusivePorts.has(input.servePort) || existing.proxyUrl !== target.proxyUrl) {
       return yield* new TailscaleServeConflictError({ servePort: input.servePort });
     }

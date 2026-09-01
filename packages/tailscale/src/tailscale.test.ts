@@ -93,6 +93,43 @@ const tailscaleServeStatusWithSiblingHandlerJson = JSON.stringify({
     },
   },
 });
+const tailscaleServeStatusWithWebOnlyJson = JSON.stringify({
+  Web: {
+    "host.tailnet.ts.net:3000": {
+      Handlers: { "/": { Proxy: "http://127.0.0.1:43121" } },
+    },
+  },
+});
+const tailscaleServeStatusWithUnsupportedTcpJson = JSON.stringify({
+  TCP: { "3000": { HTTPS: false } },
+  Web: {
+    "host.tailnet.ts.net:3000": {
+      Handlers: { "/": { Proxy: "http://127.0.0.1:43121" } },
+    },
+  },
+});
+const tailscaleServeStatusWithDuplicateTcpJson = JSON.stringify({
+  TCP: {
+    "3000": { HTTPS: true },
+    "03000": { HTTPS: true },
+  },
+  Web: {
+    "host.tailnet.ts.net:3000": {
+      Handlers: { "/": { Proxy: "http://127.0.0.1:43121" } },
+    },
+  },
+});
+const tailscaleServeStatusWithDuplicateWebJson = JSON.stringify({
+  TCP: { "3000": { HTTPS: true } },
+  Web: {
+    "host.tailnet.ts.net:3000": {
+      Handlers: { "/": { Proxy: "http://127.0.0.1:43121" } },
+    },
+    "other-host.tailnet.ts.net:03000": {
+      Handlers: { "/": { Proxy: "http://127.0.0.1:43121" } },
+    },
+  },
+});
 
 function mockHandle(result: { stdout?: string; stderr?: string; code?: number }) {
   return ChildProcessSpawner.makeHandle({
@@ -686,6 +723,26 @@ describe("tailscale", () => {
         ["serve", "status", "--json"],
         ["serve", "--bg", "--https=3001", "http://[::1]:43121"],
       ]);
+    });
+  });
+
+  it.effect.each([
+    ["Web config without TCP", tailscaleServeStatusWithWebOnlyJson],
+    ["unsupported TCP config with Web", tailscaleServeStatusWithUnsupportedTcpJson],
+    ["duplicate numeric TCP keys", tailscaleServeStatusWithDuplicateTcpJson],
+    ["duplicate numeric Web keys", tailscaleServeStatusWithDuplicateWebJson],
+  ] as const)("refuses to create over occupied port: %s", ([, stdout]) => {
+    const commands: Array<ReadonlyArray<string>> = [];
+    const layer = sequenceSpawnerLayer([{ stdout }], (args) => commands.push(args));
+
+    return Effect.gen(function* () {
+      const error = yield* ensureOwnedTailscaleServe({
+        servePort: 3000,
+        localHost: "127.0.0.1",
+        localPort: 43121,
+      }).pipe(Effect.flip, Effect.provide(layer));
+      assert.instanceOf(error, TailscaleServeConflictError);
+      assert.deepEqual(commands, [["serve", "status", "--json"]]);
     });
   });
 });
