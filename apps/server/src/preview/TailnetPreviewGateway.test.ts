@@ -74,6 +74,8 @@ const request = (
       (response) => {
         const chunks: Buffer[] = [];
         response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+        response.on("aborted", () => reject(new Error("response aborted")));
+        response.on("error", reject);
         response.on("end", () =>
           resolve({
             status: response.statusCode ?? 0,
@@ -279,7 +281,7 @@ describe("TailnetPreviewGateway", () => {
     const proxied = await request(gateway.gatewayPort, "/submit?q=hello", {
       method: "POST",
       headers: {
-        cookie: `${cookie}; unrelated=visible-upstream`,
+        cookie: `${cookie}; __Host-verne-preview-65535=foreign; unrelated=visible-upstream`,
         origin: "https://machine.tailnet.example:8443",
         connection: "keep-alive, x-remove-me",
         "x-remove-me": "secret",
@@ -307,6 +309,27 @@ describe("TailnetPreviewGateway", () => {
     expect(proxied.headers["x-verne-upstream-internal"]).toBeUndefined();
     expect(proxied.headers["x-absolute-url"]).toBe("https://target.invalid/not-rewritten");
     expect(proxied.body).toBe("https://target.invalid/body-is-unchanged");
+  });
+
+  it("contains an upstream reset after partial response headers", async () => {
+    const target = await startTarget((incoming, response) => {
+      if (incoming.url === "/reset") {
+        response.flushHeaders();
+        response.write("partial", () => response.socket?.destroy());
+        return;
+      }
+      response.end("healthy");
+    });
+    const auth = await makeAuth();
+    const gateway = await startGateway(auth, target.port);
+    const cookie = await authenticate(auth, gateway.gatewayPort, target.port);
+
+    await expect(request(gateway.gatewayPort, "/reset", { headers: { cookie } })).rejects.toThrow(
+      "response aborted",
+    );
+    await expect(
+      request(gateway.gatewayPort, "/healthy", { headers: { cookie } }),
+    ).resolves.toMatchObject({ status: 200, body: "healthy" });
   });
 
   it("rejects cookies issued for another port", async () => {
@@ -381,12 +404,24 @@ describe("TailnetPreviewGateway", () => {
 
   it("proxies a real authenticated WebSocket bidirectionally", async () => {
     const webSocketServer = new NodeSocket.NodeWS.WebSocketServer({ noServer: true });
+    const upstreamUpgrade = Promise.withResolvers<NodeHttp.IncomingMessage>();
+    const downstreamUpgrade = Promise.withResolvers<NodeHttp.IncomingMessage>();
     webSocketServer.on("connection", (socket) => {
       socket.on("message", (message) => socket.send(`echo:${String(message)}`));
+    });
+    webSocketServer.on("headers", (headers) => {
+      const connectionIndex = headers.findIndex((header) =>
+        header.toLowerCase().startsWith("connection:"),
+      );
+      headers[connectionIndex] = "Connection: Upgrade, x-response-remove";
+      headers.push("x-response-remove: secret");
+      headers.push("keep-alive: timeout=5");
+      headers.push("x-verne-upstream-internal: secret");
     });
     const target = await startTarget(
       (_request, response) => response.end("http"),
       (request, socket, head) => {
+        upstreamUpgrade.resolve(request);
         webSocketServer.handleUpgrade(request, socket, head, (webSocket) => {
           webSocketServer.emit("connection", webSocket, request);
         });
@@ -406,8 +441,17 @@ describe("TailnetPreviewGateway", () => {
     const message = await new Promise<string>((resolve, reject) => {
       const socket = new NodeSocket.NodeWS.WebSocket(
         `ws://127.0.0.1:${gateway.gatewayPort}/socket?q=1`,
-        { headers: { cookie } },
+        {
+          headers: {
+            cookie: `${cookie}; __Host-verne-preview-65535=foreign; app=visible-upstream`,
+            origin: "https://machine.tailnet.example:8443",
+            "keep-alive": "timeout=5",
+            "proxy-authorization": "secret",
+            "x-verne-preview-internal": "secret",
+          },
+        },
       );
+      socket.on("upgrade", (response) => downstreamUpgrade.resolve(response));
       socket.on("open", () => socket.send("hello"));
       socket.on("message", (data) => {
         resolve(String(data));
@@ -416,6 +460,171 @@ describe("TailnetPreviewGateway", () => {
       socket.on("error", reject);
     });
     expect(message).toBe("echo:hello");
+    expect((await upstreamUpgrade.promise).headers).toEqual(
+      expect.objectContaining({
+        host: `127.0.0.1:${target.port}`,
+        origin: `http://127.0.0.1:${target.port}`,
+        connection: "Upgrade",
+        upgrade: "websocket",
+        cookie: "app=visible-upstream",
+      }),
+    );
+    const upstreamHeaders = (await upstreamUpgrade.promise).headers;
+    expect(upstreamHeaders["keep-alive"]).toBeUndefined();
+    expect(upstreamHeaders["proxy-authorization"]).toBeUndefined();
+    expect(upstreamHeaders["x-verne-preview-internal"]).toBeUndefined();
+
+    const downstreamHeaders = (await downstreamUpgrade.promise).headers;
+    expect(downstreamHeaders.connection).toBe("Upgrade");
+    expect(downstreamHeaders.upgrade).toBe("websocket");
+    expect(downstreamHeaders["x-response-remove"]).toBeUndefined();
+    expect(downstreamHeaders["keep-alive"]).toBeUndefined();
+    expect(downstreamHeaders["x-verne-upstream-internal"]).toBeUndefined();
+  });
+
+  it("removes a Connection-nominated header from a raw WebSocket handshake", async () => {
+    const webSocketServer = new NodeSocket.NodeWS.WebSocketServer({ noServer: true });
+    const upstreamUpgrade = Promise.withResolvers<NodeHttp.IncomingMessage>();
+    const target = await startTarget(
+      (_request, response) => response.end("http"),
+      (request, socket, head) => {
+        upstreamUpgrade.resolve(request);
+        webSocketServer.handleUpgrade(request, socket, head, (webSocket) => webSocket.terminate());
+      },
+    );
+    closeActions.push(
+      () =>
+        new Promise<void>((resolve) => {
+          for (const client of webSocketServer.clients) client.terminate();
+          webSocketServer.close(() => resolve());
+        }),
+    );
+    const auth = await makeAuth();
+    const gateway = await startGateway(auth, target.port);
+    const cookie = await authenticate(auth, gateway.gatewayPort, target.port);
+
+    const responseStatus = await new Promise<string>((resolve, reject) => {
+      const socket = NodeNet.connect(gateway.gatewayPort, "127.0.0.1", () => {
+        socket.write(
+          [
+            "GET /raw-socket HTTP/1.1",
+            "Host: machine.tailnet.example",
+            "Connection: Upgrade, x-upgrade-remove",
+            "Upgrade: websocket",
+            "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+            "Sec-WebSocket-Version: 13",
+            "x-upgrade-remove: secret",
+            `Cookie: ${cookie}`,
+            "",
+            "",
+          ].join("\r\n"),
+        );
+      });
+      let received = "";
+      socket.on("data", (chunk) => {
+        received += chunk.toString("latin1");
+        const boundary = received.indexOf("\r\n\r\n");
+        if (boundary < 0) return;
+        resolve(received.slice(0, boundary).split("\r\n", 1)[0] ?? "");
+        socket.destroy();
+      });
+      socket.on("error", reject);
+    });
+
+    expect(responseStatus).toBe("HTTP/1.1 101 Switching Protocols");
+    expect((await upstreamUpgrade.promise).headers.connection).toBe("Upgrade");
+    expect((await upstreamUpgrade.promise).headers["x-upgrade-remove"]).toBeUndefined();
+  });
+
+  it("shares close teardown and blocks a target connection after delayed auth", async () => {
+    let targetConnections = 0;
+    const target = await startTarget((_request, response) => response.end("unexpected"));
+    target.server.on("connection", () => {
+      targetConnections += 1;
+    });
+    const auth = await makeAuth();
+    const capability = await runEffect(
+      auth.mintLaunch({ environmentId, port: target.port, leaseId, target: "/race" }),
+    );
+    const session = await runEffect(
+      auth.exchangeLaunch({
+        environmentId,
+        port: target.port,
+        leaseId,
+        launchSecret: capability.launchSecret,
+      }),
+    );
+    const binding = await runEffect(
+      auth.validateSession({
+        environmentId,
+        port: target.port,
+        leaseId,
+        sessionSecret: session.sessionSecret,
+      }),
+    );
+    const validationStarted = Promise.withResolvers<void>();
+    const releaseValidation = Promise.withResolvers<void>();
+    const controlledAuth = TailnetPreviewAuth.TailnetPreviewAuth.of({
+      ...auth,
+      validateSession: () =>
+        Effect.promise(async () => {
+          validationStarted.resolve();
+          await releaseValidation.promise;
+          return binding;
+        }),
+    });
+    const gateway = await startGateway(controlledAuth, target.port);
+
+    const clientClosed = Promise.withResolvers<void>();
+    const outgoing = NodeHttp.request({
+      host: "127.0.0.1",
+      port: gateway.gatewayPort,
+      path: "/race",
+      headers: { cookie: `${session.cookieName}=${session.sessionSecret}` },
+    });
+    outgoing.on("socket", (socket) => socket.on("close", () => clientClosed.resolve()));
+    outgoing.on("error", () => {});
+    outgoing.end();
+    await validationStarted.promise;
+
+    let firstCloseResolved = false;
+    let secondCloseResolved = false;
+    const firstClose = runEffect(gateway.close).then(() => {
+      firstCloseResolved = true;
+    });
+    const secondClose = runEffect(gateway.close).then(() => {
+      secondCloseResolved = true;
+    });
+    await clientClosed.promise;
+    expect(firstCloseResolved).toBe(false);
+    expect(secondCloseResolved).toBe(false);
+    expect(targetConnections).toBe(0);
+
+    releaseValidation.resolve();
+    await Promise.all([firstClose, secondClose]);
+    expect(targetConnections).toBe(0);
+  });
+
+  it("terminates an active outbound HTTP connection on close", async () => {
+    const targetStarted = Promise.withResolvers<void>();
+    const targetClosed = Promise.withResolvers<void>();
+    let targetWasClosed = false;
+    void targetClosed.promise.then(() => {
+      targetWasClosed = true;
+    });
+    const target = await startTarget((incoming) => {
+      targetStarted.resolve();
+      incoming.socket.on("close", () => targetClosed.resolve());
+    });
+    const auth = await makeAuth();
+    const gateway = await startGateway(auth, target.port);
+    const cookie = await authenticate(auth, gateway.gatewayPort, target.port);
+    void request(gateway.gatewayPort, "/held", { headers: { cookie } }).catch(() => {});
+    await targetStarted.promise;
+
+    await Promise.all([runEffect(gateway.close), runEffect(gateway.close)]);
+    await targetClosed.promise;
+    expect(targetWasClosed).toBe(true);
   });
 
   it("returns 502 when the target cannot be reached and remains healthy", async () => {
