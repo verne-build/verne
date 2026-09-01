@@ -1,0 +1,10 @@
+{
+  "name": "verne-app-router",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "workers_dev": false,
+  "services": [
+    { "binding": "LATEST", "service": "verne-app-latest" },
+    { "binding": "NIGHTLY", "service": "verne-app-nightly" },
+  ],
+}
