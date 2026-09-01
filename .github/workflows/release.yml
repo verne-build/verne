@@ -874,20 +874,16 @@ jobs:
     name: Deploy hosted web app
     needs: [preflight, client_public_config, release]
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.client_public_config.result == 'success' && needs.release.result == 'success' }}
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
       VERNE_CLERK_PUBLISHABLE_KEY: ${{ needs.client_public_config.outputs.clerk_publishable_key }}
       VERNE_CLERK_JWT_TEMPLATE: ${{ needs.client_public_config.outputs.clerk_jwt_template }}
       VERNE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ needs.client_public_config.outputs.clerk_cli_oauth_client_id }}
       VERNE_RELAY_URL: ${{ needs.client_public_config.outputs.relay_url }}
-      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       VERNE_WEB_ROUTER_URL: ${{ vars.VERNE_WEB_ROUTER_URL }}
-      VERNE_WEB_LATEST_DOMAIN: ${{ vars.VERNE_WEB_LATEST_DOMAIN }}
-      VERNE_WEB_NIGHTLY_DOMAIN: ${{ vars.VERNE_WEB_NIGHTLY_DOMAIN }}
-      VERCEL_TEAM_SLUG: ${{ vars.VERCEL_TEAM_SLUG }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -907,6 +903,7 @@ jobs:
             args:
               - --filter=@t3tools/scripts...
               - --filter=@t3tools/web...
+              - --filter=@verne-build/cloudflare...
 
       - name: Download relay client tracing config
         uses: actions/download-artifact@v8
@@ -928,66 +925,32 @@ jobs:
       - name: Refresh release lockfile
         run: vp install --lockfile-only --ignore-scripts
 
-      - name: Deploy and alias channel
+      - name: Build and deploy channel
         shell: bash
         run: |
           set -euo pipefail
 
-          if [[ -z "${VERCEL_TOKEN:-}" || -z "${VERCEL_ORG_ID:-}" || -z "${VERCEL_PROJECT_ID:-}" ]]; then
-            echo "Missing one or more required Vercel secrets: VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID." >&2
+          if [[ -z "${CLOUDFLARE_API_TOKEN:-}" || -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
+            echo "Missing one or more required Cloudflare secrets: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID." >&2
             exit 1
           fi
 
-          router_url="${VERNE_WEB_ROUTER_URL:-https://app.verne.build}"
-          latest_domain="${VERNE_WEB_LATEST_DOMAIN:-latest.app.verne.build}"
-          nightly_domain="${VERNE_WEB_NIGHTLY_DOMAIN:-nightly.app.verne.build}"
-          router_domain="${router_url#http://}"
-          router_domain="${router_domain#https://}"
-          router_domain="${router_domain%%/*}"
-
           if [[ "${{ needs.preflight.outputs.release_channel }}" == "stable" ]]; then
-            channel_domain="$latest_domain"
             channel_name="latest"
+            worker_name="verne-app-latest"
           else
-            channel_domain="$nightly_domain"
             channel_name="nightly"
+            worker_name="verne-app-nightly"
           fi
 
-          vercel_scope="${VERCEL_TEAM_SLUG:-$VERCEL_ORG_ID}"
-          vercel_scope_args=(--scope "$vercel_scope")
+          export APP_VERSION="${{ needs.preflight.outputs.version }}"
+          export VITE_HOSTED_APP_URL="${VERNE_WEB_ROUTER_URL:-https://app.verne.build}"
+          export VITE_HOSTED_APP_CHANNEL="$channel_name"
 
           echo "Deploying hosted web app for $channel_name channel."
-          deployment_url="$(
-            vp dlx vercel@53.1.1 deploy \
-              --archive=tgz \
-              --prod \
-              --skip-domain \
-              --yes \
-              --token "$VERCEL_TOKEN" \
-              "${vercel_scope_args[@]}" \
-              --build-env "APP_VERSION=${{ needs.preflight.outputs.version }}" \
-              --build-env "VERNE_CLERK_PUBLISHABLE_KEY=${VERNE_CLERK_PUBLISHABLE_KEY:-}" \
-              --build-env "VERNE_CLERK_JWT_TEMPLATE=${VERNE_CLERK_JWT_TEMPLATE:-}" \
-              --build-env "VERNE_CLERK_CLI_OAUTH_CLIENT_ID=${VERNE_CLERK_CLI_OAUTH_CLIENT_ID:-}" \
-              --build-env "VERNE_RELAY_URL=${VERNE_RELAY_URL:-}" \
-              --build-env "VERNE_RELAY_CLIENT_OTLP_TRACES_URL=${VERNE_RELAY_CLIENT_OTLP_TRACES_URL:-}" \
-              --build-env "VERNE_RELAY_CLIENT_OTLP_TRACES_DATASET=${VERNE_RELAY_CLIENT_OTLP_TRACES_DATASET:-}" \
-              --build-env "VERNE_RELAY_CLIENT_OTLP_TRACES_TOKEN=${VERNE_RELAY_CLIENT_OTLP_TRACES_TOKEN:-}" \
-              --build-env "VITE_HOSTED_APP_URL=$router_url" \
-              --build-env "VITE_HOSTED_APP_CHANNEL=$channel_name"
-          )"
-
-          echo "Aliasing $deployment_url to $channel_domain."
-          vp dlx vercel@53.1.1 alias set "$deployment_url" "$channel_domain" \
-            --token "$VERCEL_TOKEN" \
-            "${vercel_scope_args[@]}"
-
-          if [[ "$channel_name" == "latest" && -n "$router_domain" && "$router_domain" != "$channel_domain" ]]; then
-            echo "Aliasing $deployment_url to router domain $router_domain."
-            vp dlx vercel@53.1.1 alias set "$deployment_url" "$router_domain" \
-              --token "$VERCEL_TOKEN" \
-              "${vercel_scope_args[@]}"
-          fi
+          vp run --filter @t3tools/web build
+          node scripts/apply-web-brand-assets.ts --channel "$channel_name"
+          vp run --filter @verne-build/cloudflare deploy:channel --name "$worker_name"
 
   finalize:
     name: Finalize release
