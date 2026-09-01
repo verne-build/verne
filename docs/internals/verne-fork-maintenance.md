@@ -187,6 +187,12 @@ resolution:
 - migration, contract, and provider-adapter checks when those areas changed;
 - an integrated pass on affected client surfaces when the maintainer requests it.
 
+When upstream changes a component that Verne styles, confirm the scoped stylesheet still targets
+semantic `data-slot` or named surface attributes that the new component actually exposes. Removed
+implementation classes are not a compatibility surface: replace those selectors at the sync point
+instead of restoring the old class names or forking the component. For composer changes, follow the
+hook contract and state checklist in [the Verne theme architecture](verne-theme.md).
+
 Do not run repository-wide checks by default. Do not launch a second dev server or use live T3
 userdata for verification.
 

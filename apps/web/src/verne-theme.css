@@ -314,23 +314,13 @@ html[data-theme-id="verne"] .surface-glass {
   box-shadow: 0 1px 2px rgb(0 0 0 / 20%);
 }
 
-html[data-theme-id="verne"] .chat-composer-glass-shell {
+html[data-theme-id="verne"] [data-slot="composer-shell"] {
   --chat-composer-glass-surface: var(--secondary);
   --chat-composer-outline: color-mix(in srgb, var(--contrast-sidebar-foreground) 8%, transparent);
   --chat-composer-highlight: rgb(255 255 255 / 4%);
 }
 
-html[data-theme-id="verne"] .chat-composer-glass-shell:is(.dark, .dark *) {
-  --chat-composer-outline: color-mix(in srgb, var(--contrast-sidebar-foreground) 8%, transparent);
-  --chat-composer-highlight: rgb(255 255 255 / 4%);
-}
-
-html[data-theme-id="verne"] :is(.chat-composer-drawer-slot, .chat-composer-top-drawer) {
-  width: 100%;
-  max-width: 48rem;
-}
-
-html[data-theme-id="verne"] .chat-composer-drawer-attached::after {
+html[data-theme-id="verne"] [data-composer-banner-surface="attached"]::after {
   pointer-events: none;
   position: absolute;
   z-index: 1;
@@ -366,18 +356,6 @@ html[data-theme-id="verne"] [data-composer-command-drawer="true"] {
 html[data-theme-id="verne"]
   :is([data-composer-tasks-badge="true"], [data-chat-composer-tasks-drawer="true"])::before {
   box-shadow: none;
-}
-
-html[data-theme-id="verne"]
-  :is([data-composer-tasks-badge="true"], [data-chat-composer-tasks-drawer="true"])::after {
-  pointer-events: none;
-  position: absolute;
-  z-index: 1;
-  right: 0;
-  bottom: var(--chat-composer-attachment-overlap);
-  left: 0;
-  border-bottom: 1px solid var(--chat-composer-attached-outline);
-  content: "";
 }
 
 html[data-theme-id="verne"] [data-chat-composer-main-surface="true"] {
@@ -476,21 +454,21 @@ html[data-theme-id="verne"]
   box-shadow: none;
 }
 
-html[data-theme-id="verne"] .chat-composer-glass-shell::before {
+html[data-theme-id="verne"] [data-slot="composer-shell"]::before {
   box-shadow: inset 0 1px 0 var(--chat-composer-highlight);
 }
 
 html[data-theme-id="verne"]
-  .chat-composer-glass-shell:has([data-chat-composer-menu-open="true"])::before {
+  [data-slot="composer-shell"]:has([data-chat-composer-menu-open="true"])::before {
   border-radius: 0 0 22px 22px;
 }
 
-html[data-theme-id="verne"] .chat-composer-glass-shell-with-context::before {
+html[data-theme-id="verne"] [data-slot="composer-shell"][data-with-context]::before {
   border-radius: 22px;
   clip-path: none;
 }
 
-html[data-theme-id="verne"] .chat-composer-glass-host::after {
+html[data-theme-id="verne"] [data-slot="composer-host"]::after {
   display: none;
 }
 
@@ -499,47 +477,38 @@ html[data-theme-id="verne"] [data-chat-composer-main-surface="true"]::after {
 }
 
 html[data-theme-id="verne"]
-  .chat-composer-glass-shell-with-context
-  :is(.chat-composer-glass-host, [data-chat-composer-main-surface="true"]) {
+  [data-slot="composer-shell"][data-with-context]
+  :is([data-slot="composer-host"], [data-chat-composer-main-surface="true"]) {
   border-radius: 22px;
 }
 
 html[data-theme-id="verne"]
-  .chat-composer-glass-shell-with-context
+  [data-slot="composer-shell"][data-with-context]
   [data-chat-composer-surface="true"] {
   border-radius: 20px;
 }
 
 html[data-theme-id="verne"]
-  .chat-composer-glass-shell:is(
-    .chat-composer-glass-shell-attached,
-    :has(.chat-composer-top-drawer)
-  )
-  :is(.chat-composer-glass-host, [data-chat-composer-main-surface="true"]) {
+  [data-slot="composer-shell"]:has([data-composer-banner-surface="attached"])
+  :is([data-slot="composer-host"], [data-chat-composer-main-surface="true"]) {
   border-top-left-radius: 0;
   border-top-right-radius: 0;
 }
 
 html[data-theme-id="verne"]
-  .chat-composer-glass-shell:is(
-    .chat-composer-glass-shell-attached,
-    :has(.chat-composer-top-drawer)
-  )
+  [data-slot="composer-shell"]:has([data-composer-banner-surface="attached"])
   [data-chat-composer-surface="true"] {
   border-top-left-radius: 0;
   border-top-right-radius: 0;
 }
 
 html[data-theme-id="verne"]
-  .chat-composer-glass-shell:is(
-    .chat-composer-glass-shell-attached,
-    :has(.chat-composer-top-drawer)
-  )
+  [data-slot="composer-shell"]:has([data-composer-banner-surface="attached"])
   [data-chat-composer-main-surface="true"] {
   border-top-color: transparent;
 }
 
-html[data-theme-id="verne"] .chat-composer-context-strip {
+html[data-theme-id="verne"] [data-slot="composer-context-strip"] {
   width: 100%;
   max-width: 48rem;
   margin-top: 0;
@@ -551,40 +520,38 @@ html[data-theme-id="verne"] .chat-composer-context-strip {
 }
 
 html[data-theme-id="verne"]
-  .chat-composer-glass-shell:is(
-    .chat-composer-glass-shell-attached,
-    :has(:is(.chat-composer-top-drawer, .chat-composer-shoulder-tab))
+  [data-slot="composer-shell"]:has(
+    :is([data-composer-banner-surface="attached"], [data-composer-shoulder-tab])
   )
-  .chat-composer-context-strip {
+  [data-slot="composer-context-strip"] {
   background: transparent;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
 
 html[data-theme-id="verne"]
-  .chat-composer-context-strip
+  [data-slot="composer-context-strip"]
   button[data-slot="select-trigger"][aria-label="Workspace"] {
   margin-inline-start: 0;
 }
 
 html[data-theme-id="verne"]
-  .chat-composer-context-strip
+  [data-slot="composer-context-strip"]
   span:has(> button[data-slot="combobox-trigger"]) {
   margin-inline-end: -0.375rem;
 }
 
-html[data-theme-id="verne"] .chat-composer-context-strip::before {
+html[data-theme-id="verne"] [data-slot="composer-context-strip"]::before {
   display: none;
   box-shadow: none;
 }
 
 @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
   html[data-theme-id="verne"]
-    .chat-composer-glass-shell:is(
-      .chat-composer-glass-shell-attached,
-      :has(:is(.chat-composer-top-drawer, .chat-composer-shoulder-tab))
+    [data-slot="composer-shell"]:has(
+      :is([data-composer-banner-surface="attached"], [data-composer-shoulder-tab])
     )
-    .chat-composer-context-strip {
+    [data-slot="composer-context-strip"] {
     background: transparent;
   }
 

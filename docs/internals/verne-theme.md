@@ -85,6 +85,13 @@ sidebar's fixed controls are a second localized seam: Verne keeps the upstream t
 markup and logic dormant for mergeability, hides its control, and expands New thread to a labeled
 full-width row. The legacy sidebar remains unchanged. Do not fork the shared sidebar primitive.
 
+The composer keeps upstream's `ComposerSurface` structure and behavior. Verne owns only the
+scoped material rules attached to its semantic hooks: `composer-shell`, `composer-host`, and
+`composer-context-strip`, together with the existing composer surface and banner attributes. Do
+not bind Verne styling to upstream utility or implementation class names, and do not copy the
+composer component. If upstream changes one of these hooks, adapt `verne-theme.css` and the focused
+theme seam test in the same sync.
+
 ## Upstream maintenance
 
 The fork should concentrate its persistent diff in these areas:
@@ -93,6 +100,7 @@ The fork should concentrate its persistent diff in these areas:
 - The default preference in the boot and runtime theme paths.
 - One imported Verne stylesheet.
 - Localized sidebar chrome and modern control-row adjustments, with the legacy sidebar unchanged.
+- Composer material overrides attached to upstream's semantic surface hooks.
 - Focused registration, boot, and palette tests.
 
 Upstream feature components should merge without theme-specific edits. When upstream adds a primitive or surface, it inherits the semantic palette first. Add a scoped selector only if the inherited result does not match the Verne material language.
@@ -108,3 +116,7 @@ Add focused tests that prove:
 - Other built-in themes retain their definitions.
 
 Run targeted web theme tests, web type checking, and linting for changed files. Then inspect the main chat, settings, menus, dialogs, and terminal surfaces in the retained isolated dev environment at common desktop widths. Capture before-and-after images if the work becomes a pull request.
+
+After an upstream composer change, inspect its empty, command-menu, attached-banner, and repository
+context states. Check the global command palette separately; it has its own dialog surface and is
+not the chat composer.
