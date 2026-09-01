@@ -1,0 +1,19 @@
+{
+  "name": "@verne-build/cloudflare",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy:channel": "wrangler deploy --config app-channel/wrangler.jsonc",
+    "deploy:router": "wrangler deploy --config app-router/wrangler.jsonc",
+    "delete:worker": "wrangler delete",
+    "test": "vp test run",
+    "typecheck": "tsgo --noEmit",
+    "wrangler": "wrangler"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260601.1",
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:",
+    "wrangler": "4.127.1"
+  }
+}
