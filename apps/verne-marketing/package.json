@@ -1,0 +1,22 @@
+{
+  "name": "@verne-build/marketing",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "test": "vp test run",
+    "typecheck": "astro check"
+  },
+  "dependencies": {
+    "@t3tools/shared": "workspace:*",
+    "astro": "^7.0.3"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.7",
+    "typescript": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}
