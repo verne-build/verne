@@ -90,9 +90,9 @@ package version before a client release becomes available.
 ## Distribution and hosted services
 
 Desktop releases and Electron update metadata are published to GitHub Releases in
-`verne-build/verne`. `verne.build/download` is a static page that resolves the latest release and
-links directly to its signed `.dmg`, `.exe`, and `.AppImage` assets. Verne does not operate a custom
-desktop update service.
+`verne-build/verne`. A dedicated download page on `verne.build` is deferred until the real site is
+built; for now, users obtain the `.dmg`, `.exe`, and `.AppImage` assets directly from GitHub Releases.
+Verne does not operate a custom desktop update service.
 
 The hosted client uses separate `latest.app.verne.build` and `nightly.app.verne.build` channel
 Workers behind `app.verne.build`. The router defaults to latest and uses the `verne_web_channel`
@@ -134,7 +134,7 @@ Use focused tests for each changed boundary:
   repeated migration, validation failure, and SQLite consistency;
 - CLI package publication, `verne` invocation, service installation, and exact-version self-update;
 - desktop and mobile manifests, packaging labels, permission copy, and accessibility labels;
-- GitHub update repository selection, release artifact names, hosted app URLs, and download links;
+- GitHub update repository selection, release artifact names, hosted app URLs, and links to GitHub Releases;
 - manual pairing with account and T3 Connect entry points disabled;
 - static checks that prevent visible T3 Code copy from returning outside approved attribution and
   migration contexts.

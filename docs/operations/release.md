@@ -90,10 +90,11 @@ selected service binding.
 
 ### One-time Cloudflare bootstrap
 
-Wrangler `4.127.1` is pinned in `infra/verne-cloudflare`. Before bootstrap, create the scoped API
-token, add both secrets and `CLOUDFLARE_WORKERS_SUBDOMAIN` to the GitHub repository, and confirm the
-account's `workers.dev` subdomain. With Cloudflare credentials exported locally, bootstrap in this
-dependency order from the repository root:
+Every Wrangler-facing script in `infra/verne-cloudflare` invokes the exact
+`vp dlx wrangler@4.127.1` pin rather than a locally installed Wrangler dependency. Before bootstrap,
+create the scoped API token, add both secrets and `CLOUDFLARE_WORKERS_SUBDOMAIN` to the GitHub
+repository, and confirm the account's `workers.dev` subdomain. With Cloudflare credentials exported
+locally, bootstrap in this dependency order from the repository root:
 
 1. Build and deploy latest:
 
@@ -144,9 +145,10 @@ Adding `preview:web` to a same-repository pull request builds the web app and de
 `verne-app-pr-<number>` to
 `https://verne-app-pr-<number>.<CLOUDFLARE_WORKERS_SUBDOMAIN>.workers.dev`. Subsequent pushes redeploy
 the same Worker while the label remains. The workflow maintains one marker comment containing the
-exact preview URL and commit SHA. Removing the label or closing the pull request deletes the Worker
-and updates that comment; an already-absent Worker is treated as a successful no-op. Fork pull
-requests are skipped because GitHub does not expose Cloudflare credentials to them.
+exact preview URL and commit SHA. Removing the label, or closing the pull request while that label
+remains, deletes the Worker and updates that comment; an already-absent Worker is treated as a
+successful no-op. Cleanup runs from the trusted pull-request base SHA. Fork pull requests are skipped
+because GitHub does not expose Cloudflare credentials to them.
 
 ## Nightly builds
 

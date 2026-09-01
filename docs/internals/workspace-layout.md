@@ -16,7 +16,10 @@ the task commands.
   loads the web bundle over the `verne://` protocol, and owns SSH-managed remote environments.
 - `apps/mobile` (`@t3tools/mobile`): Expo/React Native client. Same client runtime composition as
   web, different platform layer and UI.
-- `apps/marketing` (`@t3tools/marketing`): Astro marketing site.
+- `apps/verne-marketing` (`@verne-build/marketing`): deployed Astro site for `verne.build`, including
+  the generated Verne project schema.
+- `apps/marketing` (`@t3tools/marketing`): dormant upstream Astro/Vercel site retained as reference;
+  Verne does not deploy it.
 
 ## packages
 
@@ -39,6 +42,8 @@ the task commands.
 
 ## infra
 
+- `infra/verne-cloudflare` (`@verne-build/cloudflare`): Verne-owned Cloudflare Worker sources and
+  exact-pinned deployment entry points for hosted web channels, previews, and channel routing.
 - `infra/relay` (`t3code-relay`): dormant inherited managed-relay implementation, deployable manually with Alchemy. Handles
   environment discovery, cloud-side records, and mobile notifications. It is not in the hot path;
   after connect, client traffic goes directly to the environment. See

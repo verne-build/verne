@@ -37,10 +37,6 @@ jobs:
       )
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      CLOUDFLARE_WORKERS_SUBDOMAIN: ${{ vars.CLOUDFLARE_WORKERS_SUBDOMAIN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -64,6 +60,10 @@ jobs:
 
       - id: deploy
         name: Build and deploy preview
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_WORKERS_SUBDOMAIN: ${{ vars.CLOUDFLARE_WORKERS_SUBDOMAIN }}
         shell: bash
         run: |
           set -euo pipefail
@@ -117,7 +117,7 @@ jobs:
               "This Worker is deleted when the `preview:web` label is removed or the PR closes.",
             ].join("\n");
 
-            const { data: comments } = await github.rest.issues.listComments({
+            const comments = await github.paginate(github.rest.issues.listComments, {
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.payload.pull_request.number,
@@ -143,23 +143,25 @@ jobs:
 
   cleanup:
     name: Remove web preview
-    # Fork PRs never receive Cloudflare secrets. Only PR closure or removal of
-    # the opt-in label can remove a same-repository preview Worker.
+    # Fork PRs never receive Cloudflare secrets. Closing a same-repository PR
+    # cleans up only while the opt-in label remains; the unlabeled event handles
+    # label removal independently.
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository &&
       (
-        github.event.action == 'closed' ||
+        (
+          github.event.action == 'closed' &&
+          contains(github.event.pull_request.labels.*.name, 'preview:web')
+        ) ||
         (github.event.action == 'unlabeled' && github.event.label.name == 'preview:web')
       )
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
+          ref: ${{ github.event.pull_request.base.sha }}
           sparse-checkout: |
             /*
             !/.repos/
@@ -175,6 +177,9 @@ jobs:
               - --filter=@verne-build/cloudflare...
 
       - name: Delete preview Worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         shell: bash
         run: |
           set -euo pipefail
@@ -214,7 +219,7 @@ jobs:
         with:
           script: |
             const marker = "<!-- web-preview-deploy -->";
-            const { data: comments } = await github.rest.issues.listComments({
+            const comments = await github.paginate(github.rest.issues.listComments, {
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.payload.pull_request.number,

@@ -96,15 +96,18 @@ Deploying a channel does not redeploy or reconfigure the router. The router chan
 source or bindings change, which keeps channel releases small and prevents a nightly deployment from
 affecting the stable route.
 
-The repository pins Wrangler `4.127.1` in `infra/verne-cloudflare/package.json`. That package exposes
-the deployment operations used locally and in GitHub Actions:
+`infra/verne-cloudflare/package.json` invokes the exact `vp dlx wrangler@4.127.1` pin for every
+deployment operation. That package does not declare Wrangler or `@cloudflare/workers-types` as
+direct dependencies; its Worker sources typecheck against TypeScript's standard `WebWorker`
+library, with Node and Vite+ retained as development tooling. The package exposes these operations
+locally and in GitHub Actions:
 
-| Script           | Command                                               | Purpose                                |
-| ---------------- | ----------------------------------------------------- | -------------------------------------- |
-| `deploy:channel` | `wrangler deploy --config app-channel/wrangler.jsonc` | Deploy a channel or preview Worker.    |
-| `deploy:router`  | `wrangler deploy --config app-router/wrangler.jsonc`  | Deploy the channel router.             |
-| `delete:worker`  | `wrangler delete`                                     | Delete a named preview Worker.         |
-| `wrangler`       | `wrangler`                                            | Deploy the separately configured site. |
+| Script           | Command                                                              | Purpose                                |
+| ---------------- | -------------------------------------------------------------------- | -------------------------------------- |
+| `deploy:channel` | `vp dlx wrangler@4.127.1 deploy --config app-channel/wrangler.jsonc` | Deploy a channel or preview Worker.    |
+| `deploy:router`  | `vp dlx wrangler@4.127.1 deploy --config app-router/wrangler.jsonc`  | Deploy the channel router.             |
+| `delete:worker`  | `vp dlx wrangler@4.127.1 delete`                                     | Delete a named preview Worker.         |
+| `wrangler`       | `vp dlx wrangler@4.127.1`                                            | Deploy the separately configured site. |
 
 Pass additional Wrangler arguments through Vite+ after the package script. For example, validate the
 three channel shapes and the router without deploying:
@@ -132,7 +135,9 @@ named `verne-app-pr-<number>` on `workers.dev`. The workflow updates one marker 
 preview URL and commit SHA.
 
 The preview is redeployed after subsequent pushes while the label remains. Removing the label or
-closing the pull request deletes that Worker and updates the marker comment. Fork pull requests are
+closing the pull request while it is labeled deletes that Worker and updates the marker comment.
+Unlabeled cleanup handles removal independently. Cleanup checks out the trusted pull-request base
+SHA, and Cloudflare secrets are exposed only to the lookup/delete step. Fork pull requests are
 skipped because Cloudflare credentials are not exposed to them. Preview Workers use direct static
 asset serving and do not participate in latest/nightly routing. The repository variable
 `CLOUDFLARE_WORKERS_SUBDOMAIN` supplies the account-specific portion of each preview URL; it must
@@ -158,11 +163,12 @@ deploying and deleting Workers, updating Worker bindings and routes, and reading
 information Wrangler needs. It does not need general DNS or zone administration when Custom Domains
 are attached separately during bootstrap.
 
-Wrangler `4.127.1` is pinned so local validation and GitHub Actions use the same release. Deployment
-commands fail immediately when either Cloudflare secret is missing, and preview deployment also
-fails when `CLOUDFLARE_WORKERS_SUBDOMAIN` is missing. Build-time public client configuration continues
-to use the existing GitHub variables and release outputs; secrets that are embedded into a browser
-bundle are not introduced by this hosting change.
+The exact `vp dlx wrangler@4.127.1` invocation keeps local validation and GitHub Actions on the same
+release without installing Wrangler into the workspace. Deployment commands fail immediately when
+either Cloudflare secret is missing, and preview deployment also fails when
+`CLOUDFLARE_WORKERS_SUBDOMAIN` is missing. Build-time public client configuration continues to use
+the existing GitHub variables and release outputs; secrets that are embedded into a browser bundle
+are not introduced by this hosting change.
 
 One-time bootstrap proceeds in dependency order:
 

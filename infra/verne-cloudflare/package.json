@@ -3,17 +3,15 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "deploy:channel": "wrangler deploy --config app-channel/wrangler.jsonc",
-    "deploy:router": "wrangler deploy --config app-router/wrangler.jsonc",
-    "delete:worker": "wrangler delete",
+    "deploy:channel": "vp dlx wrangler@4.127.1 deploy --config app-channel/wrangler.jsonc",
+    "deploy:router": "vp dlx wrangler@4.127.1 deploy --config app-router/wrangler.jsonc",
+    "delete:worker": "vp dlx wrangler@4.127.1 delete",
     "test": "vp test run",
     "typecheck": "tsgo --noEmit",
-    "wrangler": "wrangler"
+    "wrangler": "vp dlx wrangler@4.127.1"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260601.1",
     "@types/node": "catalog:",
-    "vite-plus": "catalog:",
-    "wrangler": "4.127.1"
+    "vite-plus": "catalog:"
   }
 }
