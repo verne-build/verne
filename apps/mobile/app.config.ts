@@ -26,6 +26,7 @@ const runtimeVersionPolicy =
   process.env.MOBILE_VERSION_POLICY ??
   (APP_VARIANT === "development" ? "appVersion" : "fingerprint");
 const upstreamProvenance = decodeUpstreamProvenance(upstreamJson);
+const isReleaseBuild = process.env.VERNE_RELEASE_BUILD === "1";
 const localGitRevision = () => {
   let revision: string;
   let status: string;
@@ -55,12 +56,13 @@ const localGitRevision = () => {
 const buildRevisionInput = {
   explicitRevision: process.env.VERNE_REVISION,
   githubRevision:
-    process.env.GITHUB_SHA ?? process.env.EAS_BUILD_GIT_COMMIT_HASH ?? localGitRevision(),
+    process.env.GITHUB_SHA ??
+    process.env.EAS_BUILD_GIT_COMMIT_HASH ??
+    (isReleaseBuild ? localGitRevision() : undefined),
 };
-const verneRevision =
-  process.env.VERNE_RELEASE_BUILD === "1"
-    ? requireBuildRevision(buildRevisionInput)
-    : resolveBuildRevision(buildRevisionInput);
+const verneRevision = isReleaseBuild
+  ? requireBuildRevision(buildRevisionInput)
+  : resolveBuildRevision(buildRevisionInput);
 
 const personalTeamBundleIdentifier = repoEnv.VERNE_IOS_PERSONAL_TEAM_BUNDLE_ID?.trim();
 const IOS_BUNDLE_IDENTIFIER_PATTERN = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
