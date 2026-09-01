@@ -35,6 +35,16 @@ apps use separate OS sandboxes because their bundle IDs are different, so instal
 state cannot be read automatically; server-side projects and threads remain available after the
 server import.
 
+### Windows Subsystem for Linux
+
+When the desktop app runs a WSL backend, it installs the matching server runtime into
+`~/.verne/wsl-runtime` inside the selected distro. The first launch after installing or updating T3
+Code may take a little longer while that release's runtime is extracted. Later launches reuse the
+Linux-local copy so startup does not depend on reading application files through `/mnt/c`. After a
+successful launch, Verne keeps the current runtime and one previous runtime for rollback and
+removes older caches automatically. If a cached runtime stops working, Verne launches from the
+application files under `/mnt/c` instead and reinstalls the runtime on the next launch.
+
 ## Providers
 
 Verne drives provider CLIs; it does not ship them. Install the CLI for each provider you want

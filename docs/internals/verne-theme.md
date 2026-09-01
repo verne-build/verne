@@ -16,7 +16,7 @@ The work covers the browser client and the Electron desktop client, which wraps 
 
 ## Theme registration and default selection
 
-Add a dual-mode, built-in theme with the identifier `verne`. Register it through the shared `ThemeDefinition` and `BUILT_IN_THEMES` path used by the existing themes. Dark remains the palette definition's base appearance for compatibility with stored `verne` preferences. At the product boundary, Verne replaces the stock T3 Code palette: System, Light, and Dark select the corresponding Verne half, and a fresh installation starts in System appearance. The mobile client may expose the shared palette, but its separate T3 Code default is unchanged.
+Add a dual-mode, built-in theme with the identifier `verne`. Register it through the shared `ThemeDefinition` and `BUILT_IN_THEMES` path used by the existing themes. Dark remains the palette definition's base appearance for compatibility with stored `verne` preferences. At the product boundary, Verne replaces the stock T3 Code palette: System, Light, and Dark select the corresponding Verne half, and a fresh installation starts in System appearance. The mobile client keeps its separately tuned Verne default and may also expose the shared palette.
 
 New installations select the standard System preference, backed by Verne. Existing `system`, `light`, `dark`, and `verne` preferences all resolve through Verne, while other saved themes remain unchanged. The theme library presents Verne as its standard card and keeps the stored `verne` identifier readable without showing a duplicate card.
 

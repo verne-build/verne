@@ -678,11 +678,24 @@ describe("ProviderCommandReactor", () => {
     }),
   );
 
-  it("generates a thread title on the first turn", async () => {
+  it("retries thread title generation after a transient failure", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
     const seededTitle = "Please investigate reconnect failures after restar...";
-    harness.generateThreadTitle.mockReturnValue(Effect.succeed({ title: "Generated title" }));
+    let attempts = 0;
+    harness.generateThreadTitle.mockReturnValue(
+      Effect.suspend(() => {
+        attempts += 1;
+        return attempts === 1
+          ? Effect.fail(
+              new TextGenerationError({
+                operation: "generateThreadTitle",
+                detail: "Claude CLI request timed out.",
+              }),
+            )
+          : Effect.succeed({ title: "Generated title" });
+      }),
+    );
 
     await Effect.runPromise(
       harness.engine.dispatch({
@@ -726,6 +739,7 @@ describe("ProviderCommandReactor", () => {
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.title).toBe("Generated title");
+    expect(attempts).toBe(2);
   });
 
   it("regenerates a thread title from the current conversation", async () => {
@@ -3215,4 +3229,49 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.session?.providerInstanceId).toBe(ProviderInstanceId.make("codex_work"));
     expect(thread?.session?.activeTurnId).toBeNull();
   });
+
+  effectIt.effect("stops a ready provider session after automatic settlement", () =>
+    Effect.gen(function* () {
+      const sessionStopped = yield* Deferred.make<void>();
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          stopSessionEffect: () => Deferred.succeed(sessionStopped, undefined).pipe(Effect.asVoid),
+        }),
+      );
+      const now = "2026-01-01T00:00:00.000Z";
+
+      yield* harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-for-auto-settle"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "ready",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex_work"),
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      });
+      const beforeSettlement = yield* Effect.promise(() => harness.readModel());
+
+      yield* harness.engine.dispatch({
+        type: "thread.auto-settle",
+        commandId: CommandId.make("cmd-auto-settle-with-session"),
+        threadId: ThreadId.make("thread-1"),
+        snapshotSequence: beforeSettlement.snapshotSequence,
+      });
+
+      yield* Deferred.await(sessionStopped);
+      yield* Effect.promise(() => harness.drain());
+      const readModel = yield* Effect.promise(() => harness.readModel());
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      expect(thread?.settledOverride).toBe("settled");
+      expect(thread?.session?.status).toBe("stopped");
+      expect(thread?.session?.providerInstanceId).toBe(ProviderInstanceId.make("codex_work"));
+    }),
+  );
 });

@@ -18,6 +18,20 @@ export const NonNegativeInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
 export const PositiveInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
 export const PortSchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }));
 
+/**
+ * Safe categories for a failed DPoP proof. These describe the class of failure
+ * without exposing proof contents or server-side authentication details.
+ */
+export const DpopFailureReason = Schema.Literals([
+  "time_window",
+  "key_mismatch",
+  "request_mismatch",
+  "token_mismatch",
+  "replay",
+  "invalid_proof",
+]);
+export type DpopFailureReason = typeof DpopFailureReason.Type;
+
 export const IsoDateTime = Schema.String;
 export type IsoDateTime = typeof IsoDateTime.Type;
 
@@ -72,12 +86,12 @@ export const RpcClientId = NonNegativeInt.pipe(Schema.brand("RpcClientId"));
 export type RpcClientId = typeof RpcClientId.Type;
 
 /**
- * Which client app a connection comes from. Unlike
+ * Which client surface a connection or command comes from. Unlike
  * `AuthClientMetadataDeviceType` (a UA-style device class where web and
  * desktop are both "desktop"), this names the actual product surface.
  * Optional everywhere it appears: old clients never send it.
  */
-export const ClientSurface = Schema.Literals(["web", "desktop", "mobile"]);
+export const ClientSurface = Schema.Literals(["web", "desktop", "mobile", "cli"]);
 export type ClientSurface = typeof ClientSurface.Type;
 
 export const ClientOs = Schema.Literals([

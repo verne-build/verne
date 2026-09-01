@@ -84,6 +84,18 @@ function useSettingsSearchTarget<T extends HTMLElement>(id: string | undefined) 
   return targetRef;
 }
 
+export function SettingsSearchTarget({
+  children,
+  ...targetProps
+}: ComponentPropsWithoutRef<"div">) {
+  const targetRef = useSettingsSearchTarget<HTMLDivElement>(targetProps.id);
+  return (
+    <div {...targetProps} ref={targetRef} tabIndex={targetProps.id ? -1 : targetProps.tabIndex}>
+      {children}
+    </div>
+  );
+}
+
 /** Info affordance explaining how a setting interacts with the shared background policy. */
 export function PolicyTooltip({ children }: { readonly children: string }) {
   return (
@@ -250,7 +262,7 @@ export function SettingsPageContainer({
   return (
     <SettingsSearchTargetProvider targetId={targetId} onTargetHandled={clearTargetHash}>
       <div
-        className="topbar-scroll-fade scrollbar-gutter-both flex-1 overflow-y-auto [--topbar-scroll-fade-height:1.5rem] sm:[--topbar-scroll-fade-height:1.5rem]"
+        className="topbar-scroll-fade scrollbar-gutter-both flex-1 overflow-y-auto"
         data-settings-page-scroll
       >
         <WorkspacePageContainer width={width} className={cn("gap-12", className)}>

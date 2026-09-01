@@ -9,16 +9,7 @@ import {
   HistoryIcon,
   MonitorIcon,
 } from "lucide-react";
-import {
-  memo,
-  type ReactNode,
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { useProject, useThread, useThreadShellsForProjectRefs } from "../state/entities";
@@ -49,7 +40,7 @@ import {
   MenuTrigger,
 } from "./ui/menu";
 import { Separator } from "./ui/separator";
-import { ComposerRepositoryRowLayout } from "./ComposerRepositoryRowLayout";
+import { ComposerSurface } from "./chat/ComposerSurface";
 
 interface BranchToolbarProps {
   environmentId: EnvironmentId;
@@ -67,7 +58,6 @@ interface BranchToolbarProps {
   onComposerFocusRequest?: () => void;
   availableEnvironments?: readonly EnvironmentOption[];
   onEnvironmentChange?: (environmentId: EnvironmentId) => void;
-  trailingContent?: ReactNode;
 }
 
 interface MobileRunContextSelectorProps {
@@ -275,8 +265,10 @@ function useLabelsOverflow(element: HTMLDivElement | null): boolean {
     let needed = 0;
     let groups = 0;
     for (const child of current.children) {
-      if (!(child instanceof HTMLElement) || child.offsetWidth <= 1) continue;
-      needed += contentWidth(child);
+      if (!(child instanceof HTMLElement)) continue;
+      const width = contentWidth(child);
+      if (width <= 1) continue;
+      needed += width;
       groups += 1;
     }
     needed += stripGap * Math.max(0, groups - 1);
@@ -366,7 +358,7 @@ function useLabelsOverflow(element: HTMLDivElement | null): boolean {
   // Label widths can change without the strip box moving (font family or
   // size preferences), so re-measure on every render as well as on resize
   // and font loads.
-  useEffect(() => {
+  useLayoutEffect(() => {
     measure();
   });
 
@@ -400,7 +392,6 @@ export const BranchToolbar = memo(function BranchToolbar({
   onComposerFocusRequest,
   availableEnvironments,
   onEnvironmentChange,
-  trailingContent,
 }: BranchToolbarProps) {
   const threadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
@@ -478,84 +469,73 @@ export const BranchToolbar = memo(function BranchToolbar({
   if (!hasActiveThread || !activeProject) return null;
 
   return (
-    <div
+    <ComposerSurface.ContextStrip
       ref={setStripElement}
       data-compact={labelsOverflow ? "" : undefined}
-      className="chat-composer-context-strip group/composer-context mx-auto flex w-full max-w-3xl items-center gap-2 overflow-x-clip overflow-y-visible px-3 py-1 sm:px-4"
     >
-      <ComposerRepositoryRowLayout
-        branch={
-          showGitControls ? (
-            <BranchToolbarBranchSelector
-              className="min-w-0 justify-start md:flex-none"
-              environmentId={environmentId}
-              threadId={threadId}
-              {...(draftId ? { draftId } : {})}
-              envLocked={envLocked}
-              {...(effectiveEnvModeOverride ? { effectiveEnvModeOverride } : {})}
-              {...(activeThreadBranchOverride !== undefined ? { activeThreadBranchOverride } : {})}
-              {...(onActiveThreadBranchOverrideChange
-                ? { onActiveThreadBranchOverrideChange }
-                : {})}
-              startFromOrigin={startFromOrigin}
-              onStartFromOriginChange={onStartFromOriginChange}
-              {...(onCheckoutPullRequestRequest ? { onCheckoutPullRequestRequest } : {})}
-              {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
-            />
-          ) : null
-        }
-        checkout={
-          isMobile && showGitControls ? (
-            <MobileRunContextSelector
-              envLocked={envLocked}
-              envModeLocked={envModeLocked}
-              environmentId={environmentId}
-              availableEnvironments={availableEnvironments}
-              showEnvironmentPicker={showEnvironmentPicker}
-              showEnvironmentIndicator={showEnvironmentIndicator}
-              onEnvironmentChange={onEnvironmentChange}
+      {isMobile && showGitControls ? (
+        <MobileRunContextSelector
+          envLocked={envLocked}
+          envModeLocked={envModeLocked}
+          environmentId={environmentId}
+          availableEnvironments={availableEnvironments}
+          showEnvironmentPicker={showEnvironmentPicker}
+          showEnvironmentIndicator={showEnvironmentIndicator}
+          onEnvironmentChange={onEnvironmentChange}
+          effectiveEnvMode={effectiveEnvMode}
+          activeWorktreePath={activeWorktreePath}
+          onEnvModeChange={onEnvModeChange}
+          previousWorktreeLabel={previousWorktreeLabel}
+          onUsePreviousWorktree={onUsePreviousWorktree}
+        />
+      ) : (
+        <div className="flex min-w-10 flex-1 items-center gap-1">
+          {showEnvironmentIndicator && availableEnvironments && (
+            <>
+              <BranchToolbarEnvironmentSelector
+                envLocked={envLocked}
+                environmentId={environmentId}
+                availableEnvironments={availableEnvironments}
+                {...(showEnvironmentPicker && onEnvironmentChange ? { onEnvironmentChange } : {})}
+              />
+              {showGitControls ? (
+                <Separator
+                  orientation="vertical"
+                  className="mx-0.5 h-3.5!"
+                  data-composer-context-control
+                />
+              ) : null}
+            </>
+          )}
+          {showGitControls ? (
+            <BranchToolbarEnvModeSelector
+              envLocked={envModeLocked}
               effectiveEnvMode={effectiveEnvMode}
               activeWorktreePath={activeWorktreePath}
               onEnvModeChange={onEnvModeChange}
               previousWorktreeLabel={previousWorktreeLabel}
               onUsePreviousWorktree={onUsePreviousWorktree}
             />
-          ) : (
-            <div className="flex min-w-0 items-center gap-1">
-              {showEnvironmentIndicator && availableEnvironments && (
-                <>
-                  <BranchToolbarEnvironmentSelector
-                    envLocked={envLocked}
-                    environmentId={environmentId}
-                    availableEnvironments={availableEnvironments}
-                    {...(showEnvironmentPicker && onEnvironmentChange
-                      ? { onEnvironmentChange }
-                      : {})}
-                  />
-                  {showGitControls ? (
-                    <Separator
-                      orientation="vertical"
-                      className="mx-0.5 h-3.5!"
-                      data-composer-context-control
-                    />
-                  ) : null}
-                </>
-              )}
-              {showGitControls ? (
-                <BranchToolbarEnvModeSelector
-                  envLocked={envModeLocked}
-                  effectiveEnvMode={effectiveEnvMode}
-                  activeWorktreePath={activeWorktreePath}
-                  onEnvModeChange={onEnvModeChange}
-                  previousWorktreeLabel={previousWorktreeLabel}
-                  onUsePreviousWorktree={onUsePreviousWorktree}
-                />
-              ) : null}
-            </div>
-          )
-        }
-        context={trailingContent}
-      />
-    </div>
+          ) : null}
+        </div>
+      )}
+
+      {showGitControls ? (
+        <BranchToolbarBranchSelector
+          className="min-w-0 flex-1 justify-end md:ml-auto md:flex-initial"
+          environmentId={environmentId}
+          threadId={threadId}
+          {...(draftId ? { draftId } : {})}
+          envLocked={envLocked}
+          {...(effectiveEnvModeOverride ? { effectiveEnvModeOverride } : {})}
+          {...(activeThreadBranchOverride !== undefined ? { activeThreadBranchOverride } : {})}
+          {...(onActiveThreadBranchOverrideChange ? { onActiveThreadBranchOverrideChange } : {})}
+          startFromOrigin={startFromOrigin}
+          onStartFromOriginChange={onStartFromOriginChange}
+          {...(onCheckoutPullRequestRequest ? { onCheckoutPullRequestRequest } : {})}
+          {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
+        />
+      ) : null}
+    </ComposerSurface.ContextStrip>
   );
 });
