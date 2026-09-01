@@ -21,6 +21,24 @@ remove.
 This is a merge-based product-fork model. Each upstream update is resolved once on a sync branch;
 published Verne history is not replayed whenever upstream changes.
 
+## Pre-release rewrite integration
+
+Until the Verne rewrite is promoted for existing users, `main` remains the production line and
+`rewrite/t3` temporarily acts as the integration base for the unreleased product. During this phase:
+
+- create `sync/upstream-<date>` from `rewrite/t3`, not production `main`;
+- merge one fetched `upstream/main` revision into that sync branch with `--no-ff`;
+- return the reviewed sync to `rewrite/t3`;
+- do not create release tags, publish packages, or deploy production update channels from the sync;
+- leave `main` unchanged unless a maintainer separately authorizes promotion of the rewrite.
+
+Before pushing a sync branch, verify that its workflow triggers cannot publish or deploy to existing
+users. Record the exact upstream revision in `config/verne-upstream.json` as described in
+[Verne release versioning and upstream provenance](verne-release-versioning.md).
+
+This is a temporary exception to the branch model below, not a second permanent release process. It
+ends when the rewrite is promoted to `main`; every later upstream sync starts from Verne `main`.
+
 ## Remote safety
 
 Before fetching, publishing, or opening a pull request, inspect both fetch and push destinations:
