@@ -55,6 +55,9 @@ export interface TailnetPreviewAuthOptions {
   readonly sessionTtlMs: number;
   readonly maxActiveLaunches: number;
   readonly maxActiveSessions: number;
+  readonly maxUsedLaunchTombstones: number;
+  readonly maxRevokedLaunchTombstones: number;
+  readonly maxRevokedSessionTombstones: number;
 }
 
 export class TailnetPreviewAuthCapacityError extends Schema.TaggedErrorClass<TailnetPreviewAuthCapacityError>()(
@@ -119,6 +122,9 @@ interface TailnetPreviewAuthState {
 export interface TailnetPreviewAuthStateSnapshot {
   readonly launches: ReadonlyArray<LaunchRecord>;
   readonly sessions: ReadonlyArray<SessionRecord>;
+  readonly usedLaunches: ReadonlyArray<UsedLaunchRecord>;
+  readonly revokedLaunches: ReadonlyArray<RevokedTokenRecord>;
+  readonly revokedSessions: ReadonlyArray<RevokedTokenRecord>;
 }
 
 const defaultOptions: TailnetPreviewAuthOptions = {
@@ -126,6 +132,9 @@ const defaultOptions: TailnetPreviewAuthOptions = {
   sessionTtlMs: DEFAULT_SESSION_TTL_MS,
   maxActiveLaunches: DEFAULT_MAX_ACTIVE_LAUNCHES,
   maxActiveSessions: DEFAULT_MAX_ACTIVE_SESSIONS,
+  maxUsedLaunchTombstones: DEFAULT_MAX_ACTIVE_LAUNCHES,
+  maxRevokedLaunchTombstones: DEFAULT_MAX_ACTIVE_LAUNCHES,
+  maxRevokedSessionTombstones: DEFAULT_MAX_ACTIVE_SESSIONS,
 };
 
 const initialState: TailnetPreviewAuthState = {
@@ -147,9 +156,40 @@ const normalizeOptions = (
   sessionTtlMs: options?.sessionTtlMs ?? defaultOptions.sessionTtlMs,
   maxActiveLaunches: options?.maxActiveLaunches ?? defaultOptions.maxActiveLaunches,
   maxActiveSessions: options?.maxActiveSessions ?? defaultOptions.maxActiveSessions,
+  maxUsedLaunchTombstones:
+    options?.maxUsedLaunchTombstones ?? defaultOptions.maxUsedLaunchTombstones,
+  maxRevokedLaunchTombstones:
+    options?.maxRevokedLaunchTombstones ?? defaultOptions.maxRevokedLaunchTombstones,
+  maxRevokedSessionTombstones:
+    options?.maxRevokedSessionTombstones ?? defaultOptions.maxRevokedSessionTombstones,
 });
 
 const cloneMap = <K, V>(source: ReadonlyMap<K, V>) => new Map(source);
+
+const trimOldestToSize = <V>(source: Map<string, V>, maxEntries: number): Map<string, V> => {
+  while (source.size > maxEntries) {
+    const oldestKey = source.keys().next().value;
+    if (oldestKey === undefined) {
+      break;
+    }
+    source.delete(oldestKey);
+  }
+  return source;
+};
+
+const setBoundedEntry = <V>(
+  source: ReadonlyMap<string, V>,
+  key: string,
+  value: V,
+  maxEntries: number,
+): Map<string, V> => {
+  const next = cloneMap(source);
+  if (next.has(key)) {
+    next.delete(key);
+  }
+  next.set(key, value);
+  return trimOldestToSize(next, maxEntries);
+};
 
 const pruneByExpiry = <V extends { readonly expiresAtMillis: number }>(
   source: ReadonlyMap<string, V>,
@@ -226,6 +266,14 @@ const sortedValues = <T extends { readonly leaseId: string; readonly port: numbe
 ) =>
   [...source.values()].sort(
     (left, right) => left.leaseId.localeCompare(right.leaseId) || left.port - right.port,
+  );
+
+const sortedTombstones = <T extends { readonly leaseId: string; readonly expiresAtMillis: number }>(
+  source: ReadonlyMap<string, T>,
+) =>
+  [...source.values()].sort(
+    (left, right) =>
+      left.leaseId.localeCompare(right.leaseId) || left.expiresAtMillis - right.expiresAtMillis,
   );
 
 export class TailnetPreviewAuth extends Context.Service<
@@ -375,11 +423,15 @@ const makeWithOptions = Effect.fn("TailnetPreviewAuth.makeWithOptions")(function
 
       const launches = cloneMap(nextState.launches);
       launches.delete(matchedDigest);
-      const usedLaunches = cloneMap(nextState.usedLaunches);
-      usedLaunches.set(matchedDigest, {
-        leaseId: launch.leaseId,
-        expiresAtMillis: launch.expiresAtMillis,
-      });
+      const usedLaunches = setBoundedEntry(
+        nextState.usedLaunches,
+        matchedDigest,
+        {
+          leaseId: launch.leaseId,
+          expiresAtMillis: launch.expiresAtMillis,
+        },
+        config.maxUsedLaunchTombstones,
+      );
       const sessions = cloneMap(nextState.sessions);
       const cookieName = cookieNameForPort(launch.port);
       sessions.set(sessionDigest, {
@@ -478,26 +530,41 @@ const makeWithOptions = Effect.fn("TailnetPreviewAuth.makeWithOptions")(function
       const nextState = pruneState(state, now);
       const launches = cloneMap(nextState.launches);
       const sessions = cloneMap(nextState.sessions);
-      const revokedLaunches = cloneMap(nextState.revokedLaunches);
-      const revokedSessions = cloneMap(nextState.revokedSessions);
+      let revokedLaunches = cloneMap(nextState.revokedLaunches);
+      let revokedSessions = cloneMap(nextState.revokedSessions);
       const usedLaunches = cloneMap(nextState.usedLaunches);
 
       for (const [digest, launch] of nextState.launches) {
         if (launch.leaseId !== leaseId) continue;
         launches.delete(digest);
-        revokedLaunches.set(digest, { leaseId, expiresAtMillis: launch.expiresAtMillis });
+        revokedLaunches = setBoundedEntry(
+          revokedLaunches,
+          digest,
+          { leaseId, expiresAtMillis: launch.expiresAtMillis },
+          config.maxRevokedLaunchTombstones,
+        );
       }
 
       for (const [digest, used] of nextState.usedLaunches) {
         if (used.leaseId !== leaseId) continue;
         usedLaunches.delete(digest);
-        revokedLaunches.set(digest, { leaseId, expiresAtMillis: used.expiresAtMillis });
+        revokedLaunches = setBoundedEntry(
+          revokedLaunches,
+          digest,
+          { leaseId, expiresAtMillis: used.expiresAtMillis },
+          config.maxRevokedLaunchTombstones,
+        );
       }
 
       for (const [digest, session] of nextState.sessions) {
         if (session.leaseId !== leaseId) continue;
         sessions.delete(digest);
-        revokedSessions.set(digest, { leaseId, expiresAtMillis: session.expiresAtMillis });
+        revokedSessions = setBoundedEntry(
+          revokedSessions,
+          digest,
+          { leaseId, expiresAtMillis: session.expiresAtMillis },
+          config.maxRevokedSessionTombstones,
+        );
       }
 
       return {
@@ -523,6 +590,9 @@ const makeWithOptions = Effect.fn("TailnetPreviewAuth.makeWithOptions")(function
       (state): TailnetPreviewAuthStateSnapshot => ({
         launches: sortedValues(state.launches),
         sessions: sortedValues(state.sessions),
+        usedLaunches: sortedTombstones(state.usedLaunches),
+        revokedLaunches: sortedTombstones(state.revokedLaunches),
+        revokedSessions: sortedTombstones(state.revokedSessions),
       }),
     ),
   );

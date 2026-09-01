@@ -412,3 +412,262 @@ effectIt.effect("evicts expired launches and sessions before enforcing bounded c
     expect(session.cookieName).toBe("__Host-verne-preview-3000");
   }),
 );
+
+effectIt.effect("bounds replay tombstones and leaves evicted replays invalid as unknown", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness({
+      maxUsedLaunchTombstones: 2,
+    });
+
+    const first = yield* harness.auth.mintLaunch({
+      environmentId: "env-1",
+      port: 3000,
+      leaseId: "lease-1",
+      target: "/first",
+    });
+    yield* harness.auth.exchangeLaunch({
+      environmentId: "env-1",
+      port: 3000,
+      leaseId: "lease-1",
+      launchSecret: first.launchSecret,
+    });
+
+    const second = yield* harness.auth.mintLaunch({
+      environmentId: "env-1",
+      port: 3000,
+      leaseId: "lease-2",
+      target: "/second",
+    });
+    yield* harness.auth.exchangeLaunch({
+      environmentId: "env-1",
+      port: 3000,
+      leaseId: "lease-2",
+      launchSecret: second.launchSecret,
+    });
+
+    const third = yield* harness.auth.mintLaunch({
+      environmentId: "env-1",
+      port: 3000,
+      leaseId: "lease-3",
+      target: "/third",
+    });
+    yield* harness.auth.exchangeLaunch({
+      environmentId: "env-1",
+      port: 3000,
+      leaseId: "lease-3",
+      launchSecret: third.launchSecret,
+    });
+
+    const state = yield* harness.inspectState;
+    expect(state.usedLaunches).toHaveLength(2);
+
+    const firstReplay = yield* Effect.flip(
+      harness.auth.exchangeLaunch({
+        environmentId: "env-1",
+        port: 3000,
+        leaseId: "lease-1",
+        launchSecret: first.launchSecret,
+      }),
+    );
+    expect(firstReplay).toMatchObject({
+      _tag: "TailnetPreviewLaunchInvalidError",
+      reason: "unknown",
+    });
+
+    const secondReplay = yield* Effect.flip(
+      harness.auth.exchangeLaunch({
+        environmentId: "env-1",
+        port: 3000,
+        leaseId: "lease-2",
+        launchSecret: second.launchSecret,
+      }),
+    );
+    expect(secondReplay).toMatchObject({
+      _tag: "TailnetPreviewLaunchInvalidError",
+      reason: "replayed",
+    });
+
+    const thirdReplay = yield* Effect.flip(
+      harness.auth.exchangeLaunch({
+        environmentId: "env-1",
+        port: 3000,
+        leaseId: "lease-3",
+        launchSecret: third.launchSecret,
+      }),
+    );
+    expect(thirdReplay).toMatchObject({
+      _tag: "TailnetPreviewLaunchInvalidError",
+      reason: "replayed",
+    });
+  }),
+);
+
+effectIt.effect(
+  "bounds revoked-launch tombstones and leaves evicted revoked launches invalid",
+  () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        maxRevokedLaunchTombstones: 2,
+      });
+
+      const first = yield* harness.auth.mintLaunch({
+        environmentId: "env-1",
+        port: 3000,
+        leaseId: "lease-1",
+        target: "/first",
+      });
+      yield* harness.auth.revokeLease("lease-1");
+
+      const second = yield* harness.auth.mintLaunch({
+        environmentId: "env-1",
+        port: 3000,
+        leaseId: "lease-2",
+        target: "/second",
+      });
+      yield* harness.auth.revokeLease("lease-2");
+
+      const third = yield* harness.auth.mintLaunch({
+        environmentId: "env-1",
+        port: 3000,
+        leaseId: "lease-3",
+        target: "/third",
+      });
+      yield* harness.auth.revokeLease("lease-3");
+
+      const state = yield* harness.inspectState;
+      expect(state.revokedLaunches).toHaveLength(2);
+
+      const firstRevoked = yield* Effect.flip(
+        harness.auth.exchangeLaunch({
+          environmentId: "env-1",
+          port: 3000,
+          leaseId: "lease-1",
+          launchSecret: first.launchSecret,
+        }),
+      );
+      expect(firstRevoked).toMatchObject({
+        _tag: "TailnetPreviewLaunchInvalidError",
+        reason: "unknown",
+      });
+
+      const secondRevoked = yield* Effect.flip(
+        harness.auth.exchangeLaunch({
+          environmentId: "env-1",
+          port: 3000,
+          leaseId: "lease-2",
+          launchSecret: second.launchSecret,
+        }),
+      );
+      expect(secondRevoked).toMatchObject({
+        _tag: "TailnetPreviewLaunchInvalidError",
+        reason: "revoked",
+      });
+
+      const thirdRevoked = yield* Effect.flip(
+        harness.auth.exchangeLaunch({
+          environmentId: "env-1",
+          port: 3000,
+          leaseId: "lease-3",
+          launchSecret: third.launchSecret,
+        }),
+      );
+      expect(thirdRevoked).toMatchObject({
+        _tag: "TailnetPreviewLaunchInvalidError",
+        reason: "revoked",
+      });
+    }),
+);
+
+effectIt.effect(
+  "bounds revoked-session tombstones and leaves evicted revoked sessions invalid",
+  () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        maxRevokedSessionTombstones: 2,
+      });
+
+      const firstLaunch = yield* harness.auth.mintLaunch({
+        environmentId: "env-1",
+        port: 3000,
+        leaseId: "lease-1",
+        target: "/first",
+      });
+      const firstSession = yield* harness.auth.exchangeLaunch({
+        environmentId: "env-1",
+        port: 3000,
+        leaseId: "lease-1",
+        launchSecret: firstLaunch.launchSecret,
+      });
+      yield* harness.auth.revokeLease("lease-1");
+
+      const secondLaunch = yield* harness.auth.mintLaunch({
+        environmentId: "env-1",
+        port: 3000,
+        leaseId: "lease-2",
+        target: "/second",
+      });
+      const secondSession = yield* harness.auth.exchangeLaunch({
+        environmentId: "env-1",
+        port: 3000,
+        leaseId: "lease-2",
+        launchSecret: secondLaunch.launchSecret,
+      });
+      yield* harness.auth.revokeLease("lease-2");
+
+      const thirdLaunch = yield* harness.auth.mintLaunch({
+        environmentId: "env-1",
+        port: 3000,
+        leaseId: "lease-3",
+        target: "/third",
+      });
+      const thirdSession = yield* harness.auth.exchangeLaunch({
+        environmentId: "env-1",
+        port: 3000,
+        leaseId: "lease-3",
+        launchSecret: thirdLaunch.launchSecret,
+      });
+      yield* harness.auth.revokeLease("lease-3");
+
+      const state = yield* harness.inspectState;
+      expect(state.revokedSessions).toHaveLength(2);
+
+      const firstRevoked = yield* Effect.flip(
+        harness.auth.validateSession({
+          environmentId: "env-1",
+          port: 3000,
+          leaseId: "lease-1",
+          sessionSecret: firstSession.sessionSecret,
+        }),
+      );
+      expect(firstRevoked).toMatchObject({
+        _tag: "TailnetPreviewSessionInvalidError",
+        reason: "unknown",
+      });
+
+      const secondRevoked = yield* Effect.flip(
+        harness.auth.validateSession({
+          environmentId: "env-1",
+          port: 3000,
+          leaseId: "lease-2",
+          sessionSecret: secondSession.sessionSecret,
+        }),
+      );
+      expect(secondRevoked).toMatchObject({
+        _tag: "TailnetPreviewSessionInvalidError",
+        reason: "revoked",
+      });
+
+      const thirdRevoked = yield* Effect.flip(
+        harness.auth.validateSession({
+          environmentId: "env-1",
+          port: 3000,
+          leaseId: "lease-3",
+          sessionSecret: thirdSession.sessionSecret,
+        }),
+      );
+      expect(thirdRevoked).toMatchObject({
+        _tag: "TailnetPreviewSessionInvalidError",
+        reason: "revoked",
+      });
+    }),
+);
