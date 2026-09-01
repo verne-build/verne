@@ -87,7 +87,7 @@ jobs:
           if-no-files-found: error
 
   publish_cli:
-    name: Publish @verne-build/cli@0.0.35
+    name: Publish @verne-build/cli@0.0.36
     needs: build_resource_monitor
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -146,4 +146,4 @@ jobs:
           test -s apps/server/dist/resource-monitor/win32-x64/t3-resource-monitor.exe
 
       - name: Publish CLI package
-        run: node apps/server/scripts/cli.ts publish --tag latest --app-version 0.0.35 --verbose
+        run: node apps/server/scripts/cli.ts publish --tag latest --app-version 0.0.36 --verbose
