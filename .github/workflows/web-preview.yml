@@ -91,7 +91,7 @@ jobs:
           export VITE_HOSTED_APP_CHANNEL="preview"
 
           vp run --filter @t3tools/web build
-          node scripts/apply-web-brand-assets.ts --channel preview
+          node scripts/apply-web-brand-assets.ts development
           vp run --filter @verne-build/cloudflare deploy:channel --name "$worker_name"
 
           echo "Deployed $deployment_url"
