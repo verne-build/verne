@@ -1,0 +1,63 @@
+name: Deploy Verne marketing
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verne-marketing-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Deploy Verne marketing
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@verne-build/marketing...
+              - --filter=@verne-build/cloudflare...
+
+      - name: Validate Cloudflare credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then
+            echo "Missing CLOUDFLARE_API_TOKEN." >&2
+            exit 1
+          fi
+
+          if [[ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
+            echo "Missing CLOUDFLARE_ACCOUNT_ID." >&2
+            exit 1
+          fi
+
+      - name: Build marketing site
+        run: vp run --filter @verne-build/marketing build
+
+      - name: Deploy marketing site
+        run: |
+          vp run --filter @verne-build/cloudflare wrangler deploy \
+            --config ../../apps/verne-marketing/wrangler.jsonc
