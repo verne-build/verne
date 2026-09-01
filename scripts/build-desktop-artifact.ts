@@ -2864,7 +2864,7 @@ export const validateWindowsPackagedPayload = Effect.fn(
         ? []
         : [
             `node_modules/node-pty/prebuilds/linux-${wslArch}/pty.node`,
-            `node_modules/node-pty/prebuilds/linux-${wslArch}/t3code-wsl-node-pty.json`,
+            `node_modules/node-pty/prebuilds/linux-${wslArch}/verne-wsl-node-pty.json`,
           ]),
     ];
     const missingMembers = requiredMembers.filter((member) => !members.includes(member));

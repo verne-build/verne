@@ -290,7 +290,7 @@ export const buildWslRuntimeInstallScript = (
     "node_pty_payload_present() {",
     '  for candidate in "$1"/node_modules/node-pty/prebuilds/linux-*/pty.node; do',
     '    [ -f "$candidate" ] || continue',
-    '    [ -f "${candidate%/*}/t3code-wsl-node-pty.json" ] || continue',
+    '    [ -f "${candidate%/*}/verne-wsl-node-pty.json" ] || continue',
     "    return 0",
     "  done",
     "  return 1",

@@ -17,7 +17,7 @@ phone or another browser shows.
 The machine can also set the environment's theme:
 
 ```bash
-t3 theme set nightfall
+verne theme set nightfall
 ```
 
 Web and desktop clients switch to it — immediately when connected, on their next connect

@@ -195,7 +195,7 @@ const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(fu
     );
     yield* fs.writeFileString(path.join(linuxPrebuildDir, "pty.node"), "linux-pty");
     yield* fs.writeFileString(
-      path.join(linuxPrebuildDir, "t3code-wsl-node-pty.json"),
+      path.join(linuxPrebuildDir, "verne-wsl-node-pty.json"),
       '{"arch":"x64"}',
     );
     if (input.wslRuntime === "forbidden") {

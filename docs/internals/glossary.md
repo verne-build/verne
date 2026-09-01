@@ -154,7 +154,7 @@ A theme an environment's machine publishes for clients to follow, one file per t
 #### Default theme
 
 The environment's theme, held in its `settings.json` as `defaultTheme` (with `defaultThemeSetAt`
-as the set-generation) and set with `t3 theme set <id>`. Web and desktop clients apply each set
+as the set-generation) and set with `verne theme set <id>`. Web and desktop clients apply each set
 once — live when connected, on the next connect otherwise — so setting it switches them, while a
 theme a user picks in Settings afterwards sticks until the next set; mobile keeps its own
 appearance settings. Naming a published [environment theme](#environment-theme) is how a desktop

@@ -296,7 +296,7 @@ describe("WSL runtime cache", () => {
     );
     // The marker the probe reads must sit beside the binary, or the runtime is
     // just as unusable as one missing pty.node outright.
-    expect(script).toContain('    [ -f "${candidate%/*}/t3code-wsl-node-pty.json" ] || continue');
+    expect(script).toContain('    [ -f "${candidate%/*}/verne-wsl-node-pty.json" ] || continue');
 
     // Readiness gates the short-circuit, so a cache missing the payload
     // reinstalls from the archive instead of being reused forever.
@@ -449,7 +449,7 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
         `printf '%s' ${sh(SERVER_ENTRY_SOURCE)} > "$stage/apps/server/dist/bin.mjs"`,
         `printf '%s' '{"name":"node-pty","version":"0.0.0-test"}' > "$stage/node_modules/node-pty/package.json"`,
         `printf '%s' 'pty-native-payload' > "$stage/node_modules/node-pty/prebuilds/linux-x64/pty.node"`,
-        `printf '%s' '{"arch":"x64"}' > "$stage/node_modules/node-pty/prebuilds/linux-x64/t3code-wsl-node-pty.json"`,
+        `printf '%s' '{"arch":"x64"}' > "$stage/node_modules/node-pty/prebuilds/linux-x64/verne-wsl-node-pty.json"`,
         `tar -czf "$work/wsl-runtime.tar.gz" -C "$stage" apps/server/dist node_modules`,
         `printf 'work:%s\\n' "$work"`,
         `printf 'archiveSha:%s\\n' "$(sha256sum "$work/wsl-runtime.tar.gz" | cut -d ' ' -f 1)"`,

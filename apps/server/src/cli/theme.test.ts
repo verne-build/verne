@@ -41,7 +41,7 @@ const writeSettings = (baseDir: string, settings: Record<string, unknown>) => {
   NodeFS.writeFileSync(settingsPathFor(baseDir), `${JSON.stringify(settings, null, 2)}\n`);
 };
 
-describe("t3 theme", () => {
+describe("verne theme", () => {
   it.effect("writes a default theme when no settings file exists yet", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();
@@ -333,12 +333,12 @@ describe("t3 theme", () => {
     }),
   );
 
-  it.effect("honors T3CODE_HOME like the rest of the CLI", () =>
+  it.effect("honors VERNE_HOME like the rest of the CLI", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();
       yield* runCli(["theme", "set", "ocean"]).pipe(
         Effect.provide(
-          ConfigProvider.layer(ConfigProvider.fromEnv({ env: { T3CODE_HOME: baseDir } })),
+          ConfigProvider.layer(ConfigProvider.fromEnv({ env: { VERNE_HOME: baseDir } })),
         ),
       );
       assert.equal(readSettings(baseDir).defaultTheme, "ocean");
