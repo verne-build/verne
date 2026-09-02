@@ -1,7 +1,7 @@
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import * as NodePath from "@effect/platform-node/NodePath";
-import { randomUUID } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 import * as NodeOS from "node:os";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
@@ -177,6 +177,7 @@ export class TailscaleServeLockError extends Schema.TaggedErrorClass<TailscaleSe
       : `Could not lock Tailscale Serve port ${this.servePort} for update.`;
   }
 }
+const isTailscaleServeLockError = Schema.is(TailscaleServeLockError);
 
 const TailscaleStatusSelf = Schema.Struct({
   DNSName: Schema.optional(Schema.Unknown),
@@ -545,11 +546,6 @@ interface ServeMutationLock {
   readonly token: string;
 }
 
-interface ServeMutationLockOwner {
-  readonly pid: number;
-  readonly token: string;
-}
-
 const ServeMutationLockOwnerSchema = Schema.Struct({
   pid: Schema.Int.check(Schema.isGreaterThan(0)),
   token: Schema.String.check(Schema.isMinLength(1)),
@@ -599,7 +595,7 @@ const reclaimStaleServeMutationLock = Effect.fn("reclaimStaleServeMutationLock")
     if (now - modifiedAt < SERVE_LOCK_INCOMPLETE_STALE_MS) return false;
   }
 
-  const claimPath = path.join(lock.directory, `reclaim-${randomUUID()}`);
+  const claimPath = path.join(lock.directory, `reclaim-${NodeCrypto.randomUUID()}`);
   const claimed = yield* (
     owner === null
       ? fs.writeFileString(claimPath, "claimed", { flag: "wx", mode: 0o600 })
@@ -625,7 +621,7 @@ const acquireServeMutationLock = Effect.fn("acquireServeMutationLock")(function*
   const root = path.join(NodeOS.tmpdir(), "verne-tailscale-serve-locks");
   const directory = path.join(root, `${String(servePort)}.lock`);
   const ownerPath = path.join(directory, "owner.json");
-  const token = randomUUID();
+  const token = NodeCrypto.randomUUID();
   const startedAt = yield* Clock.currentTimeMillis;
   const deadline = startedAt + SERVE_LOCK_WAIT_MS;
   let attempts = 0;
@@ -692,7 +688,7 @@ const withServeMutationLock = <A, E, R>(
   Effect.acquireUseRelease(
     acquireServeMutationLock(servePort).pipe(
       Effect.mapError((error) =>
-        Schema.is(TailscaleServeLockError)(error)
+        isTailscaleServeLockError(error)
           ? error
           : new TailscaleServeLockError({ servePort, reason: "unavailable" }),
       ),
@@ -737,16 +733,102 @@ const normalizeLoopbackHost = (localHost: string): string | null => {
   return host === "127.0.0.1" || host === "localhost" || host === "::1" ? host : null;
 };
 
-const ownedServeTarget = (input: {
-  readonly localHost: string;
-  readonly localPort: number;
-}): { readonly host: string; readonly proxyUrl: string } | null => {
-  const host = normalizeLoopbackHost(input.localHost);
+interface ServeTarget {
+  readonly proxyUrl: string;
+}
+
+const serveTarget = (
+  input: {
+    readonly localHost: string;
+    readonly localPort: number;
+  },
+  loopbackOnly: boolean,
+): ServeTarget | null => {
+  const trimmed = input.localHost.trim().toLowerCase();
+  const unbracketed =
+    trimmed.startsWith("[") && trimmed.endsWith("]") ? trimmed.slice(1, -1) : trimmed;
+  const host = loopbackOnly ? normalizeLoopbackHost(unbracketed) : unbracketed;
   if (host === null) return null;
   const targetHost = host.includes(":") ? `[${host}]` : host;
   const proxyUrl = normalizeServeProxyUrl(`http://${targetHost}:${String(input.localPort)}`);
-  return proxyUrl === null ? null : { host, proxyUrl };
+  return proxyUrl === null ? null : { proxyUrl };
 };
+
+const ensureExactTailscaleServe = (
+  input: { readonly servePort: number },
+  target: ServeTarget,
+): Effect.Effect<
+  "created" | "existing",
+  TailscaleServeMutationError,
+  ChildProcessSpawner.ChildProcessSpawner
+> =>
+  withServeMutationLock(
+    input.servePort,
+    Effect.gen(function* () {
+      const config = yield* readTailscaleServeConfigDetails;
+      if (!config.occupiedPorts.has(input.servePort)) {
+        yield* runTailscaleCommand(
+          ["serve", "--bg", `--https=${String(input.servePort)}`, target.proxyUrl],
+          TAILSCALE_SERVE_TIMEOUT,
+        );
+        const verified = yield* readTailscaleServeConfigDetails;
+        const installed = verified.mappings.get(input.servePort);
+        if (
+          !verified.exclusivePorts.has(input.servePort) ||
+          installed?.proxyUrl !== target.proxyUrl
+        ) {
+          return yield* new TailscaleServeConflictError({ servePort: input.servePort });
+        }
+        return "created" as const;
+      }
+      const existing = config.mappings.get(input.servePort);
+      if (existing === undefined) {
+        return yield* new TailscaleServeConflictError({
+          servePort: input.servePort,
+          reason: "non-exclusive",
+        });
+      }
+      if (config.exclusivePorts.has(input.servePort) && existing.proxyUrl === target.proxyUrl) {
+        return "existing" as const;
+      }
+      return yield* new TailscaleServeConflictError({ servePort: input.servePort });
+    }),
+  );
+
+const disableExactTailscaleServe = (
+  input: { readonly servePort: number },
+  target: ServeTarget,
+): Effect.Effect<
+  "removed" | "absent",
+  TailscaleServeMutationError,
+  ChildProcessSpawner.ChildProcessSpawner
+> =>
+  withServeMutationLock(
+    input.servePort,
+    Effect.gen(function* () {
+      const config = yield* readTailscaleServeConfigDetails;
+      if (!config.occupiedPorts.has(input.servePort)) return "absent" as const;
+      const existing = config.mappings.get(input.servePort);
+      if (existing === undefined) {
+        return yield* new TailscaleServeConflictError({
+          servePort: input.servePort,
+          reason: "non-exclusive",
+        });
+      }
+      if (!config.exclusivePorts.has(input.servePort) || existing.proxyUrl !== target.proxyUrl) {
+        return yield* new TailscaleServeConflictError({ servePort: input.servePort });
+      }
+      yield* runTailscaleCommand(
+        ["serve", `--https=${String(input.servePort)}`, "off"],
+        TAILSCALE_SERVE_TIMEOUT,
+      );
+      const verified = yield* readTailscaleServeConfigDetails;
+      if (verified.occupiedPorts.has(input.servePort)) {
+        return yield* new TailscaleServeConflictError({ servePort: input.servePort });
+      }
+      return "removed" as const;
+    }),
+  );
 
 export const ensureOwnedTailscaleServe = (input: {
   readonly servePort: number;
@@ -758,50 +840,14 @@ export const ensureOwnedTailscaleServe = (input: {
   ChildProcessSpawner.ChildProcessSpawner
 > =>
   Effect.gen(function* () {
-    const target = ownedServeTarget(input);
+    const target = serveTarget(input, true);
     if (target === null) {
       return yield* new TailscaleServeConflictError({
         servePort: input.servePort,
         reason: "non-loopback",
       });
     }
-    return yield* withServeMutationLock(
-      input.servePort,
-      Effect.gen(function* () {
-        const config = yield* readTailscaleServeConfigDetails;
-        if (!config.occupiedPorts.has(input.servePort)) {
-          yield* runTailscaleCommand(
-            [
-              "serve",
-              "--bg",
-              `--https=${String(input.servePort)}`,
-              `http://${target.host.includes(":") ? `[${target.host}]` : target.host}:${String(input.localPort)}`,
-            ],
-            TAILSCALE_SERVE_TIMEOUT,
-          );
-          const verified = yield* readTailscaleServeConfigDetails;
-          const installed = verified.mappings.get(input.servePort);
-          if (
-            !verified.exclusivePorts.has(input.servePort) ||
-            installed?.proxyUrl !== target.proxyUrl
-          ) {
-            return yield* new TailscaleServeConflictError({ servePort: input.servePort });
-          }
-          return "created" as const;
-        }
-        const existing = config.mappings.get(input.servePort);
-        if (existing === undefined) {
-          return yield* new TailscaleServeConflictError({
-            servePort: input.servePort,
-            reason: "non-exclusive",
-          });
-        }
-        if (config.exclusivePorts.has(input.servePort) && existing.proxyUrl === target.proxyUrl) {
-          return "existing" as const;
-        }
-        return yield* new TailscaleServeConflictError({ servePort: input.servePort });
-      }),
-    );
+    return yield* ensureExactTailscaleServe(input, target);
   });
 
 export const disableOwnedTailscaleServe = (input: {
@@ -814,62 +860,42 @@ export const disableOwnedTailscaleServe = (input: {
   ChildProcessSpawner.ChildProcessSpawner
 > =>
   Effect.gen(function* () {
-    const target = ownedServeTarget(input);
+    const target = serveTarget(input, true);
     if (target === null) {
       return yield* new TailscaleServeConflictError({
         servePort: input.servePort,
         reason: "non-loopback",
       });
     }
-    return yield* withServeMutationLock(
-      input.servePort,
-      Effect.gen(function* () {
-        const config = yield* readTailscaleServeConfigDetails;
-        if (!config.occupiedPorts.has(input.servePort)) return "absent" as const;
-        const existing = config.mappings.get(input.servePort);
-        if (existing === undefined) {
-          return yield* new TailscaleServeConflictError({
-            servePort: input.servePort,
-            reason: "non-exclusive",
-          });
-        }
-        if (!config.exclusivePorts.has(input.servePort) || existing.proxyUrl !== target.proxyUrl) {
-          return yield* new TailscaleServeConflictError({ servePort: input.servePort });
-        }
-        yield* runTailscaleCommand(
-          ["serve", `--https=${String(input.servePort)}`, "off"],
-          TAILSCALE_SERVE_TIMEOUT,
-        );
-        const verified = yield* readTailscaleServeConfigDetails;
-        if (verified.occupiedPorts.has(input.servePort)) {
-          return yield* new TailscaleServeConflictError({ servePort: input.servePort });
-        }
-        return "removed" as const;
-      }),
-    );
+    return yield* disableExactTailscaleServe(input, target);
   });
 
 export const ensureTailscaleServe = (input: {
   readonly localPort: number;
   readonly servePort?: number;
   readonly localHost?: string;
-}): Effect.Effect<void, TailscaleCommandError, ChildProcessSpawner.ChildProcessSpawner> => {
+}): Effect.Effect<void, TailscaleServeMutationError, ChildProcessSpawner.ChildProcessSpawner> => {
   const servePort = input.servePort ?? DEFAULT_TAILSCALE_SERVE_PORT;
   const localHost = input.localHost ?? "127.0.0.1";
-  const args = ["serve", "--bg", `--https=${servePort}`, `http://${localHost}:${input.localPort}`];
-  return runTailscaleCommand(args, TAILSCALE_SERVE_TIMEOUT).pipe(Effect.asVoid);
+  const target = serveTarget({ localHost, localPort: input.localPort }, false);
+  if (target === null) {
+    return new TailscaleServeConflictError({ servePort });
+  }
+  return ensureExactTailscaleServe({ servePort }, target).pipe(Effect.asVoid);
 };
 
-export const disableTailscaleServe = (
-  input: {
-    readonly servePort?: number;
-  } = {},
-): Effect.Effect<void, TailscaleCommandError, ChildProcessSpawner.ChildProcessSpawner> => {
+export const disableTailscaleServe = (input: {
+  readonly localPort: number;
+  readonly servePort?: number;
+  readonly localHost?: string;
+}): Effect.Effect<void, TailscaleServeMutationError, ChildProcessSpawner.ChildProcessSpawner> => {
   const servePort = input.servePort ?? DEFAULT_TAILSCALE_SERVE_PORT;
-  return runTailscaleCommand(
-    ["serve", `--https=${servePort}`, "off"],
-    TAILSCALE_SERVE_TIMEOUT,
-  ).pipe(Effect.asVoid);
+  const localHost = input.localHost ?? "127.0.0.1";
+  const target = serveTarget({ localHost, localPort: input.localPort }, false);
+  if (target === null) {
+    return new TailscaleServeConflictError({ servePort });
+  }
+  return disableExactTailscaleServe({ servePort }, target).pipe(Effect.asVoid);
 };
 
 export const probeTailscaleHttpsEndpoint = (input: {
