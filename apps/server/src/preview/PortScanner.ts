@@ -21,6 +21,7 @@ import {
   PREVIEW_URL_MAX_LENGTH,
   ThreadId,
   type DiscoveredLocalServer,
+  type LocalServerConnectHost,
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Net from "@t3tools/shared/Net";
@@ -155,6 +156,23 @@ const webProbeCacheKey = (raw: string): string => {
   return url.href;
 };
 
+const connectHostFromListenerHost = (host: string): LocalServerConnectHost | null => {
+  switch (host.toLowerCase()) {
+    case "::1":
+    case "[::1]":
+    case "::":
+    case "[::]":
+      return "::1";
+    case "127.0.0.1":
+    case "localhost":
+    case "0.0.0.0":
+    case "*":
+      return "127.0.0.1";
+    default:
+      return null;
+  }
+};
+
 const normalizeConfiguredUrls = (urls: ReadonlyArray<string>): ReadonlyArray<string> => [
   ...new Set(
     urls
@@ -213,14 +231,15 @@ const parseLsofOutput = (
       continue;
     }
     if (tag === "n") {
-      const portMatch = parsePortFromLsofName(value);
-      if (portMatch == null) continue;
-      const url = `http://localhost:${portMatch}`;
-      const key = `localhost:${portMatch}`;
+      const endpoint = parseEndpointFromLsofName(value);
+      if (endpoint === null) continue;
+      const url = `http://localhost:${endpoint.port}`;
+      const key = `localhost:${endpoint.port}`;
       if (seen.has(key)) continue;
       seen.set(key, {
         host: "localhost",
-        port: portMatch,
+        connectHost: endpoint.connectHost,
+        port: endpoint.port,
         url,
         processName,
         pid,
@@ -232,7 +251,9 @@ const parseLsofOutput = (
   return Array.from(seen.values()).toSorted((a, b) => a.port - b.port);
 };
 
-const parsePortFromLsofName = (name: string): number | null => {
+const parseEndpointFromLsofName = (
+  name: string,
+): { readonly port: number; readonly connectHost: LocalServerConnectHost } | null => {
   // Examples: "*:5173", "127.0.0.1:5173", "[::1]:5173", "localhost:5173",
   //           "192.168.1.10:5173 (LISTEN)" — we only care if the host part is local.
   const trimmed = name.split(" ", 1)[0]?.trim() ?? "";
@@ -242,9 +263,11 @@ const parsePortFromLsofName = (name: string): number | null => {
   const hostPart = trimmed.slice(0, lastColon);
   const portPart = trimmed.slice(lastColon + 1);
   if (!LSOF_LOCAL_HOST_TOKENS.has(hostPart)) return null;
+  const connectHost = connectHostFromListenerHost(hostPart);
+  if (connectHost === null) return null;
   const port = Number.parseInt(portPart, 10);
   if (!Number.isFinite(port) || port <= 0 || port >= 65536) return null;
-  return port;
+  return { port, connectHost };
 };
 
 const parseWindowsListenerOutput = (
@@ -261,8 +284,11 @@ const parseWindowsListenerOutput = (
     if (!Number.isInteger(port) || port <= 0 || port >= 65536) continue;
     const normalizedPid = Number.isInteger(pid) && pid > 0 ? pid : null;
     if (seen.has(port)) continue;
+    const connectHost = connectHostFromListenerHost(host);
+    if (connectHost === null) continue;
     seen.set(port, {
       host: "localhost",
+      connectHost,
       port,
       url: `http://localhost:${port}`,
       processName: processNameRaw?.trim() || null,
@@ -284,6 +310,7 @@ const serversEqual = (
     if (!a || !b) return false;
     if (
       a.host !== b.host ||
+      a.connectHost !== b.connectHost ||
       a.port !== b.port ||
       a.url !== b.url ||
       a.processName !== b.processName ||
@@ -316,18 +343,25 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     const results = yield* Effect.forEach(
       COMMON_DEV_PORTS,
       (port) =>
-        net.isPortAvailableOnLoopback(port).pipe(
-          Effect.map((available) => ({
+        Effect.all({
+          ipv4: net.hasListenerOnHost(port, "127.0.0.1"),
+          ipv6: net.hasListenerOnHost(port, "::1"),
+        }).pipe(
+          Effect.map(({ ipv4, ipv6 }) => ({
             port,
-            listening: !available,
+            connectHost: ipv4 ? ("127.0.0.1" as const) : ipv6 ? ("::1" as const) : null,
           })),
         ),
       { concurrency: "unbounded" },
     );
     return results
-      .filter((result) => result.listening)
+      .filter(
+        (result): result is typeof result & { readonly connectHost: "127.0.0.1" | "::1" } =>
+          result.connectHost !== null,
+      )
       .map<DiscoveredLocalServer>((result) => ({
         host: "localhost",
+        connectHost: result.connectHost,
         port: result.port,
         url: `http://localhost:${result.port}`,
         processName: null,
@@ -374,15 +408,18 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       const resourceKey = webProbeCacheKey(raw);
       if (configuredResources.has(resourceKey)) continue;
       configuredResources.add(resourceKey);
+      const configuredConnectHost = connectHostFromListenerHost(url.hostname);
+      const server = serversByKey.get(key) ?? {
+        host: url.hostname,
+        ...(configuredConnectHost === null ? {} : { connectHost: configuredConnectHost }),
+        port,
+        url: raw,
+        processName: null,
+        pid: null,
+        terminal: null,
+      };
       groups.push({
-        server: serversByKey.get(key) ?? {
-          host: url.hostname,
-          port,
-          url: raw,
-          processName: null,
-          pid: null,
-          terminal: null,
-        },
+        server,
         urls: [raw],
         configuredKey: resourceKey,
       });

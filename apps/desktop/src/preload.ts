@@ -1,13 +1,17 @@
-import type {
-  DesktopBridge,
-  DesktopPreviewPointerEvent,
-  DesktopPreviewRecordingFrame,
-  DesktopPreviewTabState,
+import {
+  DesktopPortForwardClosedEventSchema,
+  type DesktopBridge,
+  type DesktopPreviewPointerEvent,
+  type DesktopPreviewRecordingFrame,
+  type DesktopPreviewTabState,
 } from "@t3tools/contracts";
 import { exposeClerkBridge } from "@clerk/electron/preload";
+import * as Schema from "effect/Schema";
 import { contextBridge, ipcRenderer } from "electron";
 
 import * as IpcChannels from "./ipc/channels.ts";
+
+const isDesktopPortForwardClosedEvent = Schema.is(DesktopPortForwardClosedEventSchema);
 
 exposeClerkBridge({ passkeys: true });
 
@@ -80,6 +84,18 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.invoke(IpcChannels.FETCH_SSH_SESSION_STATE_CHANNEL, { httpBaseUrl, bearerToken }),
   issueSshWebSocketTicket: (httpBaseUrl, bearerToken) =>
     ipcRenderer.invoke(IpcChannels.ISSUE_SSH_WEBSOCKET_TOKEN_CHANNEL, { httpBaseUrl, bearerToken }),
+  ensurePortForward: (input) => ipcRenderer.invoke(IpcChannels.ENSURE_PORT_FORWARD_CHANNEL, input),
+  releasePortForward: (input) =>
+    ipcRenderer.invoke(IpcChannels.RELEASE_PORT_FORWARD_CHANNEL, input),
+  onPortForwardClosed: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, value: unknown) => {
+      if (isDesktopPortForwardClosedEvent(value)) listener(value);
+    };
+    ipcRenderer.on(IpcChannels.PORT_FORWARD_CLOSED_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.PORT_FORWARD_CLOSED_CHANNEL, wrappedListener);
+    };
+  },
   onSshPasswordPrompt: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, request: unknown) => {
       if (typeof request !== "object" || request === null) return;

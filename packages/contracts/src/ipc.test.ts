@@ -5,12 +5,23 @@ import {
   DesktopEnvironmentBootstrapSchema,
   DesktopPortForwardEnsureInputSchema,
   DesktopPortForwardEnsureResultSchema,
+  DesktopPortForwardReleaseInputSchema,
 } from "./ipc.ts";
+
+const decodeDesktopPortForwardEnsureInput = Schema.decodeUnknownSync(
+  DesktopPortForwardEnsureInputSchema,
+);
+const decodeDesktopPortForwardEnsureResult = Schema.decodeUnknownSync(
+  DesktopPortForwardEnsureResultSchema,
+);
+const decodeDesktopPortForwardReleaseInput = Schema.decodeUnknownSync(
+  DesktopPortForwardReleaseInputSchema,
+);
 
 describe("DesktopPortForward", () => {
   it("accepts a scoped tunnel bootstrap and loopback result", () => {
     expect(
-      Schema.decodeUnknownSync(DesktopPortForwardEnsureInputSchema)({
+      decodeDesktopPortForwardEnsureInput({
         environmentId: "environment-1",
         leaseId: "lease-1",
         httpBaseUrl: "https://vps.example.com/",
@@ -19,11 +30,18 @@ describe("DesktopPortForward", () => {
       }),
     ).toMatchObject({ remotePort: 5173 });
     expect(
-      Schema.decodeUnknownSync(DesktopPortForwardEnsureResultSchema)({
+      decodeDesktopPortForwardEnsureResult({
         localPort: 5173,
         localUrl: "http://localhost:5173/",
       }),
     ).toEqual({ localPort: 5173, localUrl: "http://localhost:5173/" });
+    expect(
+      decodeDesktopPortForwardReleaseInput({
+        environmentId: "environment-1",
+        leaseId: "lease-1",
+        remotePort: 5173,
+      }),
+    ).toEqual({ environmentId: "environment-1", leaseId: "lease-1", remotePort: 5173 });
   });
 });
 

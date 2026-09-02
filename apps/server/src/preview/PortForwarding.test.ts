@@ -34,6 +34,7 @@ const layer = PortForwarding.layer.pipe(
   Layer.provide(
     Layer.succeed(PortScanner.PortDiscovery, {
       scan: () => Effect.succeed([discovered]),
+      processGeneration: () => Effect.succeed("generation-1"),
       subscribe: () => Effect.void,
       retain: Effect.void,
       registerTerminalProcesses: () => Effect.void,

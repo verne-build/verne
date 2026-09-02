@@ -210,7 +210,11 @@ export async function disablePortForward(
   }
   const active = activeForwards.get(key);
   if (!active) return;
-  await window.desktopBridge?.releasePortForward?.({ environmentId, remotePort });
+  await window.desktopBridge?.releasePortForward?.({
+    environmentId,
+    leaseId: active.leaseId,
+    remotePort,
+  });
   await releaseServerLease(environmentId, active.leaseId);
   activeForwards.delete(key);
   publish();

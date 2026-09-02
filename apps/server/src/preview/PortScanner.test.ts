@@ -89,6 +89,7 @@ const LSOF_TEST_PORT = 43_123;
 const makeLsofScannerLayer = (input: {
   readonly pid: () => number | null;
   readonly fetch: typeof globalThis.fetch;
+  readonly listenerName?: string;
   readonly listening?: () => boolean;
   readonly processName?: () => string;
 }) =>
@@ -101,7 +102,7 @@ const makeLsofScannerLayer = (input: {
               stdout:
                 input.listening?.() === false
                   ? ""
-                  : `p${input.pid()}\nc${input.processName?.() ?? "node"}\nn*:${LSOF_TEST_PORT}\n`,
+                  : `p${input.pid()}\nc${input.processName?.() ?? "node"}\nn${input.listenerName ?? "*"}:${LSOF_TEST_PORT}\n`,
               stderr: "",
               code: null,
               timedOut: false,
@@ -276,6 +277,64 @@ effectIt.effect("revalidates a successful HTML probe after its cache entry expir
     ]);
   }).pipe(Effect.provide(layer));
 });
+
+effectIt.effect("retains the IPv4 address used to dial a discovered listener", () => {
+  const fetchFn = (() =>
+    Promise.resolve(
+      new Response("app", { headers: { "content-type": "text/html" } }),
+    )) as unknown as typeof globalThis.fetch;
+  const layer = makeLsofScannerLayer({
+    pid: () => 1234,
+    fetch: fetchFn,
+    listenerName: "127.0.0.1",
+  });
+
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    expect((yield* scanner.scan())[0]?.connectHost).toBe("127.0.0.1");
+  }).pipe(Effect.provide(layer));
+});
+
+effectIt.effect("retains the IPv6 address used to dial a discovered listener", () => {
+  const fetchFn = (() =>
+    Promise.resolve(
+      new Response("app", { headers: { "content-type": "text/html" } }),
+    )) as unknown as typeof globalThis.fetch;
+  const layer = makeLsofScannerLayer({
+    pid: () => 1234,
+    fetch: fetchFn,
+    listenerName: "[::1]",
+  });
+
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    expect((yield* scanner.scan())[0]?.connectHost).toBe("::1");
+  }).pipe(Effect.provide(layer));
+});
+
+effectIt.effect("normalizes localhost and wildcard listeners to dialable loopback hosts", () =>
+  Effect.forEach(
+    [
+      { listenerName: "localhost", expected: "127.0.0.1" },
+      { listenerName: "0.0.0.0", expected: "127.0.0.1" },
+      { listenerName: "*", expected: "127.0.0.1" },
+      { listenerName: "[::]", expected: "::1" },
+    ] as const,
+    ({ listenerName, expected }) => {
+      const fetchFn = (() =>
+        Promise.resolve(
+          new Response("app", { headers: { "content-type": "text/html" } }),
+        )) as unknown as typeof globalThis.fetch;
+      return Effect.gen(function* () {
+        const scanner = yield* PortScanner.PortDiscovery;
+        expect((yield* scanner.scan())[0]?.connectHost).toBe(expected);
+      }).pipe(
+        Effect.provide(makeLsofScannerLayer({ pid: () => 1234, fetch: fetchFn, listenerName })),
+      );
+    },
+    { discard: true },
+  ),
+);
 
 effectIt.effect("keeps a generation through known, unknown, then the same known PID", () => {
   let pid: number | null = 1234;

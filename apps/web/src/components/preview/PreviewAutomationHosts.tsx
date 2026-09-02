@@ -30,7 +30,7 @@ import {
   updatePreviewServerSnapshot,
 } from "~/previewStateStore";
 import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
-import { resolveBrowserNavigationTarget } from "~/browser/browserTargetResolver";
+import { prepareBrowserNavigationTarget } from "~/browser/prepareBrowserNavigationTarget";
 import {
   readActiveBrowserRecordingTargets,
   startBrowserRecording,
@@ -76,6 +76,7 @@ import {
 } from "./previewAutomationTarget";
 import { isPreviewViewportReady } from "./previewViewportReadiness";
 import { shouldRollbackPreviewViewport } from "./previewViewportRollback";
+import { useEnvironmentPortForwardLifecycle } from "./useDiscoveredLocalServers";
 
 const PREVIEW_PRESENTATION_SETTLE_TIMEOUT_MS = 500;
 
@@ -258,7 +259,7 @@ const raisePreviewAutomationHostError = (
 
 export function PreviewAutomationHosts() {
   const { environments } = useEnvironments();
-  if (!isElectron || !previewBridge?.automation) return null;
+  if (!isElectron) return null;
   return (
     <>
       {/*
@@ -267,13 +268,26 @@ export function PreviewAutomationHosts() {
        * lets the subscription runtime own reconnects for every saved target.
        */}
       {environments.map((environment) => (
-        <PreviewAutomationHost
+        <PortForwardAndAutomationHost
           key={environment.environmentId}
           environmentId={environment.environmentId}
+          portForwardingSupported={
+            environment.serverConfig?.environment.capabilities.portForwarding?.protocolVersion === 1
+          }
         />
       ))}
     </>
   );
+}
+
+function PortForwardAndAutomationHost(props: {
+  readonly environmentId: EnvironmentId;
+  readonly portForwardingSupported: boolean;
+}) {
+  useEnvironmentPortForwardLifecycle(props.environmentId, props.portForwardingSupported);
+  return previewBridge?.automation ? (
+    <PreviewAutomationHost environmentId={props.environmentId} />
+  ) : null;
 }
 
 function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId }) {
@@ -374,10 +388,12 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           case "open": {
             const input = request.input as PreviewAutomationOpenInput;
             const resolvedInputUrl = input.url
-              ? resolveBrowserNavigationTarget(environmentId, {
-                  kind: "url",
-                  url: input.url,
-                }).resolvedUrl
+              ? (
+                  await prepareBrowserNavigationTarget(environmentId, {
+                    kind: "url",
+                    url: input.url,
+                  })
+                ).resolvedUrl
               : undefined;
             let activeTabId = resolvePreviewAutomationOpenTab(
               state,
@@ -481,7 +497,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           case "navigate": {
             const ready = await requireReadyTab();
             const input = request.input as PreviewAutomationNavigateInput;
-            const resolution = resolveBrowserNavigationTarget(
+            const resolution = await prepareBrowserNavigationTarget(
               environmentId,
               input.target ?? {
                 kind: "url",

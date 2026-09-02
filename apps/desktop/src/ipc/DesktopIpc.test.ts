@@ -28,6 +28,43 @@ function makeIpcMain(
 }
 
 describe("DesktopIpc", () => {
+  it.effect("passes the invoking renderer identity to validated method handlers", () =>
+    Effect.gen(function* () {
+      let listener: DesktopIpc.DesktopIpcHandleListener | undefined;
+      const ipc = DesktopIpc.make(
+        makeIpcMain({
+          handle: (_channel, next) => {
+            listener = next;
+          },
+        }),
+      );
+      const sender = {
+        id: 42,
+        isDestroyed: () => false,
+        send: () => undefined,
+        once: () => undefined,
+        removeListener: () => undefined,
+      };
+      const received: unknown[] = [];
+      const method: DesktopIpc.DesktopIpcMethod<never, never> = {
+        channel: "desktop.test.owner",
+        handler: (_raw, event) =>
+          Effect.sync(() => {
+            received.push(event?.sender);
+          }),
+      };
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* ipc.handle(method);
+          yield* Effect.promise(() => listener?.({ sender }, undefined) as Promise<unknown>);
+        }),
+      );
+
+      assert.deepStrictEqual(received, [sender]);
+    }),
+  );
+
   it.effect("preserves invoke registration context and cause", () =>
     Effect.gen(function* () {
       const cause = new Error("invoke registration failed");

@@ -412,6 +412,7 @@ export type DesktopPortForwardEnsureResult = typeof DesktopPortForwardEnsureResu
 
 export const DesktopPortForwardReleaseInputSchema = Schema.Struct({
   environmentId: EnvironmentId,
+  leaseId: Schema.String,
   remotePort: DesktopPortForwardPortSchema,
 });
 export type DesktopPortForwardReleaseInput = typeof DesktopPortForwardReleaseInputSchema.Type;
