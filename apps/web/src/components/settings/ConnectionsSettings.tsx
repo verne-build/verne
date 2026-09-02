@@ -1375,6 +1375,144 @@ type SavedBackendListRowProps = {
   onRemove: (environmentId: EnvironmentId) => void;
 };
 
+interface TailnetPreviewSettingInput {
+  readonly environmentId: EnvironmentId | null;
+  readonly isConnected: boolean;
+  readonly capability:
+    | { readonly protocolVersion: 1; readonly requiredScope: "preview:access" }
+    | undefined;
+  readonly persistedEnabled: boolean;
+}
+
+function useTailnetPreviewSetting(input: TailnetPreviewSettingInput) {
+  const supported =
+    input.environmentId !== null && supportsTailscalePreviewSettings(input.capability);
+  const updateEnvironmentSettings = useAtomCommand(serverEnvironment.updateSettings, {
+    reportFailure: false,
+  });
+  const [pendingEnabled, setPendingEnabled] = useState<boolean | null>(null);
+  const [mutationError, setMutationError] = useState<string | null>(null);
+  const status = useEnvironmentQuery(
+    supported && input.isConnected && input.environmentId !== null
+      ? previewEnvironment.tailnetStatus({ environmentId: input.environmentId, input: {} })
+      : null,
+  );
+  const view = resolveTailscalePreviewSettingView({
+    supported,
+    status: status.data,
+    statusError: status.error,
+    statusPending: status.isPending,
+    pendingEnabled,
+    persistedEnabled: input.persistedEnabled,
+    mutationError: null,
+  });
+  const patchSettings = useCallback(
+    async (patch: { readonly tailscalePreviewsEnabled: boolean }) => {
+      if (input.environmentId === null) {
+        throw new Error("The environment is unavailable.");
+      }
+      const result = await updateEnvironmentSettings({
+        environmentId: input.environmentId,
+        input: { patch },
+      });
+      if (result._tag === "Failure") {
+        throw squashAtomCommandFailure(result);
+      }
+    },
+    [input.environmentId, updateEnvironmentSettings],
+  );
+  const onCheckedChange = useCallback(
+    (enabled: boolean) => {
+      setMutationError(null);
+      void (async () => {
+        let didPersist = false;
+        try {
+          const result = await applyTailscalePreviewsSettingChange({
+            enabled,
+            hasActivePublications:
+              status.data?.enabled === true && status.data.readiness === "ready",
+            confirmDisable: async () =>
+              await (readLocalApi() ?? ensureLocalApi()).dialogs.confirm(
+                [
+                  "Disable Tailnet previews?",
+                  "Any active Tailnet preview URLs for this environment will stop working until you re-enable them.",
+                ].join("\n\n"),
+              ),
+            patchSettings: async (patch) => {
+              didPersist = true;
+              setPendingEnabled(enabled);
+              await patchSettings(patch);
+            },
+          });
+          if (result === "cancelled") return;
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : "Failed to update Tailnet previews.";
+          setMutationError(message);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not update Tailnet previews",
+              description: message,
+            }),
+          );
+        } finally {
+          if (didPersist) setPendingEnabled(null);
+        }
+      })();
+    },
+    [patchSettings, status.data],
+  );
+
+  return {
+    view,
+    statusError: status.error,
+    mutationError,
+    pending: pendingEnabled !== null,
+    onCheckedChange,
+  };
+}
+
+type TailnetPreviewSettingState = ReturnType<typeof useTailnetPreviewSetting>;
+
+function TailnetPreviewSettingDescription({
+  setting,
+}: {
+  readonly setting: TailnetPreviewSettingState;
+}) {
+  if (setting.view === null) return null;
+  return (
+    <>
+      <span>
+        {setting.view.status ? (
+          <span className="font-medium text-foreground/80">{setting.view.status} </span>
+        ) : null}
+        {setting.view.description}
+      </span>
+      {setting.statusError ? (
+        <span className="block text-destructive">
+          Couldn&apos;t load Tailnet preview status: {setting.statusError}
+        </span>
+      ) : null}
+      {setting.mutationError ? (
+        <span className="block text-destructive">{setting.mutationError}</span>
+      ) : null}
+    </>
+  );
+}
+
+function renderTailnetPreviewSettingSwitch(setting: TailnetPreviewSettingState, disabled: boolean) {
+  if (setting.view === null) return null;
+  return (
+    <Switch
+      checked={setting.view.checked}
+      disabled={disabled || setting.pending}
+      onCheckedChange={(checked) => setting.onCheckedChange(Boolean(checked))}
+      aria-label="Enable Tailscale previews"
+    />
+  );
+}
+
 function SavedBackendListRow({
   environment,
   removingEnvironmentId,
@@ -1389,32 +1527,12 @@ function SavedBackendListRow({
   const supportsPortForwarding =
     environment.serverConfig?.environment.capabilities.portForwarding?.protocolVersion === 1 &&
     window.desktopBridge?.ensurePortForward !== undefined;
-  const supportsTailnetPreviewOptIn = supportsTailscalePreviewSettings(
-    environment.serverConfig?.environment.capabilities.tailnetPreviewPublishing,
-  );
   const autoForwardEnabled = isEnvironmentAutoForwardEnabled(environmentId);
-  const updateEnvironmentSettings = useAtomCommand(serverEnvironment.updateSettings, {
-    reportFailure: false,
-  });
-  const [pendingTailscalePreviewsEnabled, setPendingTailscalePreviewsEnabled] = useState<
-    boolean | null
-  >(null);
-  const [tailscalePreviewMutationError, setTailscalePreviewMutationError] = useState<string | null>(
-    null,
-  );
-  const tailnetPreviewStatus = useEnvironmentQuery(
-    supportsTailnetPreviewOptIn && isConnected
-      ? previewEnvironment.tailnetStatus({ environmentId, input: {} })
-      : null,
-  );
-  const tailscalePreviewView = resolveTailscalePreviewSettingView({
-    supported: supportsTailnetPreviewOptIn,
-    status: tailnetPreviewStatus.data,
-    statusError: tailnetPreviewStatus.error,
-    statusPending: tailnetPreviewStatus.isPending,
-    pendingEnabled: pendingTailscalePreviewsEnabled,
+  const tailnetPreviewSetting = useTailnetPreviewSetting({
+    environmentId,
+    isConnected,
+    capability: environment.serverConfig?.environment.capabilities.tailnetPreviewPublishing,
     persistedEnabled: environment.serverConfig?.settings.tailscalePreviewsEnabled === true,
-    mutationError: null,
   });
   const stateDotClassName =
     connectionState === "connected"
@@ -1471,66 +1589,6 @@ function SavedBackendListRow({
   // environment you connect to or remove here — its lifecycle is driven by the
   // WSL on/off + distro picker on this page.
   const isWslEnvironment = isDesktopLocalConnectionTarget(environment.entry.target);
-  const patchTailscalePreviewSettings = useCallback(
-    async (patch: { readonly tailscalePreviewsEnabled: boolean }) => {
-      const result = await updateEnvironmentSettings({
-        environmentId,
-        input: { patch },
-      });
-      if (result._tag === "Failure") {
-        throw squashAtomCommandFailure(result);
-      }
-    },
-    [environmentId, updateEnvironmentSettings],
-  );
-  const handleToggleTailscalePreviews = useCallback(
-    (enabled: boolean) => {
-      setTailscalePreviewMutationError(null);
-      void (async () => {
-        let didPersist = false;
-        try {
-          const result = await applyTailscalePreviewsSettingChange({
-            enabled,
-            hasActivePublications:
-              tailnetPreviewStatus.data?.enabled === true &&
-              tailnetPreviewStatus.data.readiness === "ready",
-            confirmDisable: async () =>
-              await (readLocalApi() ?? ensureLocalApi()).dialogs.confirm(
-                [
-                  "Disable Tailnet previews?",
-                  "Any active Tailnet preview URLs for this environment will stop working until you re-enable them.",
-                ].join("\n\n"),
-              ),
-            patchSettings: async (patch) => {
-              didPersist = true;
-              setPendingTailscalePreviewsEnabled(enabled);
-              await patchTailscalePreviewSettings(patch);
-            },
-          });
-          if (result === "cancelled") {
-            return;
-          }
-        } catch (error) {
-          const message =
-            error instanceof Error ? error.message : "Failed to update Tailnet previews.";
-          setTailscalePreviewMutationError(message);
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Could not update Tailnet previews",
-              description: message,
-            }),
-          );
-        } finally {
-          if (didPersist) {
-            setPendingTailscalePreviewsEnabled(null);
-          }
-        }
-      })();
-    },
-    [patchTailscalePreviewSettings, tailnetPreviewStatus.data],
-  );
-
   return (
     <div className={ITEM_ROW_CLASSNAME}>
       <div className={ITEM_ROW_INNER_CLASSNAME}>
@@ -1550,14 +1608,9 @@ function SavedBackendListRow({
           {metadataBits.length > 0 ? (
             <p className="text-xs text-muted-foreground">{metadataBits.join(" · ")}</p>
           ) : null}
-          {tailscalePreviewView ? (
+          {tailnetPreviewSetting.view ? (
             <p className="text-xs text-muted-foreground">
-              {tailscalePreviewView.status ? (
-                <span className="font-medium text-foreground/80">
-                  {tailscalePreviewView.status}{" "}
-                </span>
-              ) : null}
-              {tailscalePreviewView.description}
+              <TailnetPreviewSettingDescription setting={tailnetPreviewSetting} />
             </p>
           ) : null}
           {serverUpdateState.status !== "idle" ? (
@@ -1581,14 +1634,6 @@ function SavedBackendListRow({
                 {versionMismatch.clientVersion}
               </TooltipPopup>
             </Tooltip>
-          ) : null}
-          {tailnetPreviewStatus.error ? (
-            <p className="text-destructive text-xs">
-              Couldn&apos;t load Tailnet preview status: {tailnetPreviewStatus.error}
-            </p>
-          ) : null}
-          {tailscalePreviewMutationError ? (
-            <p className="text-destructive text-xs">{tailscalePreviewMutationError}</p>
           ) : null}
           {environment.connection.error && !resumingServerUpdate ? (
             <p className="flex min-w-0 items-center gap-2 text-destructive text-xs">
@@ -1617,14 +1662,10 @@ function SavedBackendListRow({
               />
             </label>
           ) : null}
-          {tailscalePreviewView ? (
+          {tailnetPreviewSetting.view ? (
             <label className="flex items-center gap-2 text-muted-foreground text-xs">
               Enable Tailscale previews
-              <Switch
-                checked={tailscalePreviewView.checked}
-                disabled={!isConnected || pendingTailscalePreviewsEnabled !== null}
-                onCheckedChange={(checked) => handleToggleTailscalePreviews(Boolean(checked))}
-              />
+              {renderTailnetPreviewSettingSwitch(tailnetPreviewSetting, !isConnected)}
             </label>
           ) : null}
           {versionMismatch &&
@@ -2020,6 +2061,12 @@ export function ConnectionsSettings() {
   const primaryServerUpdateState = useAtomValue(
     serverEnvironment.updateStateAtom(primaryEnvironmentId),
   );
+  const primaryTailnetPreviewSetting = useTailnetPreviewSetting({
+    environmentId: primaryEnvironmentId,
+    isConnected: primaryEnvironment?.connection.phase === "connected",
+    capability: primaryServerConfig?.environment.capabilities.tailnetPreviewPublishing,
+    persistedEnabled: primaryServerConfig?.settings.tailscalePreviewsEnabled === true,
+  });
   const [isAdvertisedEndpointListExpanded, setIsAdvertisedEndpointListExpanded] = useState(false);
   const defaultAdvertisedEndpointKey = useUiStateStore(
     (state) => state.defaultAdvertisedEndpointKey,
@@ -3212,6 +3259,18 @@ export function ConnectionsSettings() {
                     />
                   ) : undefined
                 }
+              />
+            ) : null}
+            {primaryTailnetPreviewSetting.view ? (
+              <SettingsRow
+                title="Tailnet previews"
+                description={
+                  <TailnetPreviewSettingDescription setting={primaryTailnetPreviewSetting} />
+                }
+                control={renderTailnetPreviewSettingSwitch(
+                  primaryTailnetPreviewSetting,
+                  primaryEnvironment?.connection.phase !== "connected",
+                )}
               />
             ) : null}
             {desktopBridge ? (
