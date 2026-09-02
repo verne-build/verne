@@ -503,7 +503,8 @@ describe("TailnetPreviewGateway", () => {
     try {
       port = await listenOn(server, "::1");
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "EAFNOSUPPORT") return;
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "EAFNOSUPPORT" || code === "EADDRNOTAVAIL") return;
       throw error;
     }
     closeActions.push(() => closeServer(server));
