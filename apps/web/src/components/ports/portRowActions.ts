@@ -10,6 +10,7 @@ import type {
   PreviewAccessPortState,
   PreviewAccessResolution,
 } from "~/browser/previewAccessController";
+import type { PortForwardState } from "~/browser/prepareBrowserNavigationTarget";
 import { isMacPlatform } from "~/lib/utils";
 
 export type PortRowSurface = "desktop" | "web";
@@ -55,6 +56,31 @@ export function resolvePortRowAction(input: ResolvePortRowActionInput): PortRowA
 export interface PortReadinessDescription {
   readonly status: string;
   readonly description: string;
+}
+
+export type PortRowOperationIssue =
+  | { readonly state: "unsupported" }
+  | { readonly state: "setup-required"; readonly readiness: "disabled" }
+  | { readonly state: "unavailable"; readonly readiness: TailnetPreviewReadiness };
+
+export function resolvePortRowAccessState(input: {
+  readonly surface: PortRowSurface;
+  readonly controllerState: PreviewAccessPortState;
+  readonly desktopForwardState: PortForwardState;
+}): PreviewAccessPortState {
+  if (input.surface !== "desktop") return input.controllerState;
+  switch (input.desktopForwardState.state) {
+    case "suppressed":
+      return { state: "suppressed" };
+    case "active":
+      return {
+        state: "active",
+        cleanUrl: input.desktopForwardState.localUrl,
+        expiresAt: "",
+      };
+    case "idle":
+      return input.controllerState;
+  }
 }
 
 export function describePortReadiness(
@@ -120,7 +146,7 @@ export function resolvePortRowPresentation(input: {
   readonly surface: PortRowSurface;
   readonly supportsTailnet: boolean;
   readonly tailnetEnabled: boolean;
-  readonly lastReadiness: TailnetPreviewReadiness | null;
+  readonly operationIssue: PortRowOperationIssue | null;
 }): {
   readonly state: PortRowPresentationState;
   readonly status: string;
@@ -140,10 +166,27 @@ export function resolvePortRowPresentation(input: {
       description: "Enable this port to publish it again.",
     };
   }
+  if (input.accessState.state === "active") {
+    return input.surface === "web"
+      ? {
+          state: "active",
+          status: "Active",
+          description: "Open from a browser device on the same Tailnet and allowed by its ACL.",
+        }
+      : {
+          state: "active",
+          status: "Active",
+          description: "Forwarded to localhost on this device.",
+        };
+  }
   const readiness = input.overCapacity
     ? "capacity-reached"
-    : (input.lastReadiness ??
-      (input.accessState.state === "unavailable" ? input.accessState.readiness : null));
+    : input.accessState.state === "unavailable"
+      ? input.accessState.readiness
+      : input.operationIssue?.state === "setup-required" ||
+          input.operationIssue?.state === "unavailable"
+        ? input.operationIssue.readiness
+        : null;
   if (readiness !== null) {
     const description = describePortReadiness(readiness);
     return {
@@ -152,6 +195,13 @@ export function resolvePortRowPresentation(input: {
           ? "setup-required"
           : "unavailable",
       ...description,
+    };
+  }
+  if (input.operationIssue?.state === "unsupported") {
+    return {
+      state: "unavailable",
+      status: "Update required",
+      description: "Update this environment’s Verne server to use Tailnet previews.",
     };
   }
   if (input.surface === "web" && !input.supportsTailnet) {
@@ -163,9 +213,6 @@ export function resolvePortRowPresentation(input: {
   }
   if (input.surface === "web" && !input.tailnetEnabled) {
     return { state: "setup-required", ...describePortReadiness("disabled") };
-  }
-  if (input.accessState.state === "active") {
-    return { state: "active", status: "Active", description: "Ready on this client." };
   }
   if (input.surface === "web") {
     return {

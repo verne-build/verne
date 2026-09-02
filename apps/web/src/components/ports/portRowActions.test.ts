@@ -5,6 +5,7 @@ import type { PreviewAccessResolution } from "~/browser/previewAccessController"
 import {
   createPortRowActionExecutor,
   describePortReadiness,
+  resolvePortRowAccessState,
   resolvePortRowAction,
   resolvePortRowPresentation,
 } from "./portRowActions";
@@ -345,7 +346,7 @@ describe("resolvePortRowPresentation", () => {
       overCapacity: false,
       supportsTailnet: true,
       tailnetEnabled: true,
-      lastReadiness: null,
+      operationIssue: null,
     };
 
     expect(resolvePortRowPresentation({ ...common, surface: "desktop" })).toMatchObject({
@@ -367,7 +368,7 @@ describe("resolvePortRowPresentation", () => {
         surface: "web",
         supportsTailnet: true,
         tailnetEnabled: true,
-        lastReadiness: null,
+        operationIssue: null,
       }),
     ).toMatchObject({ state: "suppressed", status: "Disabled" });
     expect(
@@ -378,7 +379,7 @@ describe("resolvePortRowPresentation", () => {
         surface: "web",
         supportsTailnet: true,
         tailnetEnabled: true,
-        lastReadiness: null,
+        operationIssue: null,
       }),
     ).toMatchObject({ state: "disappearing", status: "Closed" });
   });
@@ -388,7 +389,7 @@ describe("resolvePortRowPresentation", () => {
       accessState: { state: "idle" } as const,
       present: true,
       surface: "web" as const,
-      lastReadiness: null,
+      operationIssue: null,
     };
 
     expect(
@@ -424,5 +425,76 @@ describe("resolvePortRowPresentation", () => {
         tailnetEnabled: true,
       }),
     ).toMatchObject({ state: "unavailable", status: "Capacity reached" });
+  });
+
+  it("lets recovered controller state replace a stale operation error", () => {
+    expect(
+      resolvePortRowPresentation({
+        accessState: {
+          state: "active",
+          cleanUrl: "https://machine.tailnet.ts.net:5173/",
+          expiresAt: "later",
+        },
+        present: true,
+        overCapacity: false,
+        surface: "web",
+        supportsTailnet: true,
+        tailnetEnabled: true,
+        operationIssue: { state: "unavailable", readiness: "mapping-conflict" },
+      }),
+    ).toMatchObject({
+      state: "active",
+      status: "Active",
+      description: expect.stringContaining("same Tailnet"),
+    });
+  });
+
+  it("keeps unsupported environments as update-server guidance", () => {
+    const presentation = resolvePortRowPresentation({
+      accessState: { state: "idle" },
+      present: true,
+      overCapacity: false,
+      surface: "web",
+      supportsTailnet: true,
+      tailnetEnabled: true,
+      operationIssue: { state: "unsupported" },
+    });
+
+    expect(presentation).toMatchObject({
+      state: "unavailable",
+      status: "Update required",
+      description: expect.stringContaining("Update this environment’s Verne server"),
+    });
+    expect(presentation.description).not.toContain("Tailscale");
+  });
+});
+
+describe("resolvePortRowAccessState", () => {
+  it("restores desktop suppression from the forwarding subsystem", () => {
+    expect(
+      resolvePortRowAccessState({
+        surface: "desktop",
+        controllerState: { state: "idle" },
+        desktopForwardState: { state: "suppressed" },
+      }),
+    ).toEqual({ state: "suppressed" });
+  });
+
+  it("restores the exact active desktop fallback URL", () => {
+    expect(
+      resolvePortRowAccessState({
+        surface: "desktop",
+        controllerState: { state: "idle" },
+        desktopForwardState: {
+          state: "active",
+          localPort: 45_173,
+          localUrl: "http://localhost:45173/",
+        },
+      }),
+    ).toEqual({
+      state: "active",
+      cleanUrl: "http://localhost:45173/",
+      expiresAt: "",
+    });
   });
 });

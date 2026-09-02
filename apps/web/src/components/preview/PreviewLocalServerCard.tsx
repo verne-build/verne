@@ -14,7 +14,7 @@ interface Props {
   threadRef: ScopedThreadRef;
   server: PreviewableServer;
   controller?: PreviewAccessController;
-  onOpen: (resolvedUrl: string) => void | Promise<void>;
+  onOpen: (resolvedUrl: string, requestedUrl: string) => void | Promise<void>;
 }
 
 export function PreviewLocalServerCard({ threadRef, server, controller, onOpen }: Props) {
@@ -26,7 +26,7 @@ export function PreviewLocalServerCard({ threadRef, server, controller, onOpen }
       controller
         ? createPortRowActionExecutor({
             controller,
-            openPreview: async (url) => void (await onOpen(url)),
+            openPreview: async (url) => void (await onOpen(url, server.requestedUrl)),
             openExternal: async (url) => {
               const api = readLocalApi();
               if (!api) throw new Error("The browser action is unavailable.");
@@ -35,12 +35,12 @@ export function PreviewLocalServerCard({ threadRef, server, controller, onOpen }
             copyText: async () => undefined,
           })
         : null,
-    [controller, onOpen],
+    [controller, onOpen, server.requestedUrl],
   );
 
   const handleOpen = (event: MouseEvent<HTMLButtonElement>) => {
     if (!executor) {
-      void onOpen(server.requestedUrl);
+      void onOpen(server.requestedUrl, server.requestedUrl);
       return;
     }
     const action = resolvePortRowAction({

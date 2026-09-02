@@ -204,10 +204,12 @@ export function PreviewView({
   );
 
   const handleOpenResolvedServerUrl = useCallback(
-    async (resolvedUrl: string) => {
-      await navigateToResolvedUrl(resolvedUrl);
+    async (resolvedUrl: string, requestedUrl: string) => {
+      if (await navigateToResolvedUrl(resolvedUrl)) {
+        recordVisitForThread(threadRef, requestedUrl);
+      }
     },
-    [navigateToResolvedUrl],
+    [navigateToResolvedUrl, threadRef],
   );
 
   const handleRefresh = useCallback(() => {

@@ -1,8 +1,4 @@
-import type {
-  DiscoveredLocalServer,
-  ScopedThreadRef,
-  TailnetPreviewReadiness,
-} from "@t3tools/contracts";
+import type { DiscoveredLocalServer, ScopedThreadRef } from "@t3tools/contracts";
 import { Copy, ExternalLink, Power } from "lucide-react";
 import {
   type MouseEvent,
@@ -20,8 +16,8 @@ import { openUrlInPreview } from "~/browser/openFileInPreview";
 import {
   disablePortForward,
   enablePortForward,
-  isPortForwardActive,
   portForwardSnapshot,
+  readPortForwardState,
   subscribePortForwards,
 } from "~/browser/prepareBrowserNavigationTarget";
 import { readLocalApi } from "~/localApi";
@@ -31,7 +27,9 @@ import { useServerConfigs } from "~/state/entities";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import {
   createPortRowActionExecutor,
+  type PortRowOperationIssue,
   type PortRowIntent,
+  resolvePortRowAccessState,
   resolvePortRowAction,
   resolvePortRowPresentation,
 } from "./portRowActions";
@@ -131,23 +129,33 @@ export function ThreadPortsPanel({ threadRef, controller, openPreview }: ThreadP
 
   return (
     <div className="h-full overflow-y-auto px-3 py-2">
-      <div className="mx-auto flex w-full max-w-4xl flex-col divide-y divide-border/60 overflow-hidden rounded-lg border border-border/70 bg-background">
-        {rows.map((row) => (
-          <ThreadPortRow
-            key={row.server.port}
-            threadRef={threadRef}
-            server={row.server}
-            present={row.present}
-            overCapacity={
-              surface === "web" && row.present && !automaticallyPublishedPorts.has(row.server.port)
-            }
-            surface={surface}
-            supportsTailnet={supportsTailnet}
-            tailnetEnabled={tailnetEnabled}
-            controller={controller}
-            openPreview={openPreview}
-          />
-        ))}
+      <div className="mx-auto flex w-full max-w-4xl flex-col gap-2">
+        {surface === "web" ? (
+          <p className="px-1 text-xs leading-5 text-muted-foreground">
+            Open these URLs from a browser device connected to the same Tailnet and allowed by its
+            ACL.
+          </p>
+        ) : null}
+        <div className="flex flex-col divide-y divide-border/60 overflow-hidden rounded-lg border border-border/70 bg-background">
+          {rows.map((row) => (
+            <ThreadPortRow
+              key={row.server.port}
+              threadRef={threadRef}
+              server={row.server}
+              present={row.present}
+              overCapacity={
+                surface === "web" &&
+                row.present &&
+                !automaticallyPublishedPorts.has(row.server.port)
+              }
+              surface={surface}
+              supportsTailnet={supportsTailnet}
+              tailnetEnabled={tailnetEnabled}
+              controller={controller}
+              openPreview={openPreview}
+            />
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -190,10 +198,8 @@ function ThreadPortRow({
   void stateSnapshot;
   const [pending, setPending] = useState(false);
   const pendingRef = useRef(false);
-  const [desktopSuppressed, setDesktopSuppressed] = useState(false);
-  const [desktopPrepared, setDesktopPrepared] = useState(false);
   const [lastCleanUrl, setLastCleanUrl] = useState<string | null>(null);
-  const [lastReadiness, setLastReadiness] = useState<TailnetPreviewReadiness | null>(null);
+  const [operationIssue, setOperationIssue] = useState<PortRowOperationIssue | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const executor = useMemo(
     () =>
@@ -227,18 +233,20 @@ function ThreadPortRow({
     [controller, openPreview, server.port, server.url, surface, threadRef],
   );
 
-  useSyncExternalStore(subscribePortForwards, portForwardSnapshot, portForwardSnapshot);
-  const desktopForwarded =
-    surface === "desktop" && isPortForwardActive(threadRef.environmentId, server.port);
-  const presentedAccessState = desktopSuppressed
-    ? ({ state: "suppressed" } as const)
-    : surface === "desktop" && (desktopPrepared || desktopForwarded)
-      ? ({
-          state: "active",
-          cleanUrl: lastCleanUrl ?? server.url,
-          expiresAt: "",
-        } as const)
-      : accessState;
+  const forwardSnapshot = useSyncExternalStore(
+    subscribePortForwards,
+    portForwardSnapshot,
+    portForwardSnapshot,
+  );
+  const presentedAccessState = resolvePortRowAccessState({
+    surface,
+    controllerState: accessState,
+    desktopForwardState: readPortForwardState(threadRef.environmentId, server.port),
+  });
+  useEffect(() => {
+    setActionError(null);
+    setOperationIssue(null);
+  }, [forwardSnapshot, stateSnapshot]);
   const presentation = resolvePortRowPresentation({
     accessState: presentedAccessState,
     present,
@@ -246,11 +254,11 @@ function ThreadPortRow({
     surface,
     supportsTailnet,
     tailnetEnabled,
-    lastReadiness,
+    operationIssue,
   });
   const displayUrl =
-    accessState.state === "active" || accessState.state === "disappearing"
-      ? accessState.cleanUrl
+    presentedAccessState.state === "active" || presentedAccessState.state === "disappearing"
+      ? presentedAccessState.cleanUrl
       : (lastCleanUrl ?? (presentation.state === "publishing" ? null : server.url));
   const actionsDisabled = pending || !present || presentation.state === "suppressed";
 
@@ -269,10 +277,6 @@ function ThreadPortRow({
         pending: pendingRef.current,
       });
       if (action.kind === "none") return;
-      if (surface === "desktop" && action.kind === "set-enabled") {
-        setDesktopSuppressed(!action.enabled);
-        if (!action.enabled) setDesktopPrepared(false);
-      }
       pendingRef.current = true;
       setPending(true);
       setActionError(null);
@@ -284,15 +288,19 @@ function ThreadPortRow({
         });
         if (outcome.status === "completed" && outcome.cleanUrl) {
           setLastCleanUrl(outcome.cleanUrl);
-          setLastReadiness(null);
-          if (surface === "desktop") setDesktopPrepared(true);
+          setOperationIssue(null);
         } else if (outcome.status === "unavailable") {
           setLastCleanUrl(outcome.cleanUrl);
-          setLastReadiness(
-            outcome.resolution.state === "unsupported"
-              ? "tailscale-unavailable"
-              : outcome.resolution.readiness,
-          );
+          if (outcome.resolution.state === "unsupported") {
+            setOperationIssue({ state: "unsupported" });
+          } else if (outcome.resolution.state === "setup-required") {
+            setOperationIssue({ state: "setup-required", readiness: "disabled" });
+          } else {
+            setOperationIssue({
+              state: "unavailable",
+              readiness: outcome.resolution.readiness,
+            });
+          }
         }
       } catch (error) {
         setActionError(error instanceof Error ? error.message : "The port action failed.");
@@ -348,7 +356,7 @@ function ThreadPortRow({
         <span className="text-xs font-medium text-foreground">
           {pending ? "Working…" : presentation.status}
         </span>
-        <span className="line-clamp-2 text-[11px] leading-4 text-muted-foreground">
+        <span className="text-[11px] leading-4 text-muted-foreground">
           {actionError ?? presentation.description}
         </span>
       </div>

@@ -17,7 +17,7 @@ interface Props {
   recentEntries: ReadonlyArray<BrowserHistoryEntry>;
   onRemoveRecent: (url: string) => void;
   onOpenUrl: (url: string) => void;
-  onOpenLocalServerUrl?: (url: string) => void | Promise<void>;
+  onOpenLocalServerUrl?: (resolvedUrl: string, requestedUrl: string) => void | Promise<void>;
 }
 
 export function PreviewEmptyState({

@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   readPreparedConnection: vi.fn(() => ({ httpBaseUrl: "http://172.25.85.75:3773" })),
   submittedUrl: null as ((url: string) => void) | null,
   emptyStateUrl: null as ((url: string) => void) | null,
+  localServerUrl: null as ((resolvedUrl: string, requestedUrl: string) => void) | null,
   togglePictureInPicture: null as (() => void) | null,
   toggleNativePictureInPicture: null as (() => void) | null,
   pictureInPicturePressed: false,
@@ -231,8 +232,12 @@ vi.mock("./PreviewChromeRow", () => ({
 }));
 
 vi.mock("./PreviewEmptyState", () => ({
-  PreviewEmptyState: (props: { onOpenUrl: (url: string) => void }) => {
+  PreviewEmptyState: (props: {
+    onOpenUrl: (url: string) => void;
+    onOpenLocalServerUrl: (resolvedUrl: string, requestedUrl: string) => void;
+  }) => {
     mocks.emptyStateUrl = props.onOpenUrl;
+    mocks.localServerUrl = props.onOpenLocalServerUrl;
     return null;
   },
 }));
@@ -249,6 +254,7 @@ vi.mock("~/browser/BrowserSurfaceSlot", () => ({ BrowserSurfaceSlot: () => null 
 vi.mock("./usePreviewSession", () => ({ usePreviewSession: vi.fn() }));
 
 import { PreviewView } from "./PreviewView";
+import type { PreviewAccessController } from "~/browser/previewAccessController";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 
 const TEST_THREAD_REF = {
@@ -326,6 +332,7 @@ describe("PreviewView navigation", () => {
     mocks.readPreparedConnection.mockClear();
     mocks.submittedUrl = null;
     mocks.emptyStateUrl = null;
+    mocks.localServerUrl = null;
     mocks.togglePictureInPicture = null;
     mocks.toggleNativePictureInPicture = null;
     mocks.pictureInPicturePressed = false;
@@ -462,6 +469,41 @@ describe("PreviewView navigation", () => {
         expect.objectContaining({ threadId: expect.anything() }),
         "http://localhost:5173/app?mode=test#top",
       ),
+    );
+  });
+
+  it("records the stable requested URL after a controller-backed empty-state open", async () => {
+    mocks.showEmptyState = true;
+    renderToStaticMarkup(
+      <PreviewView
+        threadRef={TEST_THREAD_REF}
+        tabId="tab-1"
+        visible
+        previewAccessController={{} as PreviewAccessController}
+      />,
+    );
+
+    expect(mocks.localServerUrl).not.toBeNull();
+    mocks.localServerUrl?.(
+      "http://localhost:45173/.well-known/verne-preview/auth#launch-secret",
+      "http://localhost:5173/app",
+    );
+
+    await vi.waitFor(() =>
+      expect(mocks.navigate).toHaveBeenCalledWith(
+        TEST_RUNTIME_TAB_ID,
+        "http://localhost:45173/.well-known/verne-preview/auth#launch-secret",
+      ),
+    );
+    await vi.waitFor(() =>
+      expect(mocks.recordVisitForThread).toHaveBeenCalledWith(
+        TEST_THREAD_REF,
+        "http://localhost:5173/app",
+      ),
+    );
+    expect(mocks.recordVisitForThread).not.toHaveBeenCalledWith(
+      TEST_THREAD_REF,
+      expect.stringContaining("launch-secret"),
     );
   });
 

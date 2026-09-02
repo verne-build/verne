@@ -17,6 +17,15 @@ interface ActiveForward {
   readonly localUrl: string;
 }
 
+export type PortForwardState =
+  | { readonly state: "idle" }
+  | { readonly state: "suppressed" }
+  | {
+      readonly state: "active";
+      readonly localPort: number;
+      readonly localUrl: string;
+    };
+
 const activeForwards = new Map<string, ActiveForward>();
 const pendingForwards = new Map<string, Promise<PreviewUrlResolution>>();
 const autoSuppressed = new Set<string>();
@@ -54,6 +63,18 @@ export const isPortForwardActive = (environmentId: EnvironmentId, port: number) 
 
 export const isPortForwardAutoSuppressed = (environmentId: EnvironmentId, port: number) =>
   autoSuppressed.has(keyFor(environmentId, port));
+
+export const readPortForwardState = (
+  environmentId: EnvironmentId,
+  port: number,
+): PortForwardState => {
+  const key = keyFor(environmentId, port);
+  if (autoSuppressed.has(key)) return { state: "suppressed" };
+  const active = activeForwards.get(key);
+  return active === undefined
+    ? { state: "idle" }
+    : { state: "active", localPort: active.localPort, localUrl: active.localUrl };
+};
 
 export const isEnvironmentAutoForwardEnabled = (environmentId: EnvironmentId) => {
   if (typeof window === "undefined") return true;
@@ -104,7 +125,7 @@ export async function enablePortForward(environmentId: EnvironmentId, url: strin
   } catch {
     // The resolver below reports the useful URL error.
   }
-  if (port > 0) autoSuppressed.delete(keyFor(environmentId, port));
+  if (port > 0 && autoSuppressed.delete(keyFor(environmentId, port))) publish();
   return prepareBrowserNavigationTarget(environmentId, { kind: "url", url });
 }
 
@@ -183,7 +204,10 @@ export async function disablePortForward(
   const timer = disappearanceTimers.get(key);
   if (timer !== undefined) clearTimeout(timer);
   disappearanceTimers.delete(key);
-  if (options.suppressAuto !== false) autoSuppressed.add(key);
+  if (options.suppressAuto !== false && !autoSuppressed.has(key)) {
+    autoSuppressed.add(key);
+    publish();
+  }
   const active = activeForwards.get(key);
   if (!active) return;
   await window.desktopBridge?.releasePortForward?.({ environmentId, remotePort });
