@@ -1,6 +1,6 @@
 import type { DiscoveredLocalServer, PreviewTailnetStatusResult } from "@t3tools/contracts";
 import { isLoopbackHost } from "@t3tools/shared/preview";
-import { useEffect, useMemo, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
@@ -121,6 +121,7 @@ export function useThreadPreviewAccessController(input: {
     () => createDefaultPreviewAccessController(),
     [input.environmentId, input.threadId],
   );
+  const cleanupGenerations = useRef(new WeakMap<PreviewAccessController, number>());
 
   useEffect(() => {
     if (input.environmentId === null || input.threadId === null) return;
@@ -141,7 +142,18 @@ export function useThreadPreviewAccessController(input: {
     previewAccessStatus,
   ]);
 
-  useEffect(() => () => void controller.cleanup(), [controller]);
+  useEffect(() => {
+    const generations = cleanupGenerations.current;
+    const generation = (generations.get(controller) ?? 0) + 1;
+    generations.set(controller, generation);
+    return () => {
+      queueMicrotask(() => {
+        if (generations.get(controller) !== generation) return;
+        generations.delete(controller);
+        void controller.cleanup();
+      });
+    };
+  }, [controller]);
   return controller;
 }
 
