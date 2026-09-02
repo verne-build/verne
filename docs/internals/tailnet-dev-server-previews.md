@@ -1,9 +1,9 @@
 # Dev server preview access
 
-## Status
+## Summary
 
-This document defines the target architecture for opening environment-local development servers
-from Verne desktop and web clients. It extends the authenticated desktop port-forwarding model in
+This document describes the architecture for opening environment-local development servers from
+Verne desktop and web clients. It extends the authenticated desktop port-forwarding model in
 [remote.md](./remote.md) with private Tailnet publication for web clients.
 
 The central decision is to keep discovery independent of transport and choose the access transport
@@ -40,7 +40,7 @@ part of this design.
 - A Verne-managed Tailscale account or automatic tailnet policy changes.
 - Replacing desktop forwarding with Tailscale.
 - Adding an iframe or browser-preview runtime to the hosted web app.
-- Adding a mobile Ports screen in this phase.
+- Adding a mobile Ports screen.
 - Supporting arbitrary TCP services. Published targets must be discovered HTTP development servers.
 
 ## User experience
@@ -309,7 +309,7 @@ disconnect the Verne environment.
 | Desktop                | Yes                      | Authenticated local forward   | Verne Preview   | Cmd/Ctrl-click or explicit system browser action |
 | Hosted web             | Yes                      | Authenticated Tailscale Serve | New browser tab | Copy fresh launch URL                            |
 | Environment-served web | Yes                      | Authenticated Tailscale Serve | New browser tab | Copy fresh launch URL                            |
-| Mobile                 | No in this phase         | None in this phase            | Not applicable  | Not applicable                                   |
+| Mobile                 | No                       | None                          | Not applicable  | Not applicable                                   |
 
 The behavior is provider-independent. Pairing URL, relay, direct LAN, Tailnet, and desktop-managed
 SSH connections all use the same surface rule because discovery and publication execute on the

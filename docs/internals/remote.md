@@ -146,7 +146,7 @@ are part of it: a hosted HTTPS client cannot connect to plain `ws://` or `http:/
 
 ### Relay-tunneled access
 
-Managed managed relay relay tunnels use `RelayConnectionTarget` and are the answer when the host is
+Managed relay tunnels use `RelayConnectionTarget` and are the answer when the host is
 behind NAT, inbound ports are unavailable, or mobile must reach a desktop-hosted environment. From
 the client's perspective this is still an ordinary WebSocket connection; the route is mediated. The
 relay Worker only brokers credentials and a managed endpoint; application traffic then flows over
@@ -155,7 +155,7 @@ Worker itself. See [t3-connect.md](./t3-connect.md).
 
 ### Tailscale access
 
-A T3-managed `tailscale serve` mapping exposes the server on the tailnet over HTTPS, and the
+A Verne-managed `tailscale serve` mapping exposes the server on the tailnet over HTTPS, and the
 resulting private-network endpoints are advertised for pairing. Connection then follows the ordinary
 bearer path.
 
@@ -178,6 +178,44 @@ Failure handling is explicit: SSH auth failure surfaces before an environment is
 failure includes launcher output where available, forwarded-port failure leaves the environment
 disconnected rather than falling back to an unrelated endpoint, and reconnect restores the SSH bridge
 before reconnecting the WebSocket client.
+
+## Preview access
+
+The thread Ports surface is current-thread scoped. It is built from the server's loopback port
+scanner attribution, so only listeners tied to the active thread appear there, and the tab stays
+available even when that thread has no active terminal. Clients choose the transport by surface:
+desktop uses direct localhost access for desktop-local environments and authenticated localhost
+forwarding for every remote environment, while web clients use Tailnet publication when the
+environment advertises `tailnetPreviewPublishing`.
+
+The scanner is the allowlist for both transports. A client with the `preview:access` session scope
+can acquire either a 60-second, single-use desktop forward ticket or a Tailnet publication lease
+only for a currently discovered loopback HTTP server. In both flows the server fixes the destination
+port and normalized connect host (`127.0.0.1` or `::1`); the client never supplies an arbitrary
+target. Runtime preview state is session-owned, memory-only, capped at 16 active ports per
+environment, and cleaned up when the owning RPC session disconnects.
+
+For desktop-local environments, the renderer opens the discovered localhost URL directly. For every
+remote environment, the renderer passes the ticket to Electron main, which opens a dedicated
+WebSocket at `/preview/tunnel`. Binary frames multiplex local TCP streams over that connection. The
+desktop main process listens only on `127.0.0.1`, prefers the same port, and falls back to an
+ephemeral port when needed. The tunnel endpoint is derived from the environment HTTP base URL:
+non-loopback remote targets must use HTTPS/WSS, while plaintext is accepted only for loopback
+targets such as the local server or the desktop's SSH bridge.
+
+Web clients use the same current-thread discovery model plus an environment-scoped opt-in
+(`tailscalePreviewsEnabled`) to acquire Tailnet publication leases automatically or on demand.
+Each published port gets a clean MagicDNS HTTPS URL plus a one-time launch secret that bootstraps an
+`HttpOnly`, `Secure`, `SameSite=Strict` preview cookie at `/.well-known/verne-preview/auth`. The
+clean URL is stable for display, but every open or copy action requests a fresh short-lived launch.
+The preview gateway proxies both HTTP requests and WebSocket upgrades, which keeps common HMR flows
+working through the authenticated loopback bridge.
+
+Readiness is classified rather than opaque: disabled, Tailscale unavailable, not logged in,
+MagicDNS or HTTPS missing, operator permission denied, mapping conflict, gateway failure, or
+capacity reached. Verne never invokes `sudo`, rewrites unknown Tailscale Serve mappings, or offers a
+public fallback for this feature. Mobile currently has no preview transport. Older paired sessions
+lack `preview:access` by design and must pair again.
 
 ## Launch methods
 

@@ -122,6 +122,64 @@ npx @verne-build/cli serve --tailscale-serve --tailscale-serve-port 8443
 Once paired, add projects normally: open the Command Palette and choose **Add Project**, then pick
 the environment the project lives on. Every saved environment is offered, not only the local one.
 
+### Opening Dev Server Previews
+
+In any thread, open the bottom drawer and choose **Ports**. The drawer keeps **Terminal** and
+**Ports** side by side. **Ports** only shows development servers attributed to the current thread,
+and it stays available even when that thread does not currently have an open terminal.
+
+#### Desktop app
+
+The desktop app detects HTTP dev servers running on a connected environment and makes them
+available on your desktop automatically. This includes environments added with a pairing URL and
+desktop-managed SSH environments.
+
+If the environment is running on the same desktop machine, Verne opens the real localhost URL
+directly. For every remote environment, Verne opens an authenticated local URL such as
+`http://localhost:5173/`, even when the environment itself is paired over LAN, Tailnet, or SSH.
+The local listener binds only to `127.0.0.1`, tries to preserve the remote port, and falls back to
+another local port if that port is already occupied.
+
+Click a port row to open it in Verne Preview. Cmd-click on macOS or Ctrl-click on other platforms
+opens the same URL in your system browser. The browser action on the row does the same thing
+without a modifier. The Preview empty state also keeps its list of discovered local servers as an
+additional entry point.
+
+Desktop auto-forwarding is on by default. Use **Settings** → **Connections** →
+**Auto-forward dev servers** to turn it off for an environment, or use the power control on an
+individual port. Verne keeps a mapping alive for 15 seconds after the server disappears so normal
+dev-server restarts do not flap.
+
+#### Web clients
+
+In `https://app.verne.build` and in a web app served by a Verne environment, opening a port starts
+a separate Tailnet HTTPS tab instead of an embedded preview. Turn on **Enable Tailscale previews**
+once in **Settings** → **Connections** for that environment.
+
+Each browser open or copy action requests a fresh short-lived sign-in handoff, so the displayed
+Tailnet URL stays clean. Your browser device must be connected to the same Tailnet and allowed to
+reach the environment by that tailnet's ACL.
+
+Use the same power control on a port row to disable or re-enable one discovered process. Turning
+off **Enable Tailscale previews** closes active Tailnet publications for that environment and stops
+new ones from opening until you enable it again.
+
+#### Limits and troubleshooting
+
+These previews stay private. Verne does not create public sharing links for them and does not fall
+back to Cloudflare or another public route when Tailnet access is unavailable.
+
+If Tailnet previews show setup is required, install and start Tailscale on the environment, sign in
+to Tailscale, and enable MagicDNS and Tailscale HTTPS for your tailnet. On Linux, an operator may
+also need to run `sudo tailscale set --operator=<service account>`. Verne never runs `sudo` for
+you.
+
+Forward authorization is part of the paired client session. Sessions created before
+`preview:access` was added may not be allowed to open previews; if opening is rejected after an
+upgrade, remove and pair the environment again.
+
+Mobile can connect to environments in this release, but it does not open Ports previews yet.
+
 ### Option 3: Desktop-Managed SSH Launch
 
 Use this when you want the desktop app to start or reuse Verne on another machine over SSH.
