@@ -783,6 +783,79 @@ describe("preview access controller", () => {
     expect(release).toHaveBeenCalledWith({ environmentId, leaseId: "lease-5173" });
   });
 
+  it("releases an active lease on status failure and reacquires after recovery", async () => {
+    const timers = manualTimers();
+    const release = vi.fn(async () => undefined);
+    const deps = dependencies({ release, timers: timers.api, now: timers.now });
+    const controller = createPreviewAccessController(deps);
+    const servers = [server(5173)];
+
+    await controller.reconcile({
+      environmentId,
+      threadId,
+      servers,
+      status: { enabled: true, readiness: "ready" },
+    });
+    expect(timers.size()).toBe(1);
+
+    await controller.reconcile({
+      environmentId,
+      threadId,
+      servers,
+      status: { state: "error", readiness: "gateway-failed" },
+    });
+    expect(release).toHaveBeenCalledWith({ environmentId, leaseId: "lease-5173" });
+    expect(timers.size()).toBe(0);
+    expect(controller.getPortState({ environmentId, threadId, port: 5173 })).toEqual({
+      state: "unavailable",
+      readiness: "gateway-failed",
+    });
+
+    await controller.reconcile({
+      environmentId,
+      threadId,
+      servers,
+      status: { enabled: true, readiness: "ready" },
+    });
+    expect(deps.tailnet.acquire).toHaveBeenCalledTimes(2);
+    expect(controller.getPortState({ environmentId, threadId, port: 5173 })).toMatchObject({
+      state: "active",
+    });
+  });
+
+  it.each([
+    ["status failure", { state: "error", readiness: "gateway-failed" }],
+    ["unready status", { enabled: true, readiness: "tailscale-unavailable" }],
+  ] as const)("preserves explicit suppression through %s and recovery", async (_name, outage) => {
+    const deps = dependencies();
+    const controller = createPreviewAccessController(deps);
+    const servers = [server(5173)];
+    await controller.reconcile({
+      environmentId,
+      threadId,
+      servers,
+      status: { enabled: true, readiness: "ready" },
+    });
+    await controller.setPortEnabled({ environmentId, threadId, port: 5173, enabled: false });
+    vi.mocked(deps.tailnet.acquire).mockClear();
+
+    await controller.reconcile({ environmentId, threadId, servers, status: outage });
+    expect(controller.getPortState({ environmentId, threadId, port: 5173 })).toEqual({
+      state: "suppressed",
+    });
+
+    await controller.reconcile({
+      environmentId,
+      threadId,
+      servers,
+      status: { enabled: true, readiness: "ready" },
+    });
+    expect(controller.getPortState({ environmentId, threadId, port: 5173 })).toEqual({
+      state: "suppressed",
+    });
+    expect(deps.tailnet.acquire).not.toHaveBeenCalled();
+  });
+
   it("cleanup releases every lease owned by the controller session", async () => {
     const release = vi.fn(
       async (_input: { readonly environmentId: EnvironmentId; readonly leaseId: string }) =>

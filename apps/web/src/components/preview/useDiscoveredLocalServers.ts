@@ -1,4 +1,4 @@
-import type { DiscoveredLocalServer } from "@t3tools/contracts";
+import type { DiscoveredLocalServer, PreviewTailnetStatusResult } from "@t3tools/contracts";
 import { isLoopbackHost } from "@t3tools/shared/preview";
 import { useEffect, useMemo, useSyncExternalStore } from "react";
 
@@ -6,6 +6,7 @@ import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
   createDefaultPreviewAccessController,
   type PreviewAccessController,
+  type PreviewAccessReconcileStatus,
 } from "~/browser/previewAccessController";
 import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
 import {
@@ -22,7 +23,7 @@ import { readPreparedConnection } from "~/state/session";
 import { useDiscoveredPortsState } from "~/portDiscoveryState";
 import { useServerConfigs } from "~/state/entities";
 import { previewEnvironment } from "~/state/preview";
-import { useEnvironmentQuery } from "~/state/query";
+import { useEnvironmentQuery, type EnvironmentQueryView } from "~/state/query";
 
 export interface PreviewableServer extends DiscoveredLocalServer {
   source: "scanner" | "configured";
@@ -31,6 +32,18 @@ export interface PreviewableServer extends DiscoveredLocalServer {
    * volatile desktop-forward and Tailnet URLs instead of persisting them here.
    */
   requestedUrl: string;
+}
+
+const PREVIEW_STATUS_QUERY_ERROR = {
+  state: "error",
+  readiness: "gateway-failed",
+} as const;
+
+export function previewAccessStatusFromQuery(
+  query: Pick<EnvironmentQueryView<PreviewTailnetStatusResult>, "data" | "error" | "isPending">,
+): PreviewAccessReconcileStatus {
+  if (query.error !== null) return PREVIEW_STATUS_QUERY_ERROR;
+  return query.data;
 }
 
 interface UseDiscoveredLocalServersInput {
@@ -103,6 +116,7 @@ export function useThreadPreviewAccessController(input: {
       ? previewEnvironment.tailnetStatus({ environmentId: input.environmentId, input: {} })
       : null,
   );
+  const previewAccessStatus = previewAccessStatusFromQuery(tailnetStatus);
   const controller = useMemo(
     () => createDefaultPreviewAccessController(),
     [input.environmentId, input.threadId],
@@ -114,7 +128,7 @@ export function useThreadPreviewAccessController(input: {
       environmentId: input.environmentId,
       threadId: input.threadId,
       servers: scannerState.servers,
-      ...(shouldReadStatus ? { status: tailnetStatus.data } : {}),
+      ...(shouldReadStatus ? { status: previewAccessStatus } : {}),
     });
   }, [
     controller,
@@ -124,9 +138,7 @@ export function useThreadPreviewAccessController(input: {
     shouldReadStatus,
     supportsTailnet,
     tailnetEnabled,
-    tailnetStatus.data,
-    tailnetStatus.error,
-    tailnetStatus.isPending,
+    previewAccessStatus,
   ]);
 
   useEffect(() => () => void controller.cleanup(), [controller]);

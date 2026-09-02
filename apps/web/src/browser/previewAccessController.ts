@@ -117,11 +117,16 @@ export interface PreviewAccessPrepareInput {
   readonly target: BrowserNavigationTarget;
 }
 
+export type PreviewAccessReconcileStatus =
+  | PreviewTailnetStatusResult
+  | { readonly state: "error"; readonly readiness: TailnetPreviewReadiness }
+  | null;
+
 export interface PreviewAccessReconcileInput {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly servers: ReadonlyArray<DiscoveredLocalServer>;
-  readonly status?: PreviewTailnetStatusResult | null;
+  readonly status?: PreviewAccessReconcileStatus;
 }
 
 export interface PreviewAccessController {
@@ -611,22 +616,23 @@ export function createPreviewAccessController(
       await releaseMatching(input.environmentId, input.threadId);
       return;
     }
-    if (
+    const unavailableStatus =
       input.status !== undefined &&
-      (!input.status.enabled || input.status.readiness !== "ready")
-    ) {
+      ("state" in input.status || !input.status.enabled || input.status.readiness !== "ready")
+        ? input.status
+        : null;
+    if (unavailableStatus !== null) {
       await releaseMatching(input.environmentId, input.threadId);
       for (const candidate of input.servers
         .filter((server) => server.terminal?.threadId === input.threadId)
         .slice(0, MAX_AUTOMATIC_PORTS)) {
-        setState(
-          keyFor({
-            environmentId: input.environmentId,
-            threadId: input.threadId,
-            port: candidate.port,
-          }),
-          { state: "unavailable", readiness: input.status.readiness },
-        );
+        const key = keyFor({
+          environmentId: input.environmentId,
+          threadId: input.threadId,
+          port: candidate.port,
+        });
+        if (isSuppressed(key)) continue;
+        setState(key, { state: "unavailable", readiness: unavailableStatus.readiness });
       }
       return;
     }

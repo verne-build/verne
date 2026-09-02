@@ -1,7 +1,7 @@
 import type { DiscoveredLocalServer } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { mergeServers } from "./useDiscoveredLocalServers";
+import { mergeServers, previewAccessStatusFromQuery } from "./useDiscoveredLocalServers";
 
 const scannerServer = (
   overrides: Partial<DiscoveredLocalServer & { requestedUrl: string }>,
@@ -142,5 +142,28 @@ describe("mergeServers", () => {
     });
     expect(result[0]?.url).toBe("https://env-42.example.dev:5173/");
     expect(result[0]?.requestedUrl).toBe("http://localhost:5173/");
+  });
+});
+
+describe("previewAccessStatusFromQuery", () => {
+  it("prefers the latest query failure over retained successful data", () => {
+    expect(
+      previewAccessStatusFromQuery({
+        data: { enabled: true, readiness: "ready" },
+        error: "status refresh failed",
+        isPending: false,
+      }),
+    ).toEqual({ state: "error", readiness: "gateway-failed" });
+  });
+
+  it("returns successful status and represents initial pending state explicitly", () => {
+    expect(
+      previewAccessStatusFromQuery({
+        data: { enabled: true, readiness: "ready" },
+        error: null,
+        isPending: false,
+      }),
+    ).toEqual({ enabled: true, readiness: "ready" });
+    expect(previewAccessStatusFromQuery({ data: null, error: null, isPending: true })).toBeNull();
   });
 });
