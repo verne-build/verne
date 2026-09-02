@@ -183,6 +183,9 @@ import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings"
 import ThreadBottomDrawer from "./ThreadBottomDrawer";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import { useThreadPreviewAccessController } from "./preview/useDiscoveredLocalServers";
+import type { PreviewAccessController } from "~/browser/previewAccessController";
+import type { OpenPreviewMutation } from "~/browser/openFileInPreview";
+import { ThreadPortsPanel } from "./ports/ThreadPortsPanel";
 import {
   AlarmClockIcon,
   CheckCircle2Icon,
@@ -730,6 +733,8 @@ interface PersistentThreadTerminalDrawerProps {
   threadRef: { environmentId: EnvironmentId; threadId: ThreadId };
   threadId: ThreadId;
   visible: boolean;
+  previewAccessController: PreviewAccessController | null;
+  openPreview: OpenPreviewMutation;
   launchContext: PersistentTerminalLaunchContext | null;
   focusRequestId: number;
   splitShortcutLabel: string | undefined;
@@ -744,6 +749,8 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   threadRef,
   threadId,
   visible,
+  previewAccessController,
+  openPreview,
   launchContext,
   focusRequestId,
   splitShortcutLabel,
@@ -1111,9 +1118,13 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
           />
         )}
         portsPanel={
-          <div className="flex h-full items-center justify-center px-4 text-sm text-muted-foreground">
-            Port previews will appear here.
-          </div>
+          previewAccessController ? (
+            <ThreadPortsPanel
+              threadRef={threadRef}
+              controller={previewAccessController}
+              openPreview={openPreview}
+            />
+          ) : null
         }
       />
     </div>
@@ -1744,7 +1755,7 @@ function ChatViewContent(props: ChatViewProps) {
         : null,
     [activeThreadEnvironmentId, activeThreadId],
   );
-  useThreadPreviewAccessController({
+  const previewAccessController = useThreadPreviewAccessController({
     environmentId: activeThreadRef?.environmentId ?? null,
     threadId: activeThreadRef?.threadId ?? null,
   });
@@ -7006,6 +7017,7 @@ function ChatViewContent(props: ChatViewProps) {
         <PreviewPanel
           mode="embedded"
           threadRef={activeThreadRef}
+          previewAccessController={previewAccessController}
           tabId={activeRightPanelSurface.resourceId}
           configuredUrls={configuredPreviewUrls}
           visible
@@ -7522,6 +7534,10 @@ function ChatViewContent(props: ChatViewProps) {
             threadRef={mountedThreadRef}
             threadId={mountedThreadRef.threadId}
             visible={mountedThreadKey === activeThreadKey && terminalUiState.terminalOpen}
+            previewAccessController={
+              mountedThreadKey === activeThreadKey ? previewAccessController : null
+            }
+            openPreview={openPreview}
             launchContext={
               mountedThreadKey === activeThreadKey ? (activeTerminalLaunchContext ?? null) : null
             }

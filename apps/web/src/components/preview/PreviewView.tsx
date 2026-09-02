@@ -60,9 +60,11 @@ import {
   useActiveBrowserRecordingTabIds,
 } from "~/browser/browserRecording";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
+import type { PreviewAccessController } from "~/browser/previewAccessController";
 
 interface Props {
   threadRef: ScopedThreadRef;
+  previewAccessController?: PreviewAccessController;
   tabId?: string | null;
   configuredUrls?: ReadonlyArray<string> | undefined;
   visible: boolean;
@@ -80,6 +82,7 @@ const localApi = typeof window === "undefined" ? null : ensureLocalApi();
  */
 export function PreviewView({
   threadRef,
+  previewAccessController,
   tabId: requestedTabId,
   configuredUrls,
   visible,
@@ -198,6 +201,13 @@ export function PreviewView({
       }
     },
     [navigateToResolvedUrl, threadRef],
+  );
+
+  const handleOpenResolvedServerUrl = useCallback(
+    async (resolvedUrl: string) => {
+      await navigateToResolvedUrl(resolvedUrl);
+    },
+    [navigateToResolvedUrl],
   );
 
   const handleRefresh = useCallback(() => {
@@ -711,11 +721,17 @@ export function PreviewView({
         {showEmptyState ? (
           <PreviewEmptyState
             threadRef={threadRef}
+            {...(previewAccessController ? { previewAccessController } : {})}
             environmentId={threadRef.environmentId}
             configuredUrls={configuredUrls}
             recentEntries={recentHistoryEntries}
             onRemoveRecent={(url) => removeUrlForThread(threadRef, url)}
             onOpenUrl={(next) => void handleOpenServerUrl(next)}
+            onOpenLocalServerUrl={
+              previewAccessController
+                ? handleOpenResolvedServerUrl
+                : (next) => void handleOpenServerUrl(next)
+            }
           />
         ) : null}
         {snapshot && desktopOverlay ? (

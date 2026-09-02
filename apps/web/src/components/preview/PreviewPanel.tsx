@@ -3,6 +3,7 @@
 import type { PreviewAnnotationPayload, ScopedThreadRef } from "@t3tools/contracts";
 
 import type { ComposerImageAttachment } from "~/composerDraftStore";
+import type { PreviewAccessController } from "~/browser/previewAccessController";
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
 
 import { PreviewPanelShell, type PreviewPanelMode } from "./PreviewPanelShell";
@@ -11,6 +12,7 @@ import { PreviewView } from "./PreviewView";
 interface Props {
   mode: PreviewPanelMode;
   threadRef: ScopedThreadRef;
+  previewAccessController?: PreviewAccessController;
   tabId?: string | null;
   configuredUrls?: ReadonlyArray<string> | undefined;
   visible: boolean;
@@ -23,6 +25,7 @@ interface Props {
 export function PreviewPanel({
   mode,
   threadRef,
+  previewAccessController,
   tabId,
   configuredUrls,
   visible,
@@ -44,6 +47,7 @@ export function PreviewPanel({
     <PreviewPanelShell mode={mode}>
       <PreviewView
         threadRef={threadRef}
+        {...(previewAccessController ? { previewAccessController } : {})}
         {...(tabId !== undefined ? { tabId } : {})}
         configuredUrls={configuredUrls}
         visible={visible}

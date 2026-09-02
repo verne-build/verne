@@ -2,6 +2,7 @@ import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { Globe, History, RadioTower } from "lucide-react";
 
 import type { BrowserHistoryEntry } from "~/browserHistoryStore";
+import type { PreviewAccessController } from "~/browser/previewAccessController";
 import { Empty, EmptyDescription, EmptyMedia, EmptyTitle } from "~/components/ui/empty";
 
 import { PreviewLocalServerCard } from "./PreviewLocalServerCard";
@@ -10,20 +11,24 @@ import { useDiscoveredLocalServers } from "./useDiscoveredLocalServers";
 
 interface Props {
   threadRef: ScopedThreadRef;
+  previewAccessController?: PreviewAccessController;
   environmentId: EnvironmentId;
   configuredUrls?: ReadonlyArray<string> | undefined;
   recentEntries: ReadonlyArray<BrowserHistoryEntry>;
   onRemoveRecent: (url: string) => void;
   onOpenUrl: (url: string) => void;
+  onOpenLocalServerUrl?: (url: string) => void | Promise<void>;
 }
 
 export function PreviewEmptyState({
   threadRef,
+  previewAccessController,
   environmentId,
   configuredUrls,
   recentEntries,
   onRemoveRecent,
   onOpenUrl,
+  onOpenLocalServerUrl = onOpenUrl,
 }: Props) {
   const servers = useDiscoveredLocalServers({
     environmentId,
@@ -80,7 +85,8 @@ export function PreviewEmptyState({
                   key={`${server.host}:${server.port}`}
                   threadRef={threadRef}
                   server={server}
-                  onOpen={() => onOpenUrl(server.requestedUrl)}
+                  {...(previewAccessController ? { controller: previewAccessController } : {})}
+                  onOpen={onOpenLocalServerUrl}
                 />
               ))}
             </div>
