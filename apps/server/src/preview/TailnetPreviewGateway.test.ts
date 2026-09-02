@@ -169,12 +169,15 @@ describe("TailnetPreviewGateway", () => {
     expect(bootstrap.body).toContain("history.replaceState");
   });
 
-  it("clears the fragment and submits its capability without exposing it in a URL", async () => {
+  it("executes its parser-time bootstrap and submits the capability without exposing it in a URL", async () => {
     const target = await startTarget((_request, response) => response.end("ok"));
     const gateway = await startGateway(await makeAuth(), target.port);
     const bootstrap = await request(gateway.gatewayPort, AUTH_PATH);
     const script = bootstrap.body.match(/<script>([\s\S]*)<\/script>/u)?.[1];
     expect(script).toBeDefined();
+    const bodyStart = bootstrap.body.indexOf("<body");
+    const scriptStart = bootstrap.body.indexOf("<script>");
+    const bodyExistsWhenScriptRuns = bodyStart >= 0 && bodyStart < scriptStart;
 
     const appended: Array<{ name?: string; value?: string }> = [];
     let submitted:
@@ -189,21 +192,24 @@ describe("TailnetPreviewGateway", () => {
         submitted = { action: form.action, method: form.method, fields: [...appended] };
       },
     };
-    NodeVM.runInNewContext(script!, {
-      decodeURIComponent,
-      history: { replaceState: (...args: unknown[]) => historyCalls.push(args) },
-      location: {
-        hash: `#${encodeURIComponent(
-          JSON.stringify({ launchSecret: "fragment-secret", target: "/app?q=1" }),
-        )}`,
-        pathname: AUTH_PATH,
-        search: "",
-      },
-      document: {
-        body: { append: () => {} },
-        createElement: (tag: string) => (tag === "form" ? form : { name: "", type: "", value: "" }),
-      },
-    });
+    expect(() =>
+      NodeVM.runInNewContext(script!, {
+        decodeURIComponent,
+        history: { replaceState: (...args: unknown[]) => historyCalls.push(args) },
+        location: {
+          hash: `#${encodeURIComponent(
+            JSON.stringify({ launchSecret: "fragment-secret", target: "/app?q=1" }),
+          )}`,
+          pathname: AUTH_PATH,
+          search: "",
+        },
+        document: {
+          body: bodyExistsWhenScriptRuns ? { append: () => {} } : null,
+          createElement: (tag: string) =>
+            tag === "form" ? form : { name: "", type: "", value: "" },
+        },
+      }),
+    ).not.toThrow();
 
     expect(historyCalls).toEqual([[null, "", AUTH_PATH]]);
     expect(submitted).toEqual({

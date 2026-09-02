@@ -51,7 +51,7 @@ const bootstrapScript = String.raw`(()=>{const fragment=location.hash.slice(1);h
 const bootstrapScriptHash = NodeCrypto.createHash("sha256")
   .update(bootstrapScript)
   .digest("base64");
-const bootstrapDocument = `<!doctype html><meta charset="utf-8"><meta name="referrer" content="no-referrer"><script>${bootstrapScript}</script>`;
+const bootstrapDocument = `<!doctype html><html><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"></head><body><script>${bootstrapScript}</script></body></html>`;
 
 const connectionHeaderNames = (headers: NodeHttp.IncomingHttpHeaders) =>
   new Set(
