@@ -134,7 +134,9 @@ const makeHarness = Effect.fn("TailnetPreviewPublisherTest.makeHarness")(functio
   const mappingsRef = yield* Ref.make<ReadonlyMap<number, { servePort: number; proxyUrl: string }>>(
     new Map(),
   );
-  const startsRef = yield* Ref.make<ReadonlyArray<{ host: string; port: number }>>([]);
+  const startsRef = yield* Ref.make<
+    ReadonlyArray<{ host: string; port: number; protocol: "http:" | "https:" }>
+  >([]);
   const closesRef = yield* Ref.make<ReadonlyArray<number>>([]);
   const closeSignal = yield* Deferred.make<void>();
   const retainPublishStarted = yield* Deferred.make<void>();
@@ -432,24 +434,46 @@ effectIt.effect("rejects undiscovered and wrong-thread ports before starting a g
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
-effectIt.effect("uses only the scanner-normalized connect host", () =>
+effectIt.effect("uses the scanner-normalized connect host and discovered protocol", () =>
   Effect.gen(function* () {
     const cases = [
-      { host: "localhost", connectHost: "127.0.0.1" },
-      { host: "127.0.0.1", connectHost: "127.0.0.1" },
-      { host: "::1", connectHost: "::1" },
-      { host: "0.0.0.0", connectHost: "127.0.0.1" },
+      { host: "localhost", connectHost: "127.0.0.1", protocol: "http:" },
+      { host: "127.0.0.1", connectHost: "127.0.0.1", protocol: "https:" },
+      { host: "::1", connectHost: "::1", protocol: "http:" },
+      { host: "0.0.0.0", connectHost: "127.0.0.1", protocol: "https:" },
     ] as const;
-    for (const [index, { host, connectHost }] of cases.entries()) {
+    for (const [index, { host, connectHost, protocol }] of cases.entries()) {
       const port = 5_173 + index;
-      const harness = yield* makeHarness({ servers: [server(port, { host, connectHost })] });
+      const displayHost = host === "::1" ? "[::1]" : host;
+      const harness = yield* makeHarness({
+        servers: [server(port, { host, connectHost, url: `${protocol}//${displayHost}:${port}/` })],
+      });
       yield* harness.publisher.acquire({
         sessionId: `session-${index}`,
         threadId: "thread-a",
         port,
       });
-      expect((yield* Ref.get(harness.startsRef))[0]).toEqual({ host: connectHost, port });
+      expect((yield* Ref.get(harness.startsRef))[0]).toEqual({ host: connectHost, port, protocol });
     }
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+effectIt.effect("rejects a discovered target whose URL is not HTTP or HTTPS", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness({
+      servers: [server(5173, { url: "ftp://localhost:5173/" })],
+    });
+
+    const failure = yield* Effect.flip(
+      harness.publisher.acquire({ sessionId: "session-a", threadId: "thread-a", port: 5173 }),
+    );
+
+    expect(failure).toMatchObject({
+      _tag: "PreviewTailnetUnavailableError",
+      port: 5173,
+      readiness: "gateway-failed",
+    });
+    expect(yield* Ref.get(harness.startsRef)).toEqual([]);
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 

@@ -1,6 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeHttp from "node:http";
+import * as NodeHttps from "node:https";
 import * as NodeNet from "node:net";
+import * as NodeTls from "node:tls";
 import * as NodeVM from "node:vm";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -8,11 +10,63 @@ import * as Effect from "effect/Effect";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import * as TailnetPreviewAuth from "./TailnetPreviewAuth.ts";
-import { startTailnetPreviewGateway } from "./TailnetPreviewGateway.ts";
+import {
+  formatTailnetPreviewTargetAuthority,
+  startTailnetPreviewGateway,
+} from "./TailnetPreviewGateway.ts";
 
 const AUTH_PATH = "/.well-known/verne-preview/auth";
 const environmentId = "env-preview";
 const leaseId = "lease-preview";
+
+const trustedCertificate = `-----BEGIN CERTIFICATE-----
+MIIDODCCAiCgAwIBAgIUBlbm07HDUIqgJvxWcPB1bDqrgLMwDQYJKoZIhvcNAQEL
+BQAwFDESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTI2MDkwMjA5MzczMVoXDTM2MDgz
+MDA5MzczMVowFDESMBAGA1UEAwwJbG9jYWxob3N0MIIBIjANBgkqhkiG9w0BAQEF
+AAOCAQ8AMIIBCgKCAQEAw8waJfUjPH952831lLiTeudOF9yCNv8Xx3xbblTjCkbZ
+JqZXnjt8oE+JlXldBVFnKIuC0QQpADM6vmJh5qCqgiBEMKvJX3yviXV2FsK9g/ue
+YgcZBCCYUDX1diiZuX/65udeUhta0jCIXZ9JuY3ALSnHBfWVE3kdj5L8NW2qphBw
+sbX8sAOkeq8CePhtJ9threR/A2waR8ALmWKlxKDf2xh7G6cTA8lfDlE6pYPX/plH
+bQ6dKk5LGpsY8Ub2QPQWD9D/PnJaas6tCjwsq+bn+gbNcecTg8PswIpFbv7q2VTG
+XEMQU7kwcU7Mhh2h71QEERFhj9QkGFz7FoVlkUwKmQIDAQABo4GBMH8wHQYDVR0O
+BBYEFMfseT8S1Nmv5jPHW/GNZQQOyneuMB8GA1UdIwQYMBaAFMfseT8S1Nmv5jPH
+W/GNZQQOyneuMA8GA1UdEwEB/wQFMAMBAf8wLAYDVR0RBCUwI4IJbG9jYWxob3N0
+hwR/AAABhxAAAAAAAAAAAAAAAAAAAAABMA0GCSqGSIb3DQEBCwUAA4IBAQDBOTN+
+jLziYB8K1bpNz5Bq3aoCsibBba9Rxb5EZVy/BBnbN/pP2wX4Az4p3KuMxZBl+cL/
+eQG/y/wOWp+FAUab00zBo9Bkw3I8Q4K9PzpsCVOc38CC5iemMQDw1GYsfVFImZMT
+jKEj0sDJGtEhN4tIJc5h7FD6FdsrzCy8EXvarxXELt3Bbh7hFjN9LcyehH/8SdPa
+cy5KYdGrrTqS38OKBaJrlfO5TK9w6XsagNXwG5CHP/wuqeYiG8B+k8f1tf36mamo
+qMkczA00600frgI4yDL0zqn14SuycoU0SSjfdWjt6fSoKULWWiqCJhne16QF6oJu
+cF1w9FNoRsidEBPQ
+-----END CERTIFICATE-----`;
+const trustedPrivateKey = `-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDDzBol9SM8f3nb
+zfWUuJN6504X3II2/xfHfFtuVOMKRtkmpleeO3ygT4mVeV0FUWcoi4LRBCkAMzq+
+YmHmoKqCIEQwq8lffK+JdXYWwr2D+55iBxkEIJhQNfV2KJm5f/rm515SG1rSMIhd
+n0m5jcAtKccF9ZUTeR2Pkvw1baqmEHCxtfywA6R6rwJ4+G0n22Gt5H8DbBpHwAuZ
+YqXEoN/bGHsbpxMDyV8OUTqlg9f+mUdtDp0qTksamxjxRvZA9BYP0P8+clpqzq0K
+PCyr5uf6Bs1x5xODw+zAikVu/urZVMZcQxBTuTBxTsyGHaHvVAQREWGP1CQYXPsW
+hWWRTAqZAgMBAAECggEAEEmFBtGLnPOXM9BADJ8mgH+nfL9mcxP4+sqG0gicas1O
+MMN/UB2vbifzoFQcR24YNFSXnRK5JOe+DBqDvZMxn9m2hmxx18A322nCmR3ZtTYL
+/KhNvczG0sxMRwgVUouZd9X5AAA/x7KLE2ulzrpCiVc7c6zUOe6WJYxy77BX1NCt
+hhcxAKfCfsoLdD6/lPZRyMHnxjp3hVSJ5UcQsK4IwD91KRT8scaZuThVMvHyHNo3
+wcxVKdBLGFTNIcn5hkor1gj/GHUuiG3zIecexOoDc0u5ZCUb6PRZDhRYtjpKsCoz
+cBmfaCYDIuHKOIng1y03L4H2HCPU2qnhn/N304CoIQKBgQD8MqDymnYJzkUnZx9H
+hoLwX6WylEgATrQxTB4kUB8FZhW7TaVD7kNZAx8RHoVf/8Ry39s/mv6MgWn+vYDi
+TAltiINKHGc+vlniqGSC/pmrZkbG9oIjY+s/Njz7QCfHKNxHUtk5pkDjN4h7x1vV
+YNmFutt4Lr4WqrwRAhQ/1UGYYQKBgQDGv8rnusIjRf1Du3/sGiOYzMudIoLVl9zp
+uv5o8WmAtMhESlKcid3uDm71qo7qiWDp/MOPJB57xsmYii8e/0SE6Z51UAy3hIrV
+q7/DvL/f31nVu8e8bQ64hSui309nbdF+zjIpwgYgWZ8xtTDBgEnc3AwN63++mNA9
+p/ytZ6I9OQKBgEcGly9b8uxWDEHJmBSTvGKn/Ulq21BC2hqcHk0Jx4LEulAS0P1t
+p8f0yhYPK27a4F+dzeh+5Tt64vgcNKUG1wzjCl6f2y/fef8Mf6oou+x6lGpKWGJR
+LJqT0t7LtagwSMFJguXqfZHAPQ7nGWThrsEr281gFKbblLWRiVRk4eFhAoGBAL5K
+i99rNM3JCUB8mXJZZJO8IYeFr3cKO/2diFC6M6WDcevQrWArsE1pjFuyvbtZZW0j
+EapPjtA7+HEQfSVUiyom9AymZEahpLwIAUdLxPp4Qu8dJ5QFZv7MoocDAGerAdZD
+XkwU9QCsTnutW80pI49PMEtzm4/FiDxARvFQNEohAoGAWwtuI3g0l02U72VaZTnp
+SHqiY/cTvRjioRbvRWs38MuxPlzKGZDb+W2DR/MMWjMe0QHBaoNgF6blRHIBJOQ1
+87KLHMRoG3IwYd0QiuY8rEjW2z/iKMX1F99CSE/msSzm9ugXDdSblfaoYk3Xqxx8
+Ga2coUU1vzVdb0k0BgtUDo4=
+-----END PRIVATE KEY-----`;
 
 interface HttpResult {
   readonly status: number;
@@ -42,11 +96,46 @@ const listen = (server: NodeHttp.Server) =>
     });
   });
 
+const listenOn = (server: NodeHttp.Server, host: string) =>
+  new Promise<number>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, host, () => {
+      server.off("error", reject);
+      const address = server.address();
+      if (address === null || typeof address === "string") {
+        reject(new Error("expected a TCP address"));
+        return;
+      }
+      resolve(address.port);
+    });
+  });
+
 const startTarget = async (
   handler: NodeHttp.RequestListener,
   onUpgrade?: (request: NodeHttp.IncomingMessage, socket: NodeNet.Socket, head: Buffer) => void,
 ) => {
   const server = NodeHttp.createServer(handler);
+  if (onUpgrade !== undefined) server.on("upgrade", onUpgrade);
+  const port = await listen(server);
+  closeActions.push(() => closeServer(server));
+  return { server, port };
+};
+
+const trustTestCertificate = () => {
+  const previous = NodeTls.getCACertificates("default");
+  NodeTls.setDefaultCACertificates([...previous, trustedCertificate]);
+  closeActions.push(async () => NodeTls.setDefaultCACertificates(previous));
+};
+
+const startSecureTarget = async (
+  handler: NodeHttp.RequestListener,
+  onUpgrade?: (request: NodeHttp.IncomingMessage, socket: NodeNet.Socket, head: Buffer) => void,
+) => {
+  trustTestCertificate();
+  const server = NodeHttps.createServer(
+    { cert: trustedCertificate, key: trustedPrivateKey },
+    handler,
+  );
   if (onUpgrade !== undefined) server.on("upgrade", onUpgrade);
   const port = await listen(server);
   closeActions.push(() => closeServer(server));
@@ -99,13 +188,18 @@ const makeAuth = () => runEffect(TailnetPreviewAuth.make.pipe(Effect.provide(Nod
 const startGateway = async (
   auth: TailnetPreviewAuth.TailnetPreviewAuth["Service"],
   targetPort: number,
+  target: { readonly host?: string; readonly protocol?: "http:" | "https:" } = {},
 ) => {
   const gateway = await runEffect(
     startTailnetPreviewGateway({
       auth,
       environmentId,
       leaseId,
-      target: { host: "127.0.0.1", port: targetPort },
+      target: {
+        host: target.host ?? "127.0.0.1",
+        port: targetPort,
+        protocol: target.protocol ?? "http:",
+      },
     }),
   );
   closeActions.push(() => runEffect(gateway.close));
@@ -147,7 +241,7 @@ describe("TailnetPreviewGateway", () => {
     const gateway = await startGateway(await makeAuth(), target.port);
 
     expect(gateway.gatewayPort).toBeGreaterThan(0);
-    expect(gateway.target).toEqual({ host: "127.0.0.1", port: target.port });
+    expect(gateway.target).toEqual({ host: "127.0.0.1", port: target.port, protocol: "http:" });
     await runEffect(gateway.close);
     await runEffect(gateway.close);
     await expect(request(gateway.gatewayPort, "/")).rejects.toMatchObject({ code: "ECONNREFUSED" });
@@ -338,6 +432,59 @@ describe("TailnetPreviewGateway", () => {
     ).resolves.toMatchObject({ status: 200, body: "healthy" });
   });
 
+  it("proxies HTTP requests to a trusted HTTPS target", async () => {
+    const received = Promise.withResolvers<NodeHttp.IncomingMessage>();
+    const target = await startSecureTarget((incoming, response) => {
+      received.resolve(incoming);
+      response.end("secure target");
+    });
+    const auth = await makeAuth();
+    const gateway = await startGateway(auth, target.port, { protocol: "https:" });
+    const cookie = await authenticate(auth, gateway.gatewayPort, target.port);
+
+    const proxied = await request(gateway.gatewayPort, "/secure", {
+      headers: { cookie, origin: "https://machine.tailnet.example" },
+    });
+
+    expect(proxied).toMatchObject({ status: 200, body: "secure target" });
+    expect((await received.promise).headers).toEqual(
+      expect.objectContaining({
+        host: `127.0.0.1:${target.port}`,
+        origin: `https://127.0.0.1:${target.port}`,
+      }),
+    );
+  });
+
+  it("formats IPv6 target authorities and proxies their Host and Origin when available", async () => {
+    expect(formatTailnetPreviewTargetAuthority({ host: "::1", port: 43123 })).toBe("[::1]:43123");
+
+    const received = Promise.withResolvers<NodeHttp.IncomingMessage>();
+    const server = NodeHttp.createServer((incoming, response) => {
+      received.resolve(incoming);
+      response.end("ipv6 target");
+    });
+    let port: number;
+    try {
+      port = await listenOn(server, "::1");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EAFNOSUPPORT") return;
+      throw error;
+    }
+    closeActions.push(() => closeServer(server));
+    const auth = await makeAuth();
+    const gateway = await startGateway(auth, port, { host: "::1" });
+    const cookie = await authenticate(auth, gateway.gatewayPort, port);
+
+    const proxied = await request(gateway.gatewayPort, "/ipv6", {
+      headers: { cookie, origin: "https://machine.tailnet.example" },
+    });
+
+    expect(proxied).toMatchObject({ status: 200, body: "ipv6 target" });
+    expect((await received.promise).headers).toEqual(
+      expect.objectContaining({ host: `[::1]:${port}`, origin: `http://[::1]:${port}` }),
+    );
+  });
+
   it("rejects cookies issued for another port", async () => {
     const firstTarget = await startTarget((_request, response) => response.end("first"));
     const secondTarget = await startTarget((_request, response) => response.end("second"));
@@ -486,6 +633,54 @@ describe("TailnetPreviewGateway", () => {
     expect(downstreamHeaders["x-response-remove"]).toBeUndefined();
     expect(downstreamHeaders["keep-alive"]).toBeUndefined();
     expect(downstreamHeaders["x-verne-upstream-internal"]).toBeUndefined();
+  });
+
+  it("proxies a real authenticated WebSocket to a trusted HTTPS target", async () => {
+    const webSocketServer = new NodeSocket.NodeWS.WebSocketServer({ noServer: true });
+    const upstreamUpgrade = Promise.withResolvers<NodeHttp.IncomingMessage>();
+    webSocketServer.on("connection", (socket) => {
+      socket.on("message", (message) => socket.send(`secure-echo:${String(message)}`));
+    });
+    const target = await startSecureTarget(
+      (_request, response) => response.end("https"),
+      (request, socket, head) => {
+        upstreamUpgrade.resolve(request);
+        webSocketServer.handleUpgrade(request, socket, head, (webSocket) => {
+          webSocketServer.emit("connection", webSocket, request);
+        });
+      },
+    );
+    closeActions.push(
+      () =>
+        new Promise<void>((resolve) => {
+          for (const client of webSocketServer.clients) client.terminate();
+          webSocketServer.close(() => resolve());
+        }),
+    );
+    const auth = await makeAuth();
+    const gateway = await startGateway(auth, target.port, { protocol: "https:" });
+    const cookie = await authenticate(auth, gateway.gatewayPort, target.port);
+
+    const message = await new Promise<string>((resolve, reject) => {
+      const socket = new NodeSocket.NodeWS.WebSocket(
+        `ws://127.0.0.1:${gateway.gatewayPort}/secure-socket`,
+        { headers: { cookie, origin: "https://machine.tailnet.example" } },
+      );
+      socket.on("open", () => socket.send("hello"));
+      socket.on("message", (data) => {
+        resolve(String(data));
+        socket.close();
+      });
+      socket.on("error", reject);
+    });
+
+    expect(message).toBe("secure-echo:hello");
+    expect((await upstreamUpgrade.promise).headers).toEqual(
+      expect.objectContaining({
+        host: `127.0.0.1:${target.port}`,
+        origin: `https://127.0.0.1:${target.port}`,
+      }),
+    );
   });
 
   it("removes a Connection-nominated header from a raw WebSocket handshake", async () => {

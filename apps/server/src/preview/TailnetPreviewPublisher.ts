@@ -555,6 +555,13 @@ export const make = Effect.fn("TailnetPreviewPublisher.make")(function* (
         readiness: "disabled",
       });
     }
+    const protocol = new URL(server.url).protocol;
+    if (protocol !== "http:" && protocol !== "https:") {
+      return yield* new PreviewTailnetUnavailableError({
+        port: input.port,
+        readiness: "gateway-failed",
+      });
+    }
 
     const now = yield* Clock.currentTimeMillis;
     const existingLease = requiredLease ?? findLease(input);
@@ -589,7 +596,11 @@ export const make = Effect.fn("TailnetPreviewPublisher.make")(function* (
           auth,
           environmentId: options.environmentId,
           leaseId: authLeaseId,
-          target: { host: server.connectHost!, port: input.port },
+          target: {
+            host: server.connectHost!,
+            port: input.port,
+            protocol,
+          },
         }),
         (running) => running.close,
       ).pipe(

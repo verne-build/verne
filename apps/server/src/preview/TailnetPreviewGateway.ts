@@ -1,8 +1,10 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeCrypto from "node:crypto";
 import * as NodeHttp from "node:http";
+import * as NodeHttps from "node:https";
 import * as NodeNet from "node:net";
 import type * as NodeStream from "node:stream";
+import * as NodeTls from "node:tls";
 import * as Effect from "effect/Effect";
 
 import { guardHttpResponseWriteErrors } from "../httpResponseErrorGuard.ts";
@@ -13,6 +15,7 @@ export const TAILNET_PREVIEW_AUTH_PATH = "/.well-known/verne-preview/auth";
 export interface TailnetPreviewTarget {
   readonly host: string;
   readonly port: number;
+  readonly protocol: "http:" | "https:";
 }
 
 export interface TailnetPreviewGatewayOptions {
@@ -84,6 +87,10 @@ const sessionSecretFromCookie = (cookieHeader: string | undefined, cookieName: s
   return undefined;
 };
 
+export const formatTailnetPreviewTargetAuthority = (
+  target: Pick<TailnetPreviewTarget, "host" | "port">,
+) => `${NodeNet.isIPv6(target.host) ? `[${target.host}]` : target.host}:${target.port}`;
+
 const filteredHeaders = (
   headers: NodeHttp.IncomingHttpHeaders,
   target: TailnetPreviewTarget,
@@ -105,8 +112,9 @@ const filteredHeaders = (
     if (value !== undefined) output[lowerName] = value;
   }
 
-  output.host = `${target.host}:${target.port}`;
-  if (headers.origin !== undefined) output.origin = `http://${target.host}:${target.port}`;
+  const authority = formatTailnetPreviewTargetAuthority(target);
+  output.host = authority;
+  if (headers.origin !== undefined) output.origin = `${target.protocol}//${authority}`;
   if (preserveUpgrade) {
     output.connection = "Upgrade";
     if (headers.upgrade !== undefined) output.upgrade = headers.upgrade;
@@ -390,7 +398,9 @@ export const startTailnetPreviewGateway = (options: TailnetPreviewGatewayOptions
               if (response.headersSent) response.destroy();
               else endText(response, 502, "Preview target unavailable");
             };
-            const upstream = NodeHttp.request(
+            const upstream = (
+              options.target.protocol === "https:" ? NodeHttps.request : NodeHttp.request
+            )(
               {
                 host: options.target.host,
                 port: options.target.port,
@@ -441,11 +451,14 @@ export const startTailnetPreviewGateway = (options: TailnetPreviewGatewayOptions
               writeSocketResponse(socket, 503, "Service Unavailable");
               return;
             }
-            const upstream = NodeNet.connect(options.target.port, options.target.host);
+            const upstream =
+              options.target.protocol === "https:"
+                ? NodeTls.connect({ host: options.target.host, port: options.target.port })
+                : NodeNet.connect(options.target.port, options.target.host);
             upstreamSockets.add(upstream);
             let handshakeForwarded = false;
             let handshakeBuffer = Buffer.alloc(0);
-            upstream.on("connect", () => {
+            upstream.on(options.target.protocol === "https:" ? "secureConnect" : "connect", () => {
               const headers = filteredHeaders(request.headers, options.target, true);
               const lines = [`${request.method ?? "GET"} ${request.url ?? "/"} HTTP/1.1`];
               for (const [name, value] of Object.entries(headers)) {
@@ -459,7 +472,7 @@ export const startTailnetPreviewGateway = (options: TailnetPreviewGatewayOptions
               upstream.write(`${lines.join("\r\n")}\r\n\r\n`);
               if (head.length > 0) upstream.write(head);
             });
-            upstream.on("data", (chunk) => {
+            upstream.on("data", (chunk: Buffer) => {
               if (handshakeForwarded) return;
               handshakeBuffer = Buffer.concat([handshakeBuffer, chunk]);
               if (handshakeBuffer.length > 64 * 1024) {
