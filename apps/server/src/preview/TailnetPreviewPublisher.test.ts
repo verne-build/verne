@@ -15,10 +15,14 @@ import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
 import { expect } from "vite-plus/test";
 
@@ -26,6 +30,7 @@ import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as PortScanner from "./PortScanner.ts";
 import * as TailnetPreviewAuth from "./TailnetPreviewAuth.ts";
+import { TailnetPreviewGatewayStartError } from "./TailnetPreviewGateway.ts";
 import * as TailnetPreviewPublisher from "./TailnetPreviewPublisher.ts";
 
 const TestOwnedMappingRegistry = Schema.Struct({
@@ -89,8 +94,22 @@ const testCryptoLayer = Layer.succeed(
 const makeHarness = Effect.fn("TailnetPreviewPublisherTest.makeHarness")(function* (input?: {
   readonly enabled?: boolean;
   readonly servers?: ReadonlyArray<DiscoveredLocalServer>;
+  readonly maxPublications?: number;
+  readonly leaseTtl?: Duration.Input;
 }) {
-  const discoveredRef = yield* Ref.make(input?.servers ?? [server(5173)]);
+  const initialServers = input?.servers ?? [server(5173)];
+  const discoveredRef = yield* Ref.make(initialServers);
+  let nextGeneration = 0;
+  const generationsRef = yield* Ref.make(
+    new Map(
+      initialServers.map((candidate) => [
+        candidate.port,
+        { pid: candidate.pid, value: `generation-${(nextGeneration += 1)}` },
+      ]),
+    ),
+  );
+  const discoveryCallsRef = yield* Ref.make(0);
+  const discoveryRetainsRef = yield* Ref.make(0);
   const discoveryListenerRef = yield* Ref.make<
     ((servers: ReadonlyArray<DiscoveredLocalServer>) => Effect.Effect<void>) | undefined
   >(undefined);
@@ -104,22 +123,87 @@ const makeHarness = Effect.fn("TailnetPreviewPublisherTest.makeHarness")(functio
     | Error
   >({ magicDnsName: "machine.tail.ts.net", tailnetIpv4Addresses: ["100.64.0.1"] });
   const ensureFailureRef = yield* Ref.make<Error | undefined>(undefined);
+  const disableFailureRef = yield* Ref.make<Error | undefined>(undefined);
+  const mintFailureRef = yield* Ref.make(false);
+  const blockMintRef = yield* Ref.make(false);
+  const mintEntered = yield* Deferred.make<void>();
+  const continueMint = yield* Deferred.make<void>();
+  const gatewayFailureRef = yield* Ref.make(false);
+  const registryWriteFailuresRef = yield* Ref.make(0);
   const mappingsRef = yield* Ref.make<ReadonlyMap<number, { servePort: number; proxyUrl: string }>>(
     new Map(),
   );
   const startsRef = yield* Ref.make<ReadonlyArray<{ host: string; port: number }>>([]);
   const closesRef = yield* Ref.make<ReadonlyArray<number>>([]);
   const closeSignal = yield* Deferred.make<void>();
+  const revokesRef = yield* Ref.make<ReadonlyArray<string>>([]);
+  const realAuth = yield* TailnetPreviewAuth.TailnetPreviewAuth;
+  const realFileSystem = yield* FileSystem.FileSystem;
+  const config = yield* ServerConfig.ServerConfig;
 
   const discovery = PortScanner.PortDiscovery.of({
-    scan: () => Ref.get(discoveredRef),
+    scan: () =>
+      Ref.update(discoveryCallsRef, (count) => count + 1).pipe(
+        Effect.andThen(Ref.get(discoveredRef)),
+      ),
+    processGeneration: (candidate) =>
+      Ref.get(generationsRef).pipe(
+        Effect.map((generations) => {
+          const generation = generations.get(candidate.port);
+          return generation?.pid === candidate.pid ? generation.value : undefined;
+        }),
+      ),
     subscribe: (_input, listener) =>
       Effect.acquireRelease(Ref.set(discoveryListenerRef, listener), () =>
         Ref.set(discoveryListenerRef, undefined),
       ),
-    retain: Effect.void,
+    retain: Effect.acquireRelease(
+      Ref.update(discoveryRetainsRef, (count) => count + 1),
+      () => Ref.update(discoveryRetainsRef, (count) => count - 1),
+    ),
     registerTerminalProcesses: () => Effect.void,
     unregisterTerminal: () => Effect.void,
+  });
+  const auth = TailnetPreviewAuth.TailnetPreviewAuth.of({
+    ...realAuth,
+    mintLaunch: (binding) =>
+      Effect.gen(function* () {
+        if (yield* Ref.get(mintFailureRef)) {
+          return yield* new TailnetPreviewAuth.TailnetPreviewAuthCapacityError({
+            resource: "launch",
+          });
+        }
+        if (yield* Ref.get(blockMintRef)) {
+          yield* Deferred.succeed(mintEntered, undefined);
+          yield* Deferred.await(continueMint);
+        }
+        return yield* realAuth.mintLaunch(binding);
+      }),
+    revokeLease: (leaseId) =>
+      Ref.update(revokesRef, (revokes) => [...revokes, leaseId]).pipe(
+        Effect.andThen(realAuth.revokeLease(leaseId)),
+      ),
+  });
+  const fileSystem = FileSystem.FileSystem.of({
+    ...realFileSystem,
+    rename: (oldPath, newPath) =>
+      Ref.modify(registryWriteFailuresRef, (remaining) => [
+        remaining > 0,
+        Math.max(0, remaining - 1),
+      ]).pipe(
+        Effect.flatMap((fail) =>
+          fail && newPath === config.tailnetPreviewMappingsPath
+            ? Effect.fail(
+                PlatformError.systemError({
+                  _tag: "PermissionDenied",
+                  module: "FileSystem",
+                  method: "rename",
+                  pathOrDescriptor: newPath,
+                }),
+              )
+            : realFileSystem.rename(oldPath, newPath),
+        ),
+      ),
   });
   const settings = ServerSettings.ServerSettingsService.of({
     start: Effect.void,
@@ -155,6 +239,8 @@ const makeHarness = Effect.fn("TailnetPreviewPublisherTest.makeHarness")(functio
       ),
     disableOwned: (mapping) =>
       Effect.gen(function* () {
+        const failure = yield* Ref.get(disableFailureRef);
+        if (failure !== undefined) return yield* Effect.fail(failure as never);
         const current = yield* Ref.get(mappingsRef);
         const expected = `http://127.0.0.1:${mapping.localPort}`;
         if (current.get(mapping.servePort)?.proxyUrl !== expected) {
@@ -168,34 +254,62 @@ const makeHarness = Effect.fn("TailnetPreviewPublisherTest.makeHarness")(functio
   });
   const gatewayFactory = TailnetPreviewPublisher.TailnetPreviewGatewayFactory.of({
     start: (options) =>
-      Ref.modify(startsRef, (starts) => {
-        const gatewayPort = 43_000 + starts.length;
-        return [
-          {
-            gatewayPort,
-            target: options.target,
-            close: Ref.update(closesRef, (closed) => [...closed, gatewayPort]).pipe(
-              Effect.andThen(Deferred.succeed(closeSignal, undefined)),
-              Effect.asVoid,
-            ),
-          },
-          [...starts, options.target],
-        ] as const;
-      }),
+      Ref.get(gatewayFailureRef).pipe(
+        Effect.flatMap((fail) =>
+          fail
+            ? Effect.fail(new TailnetPreviewGatewayStartError(new Error("test gateway failure")))
+            : Ref.modify(startsRef, (starts) => {
+                const gatewayPort = 43_000 + starts.length;
+                return [
+                  {
+                    gatewayPort,
+                    target: options.target,
+                    close: Ref.update(closesRef, (closed) => [...closed, gatewayPort]).pipe(
+                      Effect.andThen(Deferred.succeed(closeSignal, undefined)),
+                      Effect.asVoid,
+                    ),
+                  },
+                  [...starts, options.target],
+                ] as const;
+              }),
+        ),
+      ),
   });
 
+  const publisherScope = yield* Scope.make();
+  yield* Effect.addFinalizer(() => Scope.close(publisherScope, Exit.void));
   const publisher = yield* TailnetPreviewPublisher.make({
     environmentId: "environment-a",
+    ...(input?.maxPublications === undefined ? {} : { maxPublications: input.maxPublications }),
+    ...(input?.leaseTtl === undefined ? {} : { leaseTtl: input.leaseTtl }),
   }).pipe(
     Effect.provideService(PortScanner.PortDiscovery, discovery),
     Effect.provideService(ServerSettings.ServerSettingsService, settings),
+    Effect.provideService(TailnetPreviewAuth.TailnetPreviewAuth, auth),
     Effect.provideService(TailnetPreviewPublisher.TailnetPreviewTailscale, tailscale),
     Effect.provideService(TailnetPreviewPublisher.TailnetPreviewGatewayFactory, gatewayFactory),
+    Effect.provideService(FileSystem.FileSystem, fileSystem),
+    Effect.provideService(Scope.Scope, publisherScope),
   );
 
   const pushDiscovery = Effect.fn("TailnetPreviewPublisherTest.pushDiscovery")(function* (
     servers: ReadonlyArray<DiscoveredLocalServer>,
   ) {
+    const previousServers = yield* Ref.get(discoveredRef);
+    yield* Ref.update(generationsRef, (current) => {
+      const next = new Map<number, { readonly pid: number | null; readonly value: string }>();
+      for (const candidate of servers) {
+        const previousServer = previousServers.find((entry) => entry.port === candidate.port);
+        const previous = current.get(candidate.port);
+        next.set(
+          candidate.port,
+          previousServer?.pid === candidate.pid && previous !== undefined
+            ? previous
+            : { pid: candidate.pid, value: `generation-${(nextGeneration += 1)}` },
+        );
+      }
+      return next;
+    });
     yield* Ref.set(discoveredRef, servers);
     const listener = yield* Ref.get(discoveryListenerRef);
     if (listener === undefined) return yield* Effect.die("discovery listener not retained");
@@ -204,15 +318,26 @@ const makeHarness = Effect.fn("TailnetPreviewPublisherTest.makeHarness")(functio
 
   return {
     publisher,
+    closePublisher: Scope.close(publisherScope, Exit.void),
     settings,
     pushDiscovery,
     tailscaleCallsRef,
+    discoveryCallsRef,
+    discoveryRetainsRef,
     tailscaleStatusRef,
     ensureFailureRef,
+    disableFailureRef,
+    mintFailureRef,
+    blockMintRef,
+    mintEntered,
+    continueMint,
+    gatewayFailureRef,
+    registryWriteFailuresRef,
     mappingsRef,
     startsRef,
     closesRef,
     closeSignal,
+    revokesRef,
   };
 });
 
@@ -230,6 +355,15 @@ effectIt.effect("reports disabled without invoking Tailscale", () =>
     const harness = yield* makeHarness({ enabled: false });
     expect(yield* harness.publisher.status()).toEqual({ enabled: false, readiness: "disabled" });
     expect(yield* Ref.get(harness.tailscaleCallsRef)).toBe(0);
+    expect(yield* Ref.get(harness.discoveryCallsRef)).toBe(0);
+    expect(yield* Ref.get(harness.discoveryRetainsRef)).toBe(0);
+    yield* harness.settings.updateSettings({ tailscalePreviewsEnabled: true });
+    yield* harness.publisher.refreshSettings();
+    expect(yield* Ref.get(harness.discoveryCallsRef)).toBe(1);
+    expect(yield* Ref.get(harness.discoveryRetainsRef)).toBe(1);
+    yield* harness.settings.updateSettings({ tailscalePreviewsEnabled: false });
+    yield* harness.publisher.refreshSettings();
+    expect(yield* Ref.get(harness.discoveryRetainsRef)).toBe(0);
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
@@ -309,6 +443,112 @@ effectIt.effect("shares one publication while leases stay session-idempotent", (
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
+effectIt.effect("serializes concurrent acquire and release without duplicate publications", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness();
+    const [first, second] = yield* Effect.all(
+      [
+        harness.publisher.acquire({
+          sessionId: "session-a",
+          threadId: "thread-a",
+          port: 5173,
+        }),
+        harness.publisher.acquire({
+          sessionId: "session-b",
+          threadId: "thread-a",
+          port: 5173,
+        }),
+      ],
+      { concurrency: "unbounded" },
+    );
+    expect(yield* Ref.get(harness.startsRef)).toHaveLength(1);
+
+    yield* Effect.all(
+      [
+        harness.publisher.release({ sessionId: "session-a", leaseId: first.leaseId }),
+        harness.publisher.release({ sessionId: "session-b", leaseId: second.leaseId }),
+      ],
+      { concurrency: "unbounded", discard: true },
+    );
+    expect(yield* Ref.get(harness.closesRef)).toEqual([43_000]);
+    expect(yield* Ref.get(harness.mappingsRef)).toHaveLength(0);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+effectIt.effect("does not let concurrent renew resurrect a released session", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness();
+    yield* harness.publisher.acquire({ sessionId: "session-a", threadId: "thread-a", port: 5173 });
+
+    yield* Ref.set(harness.blockMintRef, true);
+    const lockHolder = yield* Effect.forkChild(
+      harness.publisher.acquire({ sessionId: "session-a", threadId: "thread-a", port: 5173 }),
+    );
+    yield* Deferred.await(harness.mintEntered);
+    const renew = yield* Effect.forkChild(
+      harness.publisher
+        .renew({ sessionId: "session-a", threadId: "thread-a", port: 5173 })
+        .pipe(Effect.result),
+    );
+    yield* Effect.yieldNow;
+    const release = yield* Effect.forkChild(harness.publisher.releaseSession("session-a"));
+    yield* Effect.yieldNow;
+    yield* Deferred.succeed(harness.continueMint, undefined);
+    yield* Fiber.join(lockHolder);
+    yield* Fiber.join(renew);
+    yield* Fiber.join(release);
+
+    expect(yield* Ref.get(harness.mappingsRef)).toHaveLength(0);
+    expect(yield* Ref.get(harness.closesRef)).toEqual([43_000]);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+effectIt.effect("rolls back a first publication when minting its launch fails", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness({
+      maxPublications: 1,
+      servers: [server(5173), server(5174)],
+    });
+    yield* Ref.set(harness.mintFailureRef, true);
+    expect(
+      yield* Effect.flip(
+        harness.publisher.acquire({ sessionId: "session-a", threadId: "thread-a", port: 5173 }),
+      ),
+    ).toMatchObject({ readiness: "gateway-failed" });
+    expect(yield* Ref.get(harness.mappingsRef)).toHaveLength(0);
+    expect(yield* Ref.get(harness.closesRef)).toEqual([43_000]);
+    expect(yield* Ref.get(harness.revokesRef)).toHaveLength(1);
+
+    yield* Ref.set(harness.mintFailureRef, false);
+    yield* harness.publisher.acquire({
+      sessionId: "session-b",
+      threadId: "thread-a",
+      port: 5174,
+    });
+    expect(yield* Ref.get(harness.startsRef)).toHaveLength(2);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+effectIt.effect("removes a failed shared lease without tearing down the live publication", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness();
+    const first = yield* harness.publisher.acquire({
+      sessionId: "session-a",
+      threadId: "thread-a",
+      port: 5173,
+    });
+    yield* Ref.set(harness.mintFailureRef, true);
+    yield* Effect.flip(
+      harness.publisher.acquire({ sessionId: "session-b", threadId: "thread-a", port: 5173 }),
+    );
+    expect(yield* Ref.get(harness.closesRef)).toEqual([]);
+
+    yield* harness.publisher.release({ sessionId: "session-a", leaseId: first.leaseId });
+    expect(yield* Ref.get(harness.closesRef)).toEqual([43_000]);
+    expect(yield* Ref.get(harness.mappingsRef)).toHaveLength(0);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
 effectIt.effect("releases every lease held by a disconnected session", () =>
   Effect.gen(function* () {
     const harness = yield* makeHarness({ servers: [server(5173), server(5174)] });
@@ -316,6 +556,39 @@ effectIt.effect("releases every lease held by a disconnected session", () =>
     yield* harness.publisher.acquire({ sessionId: "session-a", threadId: "thread-a", port: 5174 });
     yield* harness.publisher.releaseSession("session-a");
     expect(yield* Ref.get(harness.closesRef)).toEqual([43_000, 43_001]);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+effectIt.effect("expires the final lease and tears down its publication", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness({ leaseTtl: Duration.seconds(5) });
+    yield* harness.publisher.acquire({ sessionId: "session-a", threadId: "thread-a", port: 5173 });
+
+    yield* TestClock.adjust(Duration.seconds(5));
+    yield* Deferred.await(harness.closeSignal);
+
+    expect(yield* Ref.get(harness.closesRef)).toEqual([43_000]);
+    expect(yield* Ref.get(harness.mappingsRef)).toHaveLength(0);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+effectIt.effect("cleans live publications before the publisher service scope closes", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness({ servers: [server(5173), server(5174)] });
+    const config = yield* ServerConfig.ServerConfig;
+    const fs = yield* FileSystem.FileSystem;
+    yield* harness.publisher.acquire({ sessionId: "session-a", threadId: "thread-a", port: 5173 });
+    yield* harness.publisher.acquire({ sessionId: "session-b", threadId: "thread-a", port: 5174 });
+
+    yield* harness.closePublisher;
+
+    expect(yield* Ref.get(harness.closesRef)).toEqual([43_000, 43_001]);
+    expect(yield* Ref.get(harness.revokesRef)).toHaveLength(2);
+    expect(yield* Ref.get(harness.mappingsRef)).toHaveLength(0);
+    expect(yield* Ref.get(harness.discoveryRetainsRef)).toBe(0);
+    expect(
+      (yield* decodeRegistry(yield* fs.readFileString(config.tailnetPreviewMappingsPath))).mappings,
+    ).toEqual([]);
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
@@ -343,6 +616,24 @@ effectIt.effect(
       yield* Deferred.await(harness.closeSignal);
       expect(yield* Ref.get(harness.closesRef)).toEqual([43_000]);
     }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+effectIt.effect("explicit disable tears down immediately during disappearance grace", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness();
+    yield* harness.publisher.acquire({ sessionId: "session-a", threadId: "thread-a", port: 5173 });
+    yield* harness.pushDiscovery([]);
+    yield* Effect.yieldNow;
+
+    yield* harness.publisher.setPortEnabled({
+      threadId: "thread-a",
+      port: 5173,
+      enabled: false,
+    });
+
+    expect(yield* Ref.get(harness.closesRef)).toEqual([43_000]);
+    expect(yield* Ref.get(harness.mappingsRef)).toHaveLength(0);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
 effectIt.effect("bounds distinct Tailnet publications at sixteen", () =>
@@ -385,6 +676,34 @@ effectIt.effect("suppresses only the current discovered process generation", () 
       port: 5173,
     });
     expect(replacement.leaseId).not.toBe(lease.leaseId);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+effectIt.effect("keeps suppression across metadata updates and clears it after PID reuse", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness();
+    yield* harness.publisher.setPortEnabled({ threadId: "thread-a", port: 5173, enabled: false });
+    yield* harness.pushDiscovery([
+      server(5173, {
+        connectHost: "::1",
+        terminal: { threadId: ThreadId.make("thread-a"), terminalId: "terminal-renamed" },
+      }),
+    ]);
+    expect(
+      yield* Effect.flip(
+        harness.publisher.acquire({ sessionId: "session-a", threadId: "thread-a", port: 5173 }),
+      ),
+    ).toMatchObject({ readiness: "disabled" });
+
+    yield* harness.pushDiscovery([]);
+    yield* harness.pushDiscovery([server(5173)]);
+    expect(
+      yield* harness.publisher.acquire({
+        sessionId: "session-a",
+        threadId: "thread-a",
+        port: 5173,
+      }),
+    ).toMatchObject({ readiness: "ready" });
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
@@ -447,6 +766,76 @@ effectIt.effect("persists ownership only after a successful mapping", () =>
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
+effectIt.effect("rolls back gateway and mapping setup failures without retained state", () =>
+  Effect.gen(function* () {
+    const gatewayHarness = yield* makeHarness();
+    yield* Ref.set(gatewayHarness.gatewayFailureRef, true);
+    yield* Effect.flip(
+      gatewayHarness.publisher.acquire({
+        sessionId: "session-a",
+        threadId: "thread-a",
+        port: 5173,
+      }),
+    );
+    expect(yield* Ref.get(gatewayHarness.mappingsRef)).toHaveLength(0);
+    expect(yield* Ref.get(gatewayHarness.closesRef)).toEqual([]);
+
+    const mappingHarness = yield* makeHarness();
+    yield* Ref.set(mappingHarness.ensureFailureRef, exitFailure("serve", "unknown"));
+    yield* Effect.flip(
+      mappingHarness.publisher.acquire({
+        sessionId: "session-a",
+        threadId: "thread-a",
+        port: 5173,
+      }),
+    );
+    expect(yield* Ref.get(mappingHarness.mappingsRef)).toHaveLength(0);
+    expect(yield* Ref.get(mappingHarness.closesRef)).toEqual([43_000]);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+effectIt.effect("rolls back a mapping when its first registry write fails", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness();
+    const config = yield* ServerConfig.ServerConfig;
+    const fs = yield* FileSystem.FileSystem;
+    yield* Ref.set(harness.registryWriteFailuresRef, 1);
+
+    expect(
+      yield* Effect.flip(
+        harness.publisher.acquire({ sessionId: "session-a", threadId: "thread-a", port: 5173 }),
+      ),
+    ).toMatchObject({ readiness: "gateway-failed" });
+    expect(yield* Ref.get(harness.mappingsRef)).toHaveLength(0);
+    expect(yield* Ref.get(harness.closesRef)).toEqual([43_000]);
+    expect(yield* fs.exists(config.tailnetPreviewMappingsPath)).toBe(false);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+effectIt.effect(
+  "persists recovery evidence when registry write and rollback removal both fail",
+  () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      yield* Ref.set(harness.registryWriteFailuresRef, 1);
+      yield* Ref.set(harness.disableFailureRef, exitFailure("serve", "unknown"));
+
+      expect(
+        yield* Effect.flip(
+          harness.publisher.acquire({ sessionId: "session-a", threadId: "thread-a", port: 5173 }),
+        ),
+      ).toMatchObject({ readiness: "gateway-failed" });
+      expect(yield* Ref.get(harness.mappingsRef)).toHaveLength(1);
+      expect(yield* Ref.get(harness.closesRef)).toEqual([43_000]);
+      expect(
+        (yield* decodeRegistry(yield* fs.readFileString(config.tailnetPreviewMappingsPath)))
+          .mappings,
+      ).toEqual([{ servePort: 5173, gatewayPort: 43_000, targetUrl: "http://127.0.0.1:43000" }]);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
 effectIt.effect("reconciles exact stale, live, absent, and conflicting owned records", () =>
   Effect.gen(function* () {
     const harness = yield* makeHarness({ servers: [server(5173)] });
@@ -498,7 +887,30 @@ effectIt.effect("global opt-out immediately releases exact owned publications", 
     yield* harness.publisher.refreshSettings();
     expect(yield* Ref.get(harness.closesRef)).toEqual([43_000]);
     expect(yield* Ref.get(harness.mappingsRef)).toHaveLength(0);
+    expect(yield* Ref.get(harness.discoveryRetainsRef)).toBe(0);
     expect(yield* harness.publisher.status()).toEqual({ enabled: false, readiness: "disabled" });
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+effectIt.effect("keeps exact registry evidence when final mapping removal fails", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness();
+    const config = yield* ServerConfig.ServerConfig;
+    const fs = yield* FileSystem.FileSystem;
+    const lease = yield* harness.publisher.acquire({
+      sessionId: "session-a",
+      threadId: "thread-a",
+      port: 5173,
+    });
+    yield* Ref.set(harness.disableFailureRef, exitFailure("serve", "unknown"));
+
+    yield* harness.publisher.release({ sessionId: "session-a", leaseId: lease.leaseId });
+
+    expect(yield* Ref.get(harness.closesRef)).toEqual([43_000]);
+    expect(yield* Ref.get(harness.mappingsRef)).toHaveLength(1);
+    expect(
+      (yield* decodeRegistry(yield* fs.readFileString(config.tailnetPreviewMappingsPath))).mappings,
+    ).toEqual([{ servePort: 5173, gatewayPort: 43_000, targetUrl: "http://127.0.0.1:43000" }]);
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 

@@ -46,6 +46,9 @@ export class PortDiscovery extends Context.Service<
     readonly scan: (
       configuredUrls?: ReadonlyArray<string>,
     ) => Effect.Effect<ReadonlyArray<DiscoveredLocalServer>>;
+    readonly processGeneration: (
+      server: DiscoveredLocalServer,
+    ) => Effect.Effect<string | undefined>;
     readonly subscribe: (
       input: {
         readonly configuredUrls: ReadonlyArray<string>;
@@ -117,6 +120,11 @@ interface WebProbeGroup {
 interface WebProbeSnapshot {
   readonly discovered: ReadonlyArray<DiscoveredLocalServer>;
   readonly configured: ReadonlyMap<string, DiscoveredLocalServer>;
+}
+
+interface ProcessGeneration {
+  readonly pid: number | null;
+  readonly value: string;
 }
 
 const terminalOwnerKey = (owner: {
@@ -300,6 +308,8 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     retainCount: 0,
   });
   const webProbeCacheRef = yield* Ref.make<ReadonlyMap<string, WebProbeCacheEntry>>(new Map());
+  const processGenerationsRef = yield* Ref.make<ReadonlyMap<string, ProcessGeneration>>(new Map());
+  let nextProcessGeneration = 0;
   const scanSemaphore = yield* Semaphore.make(1);
 
   const probeCommonPorts = Effect.fn("PortDiscovery.probeCommonPorts")(function* () {
@@ -537,7 +547,26 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
 
   const scanSnapshot = Effect.fn("PortDiscovery.scanSnapshot")(
     (configuredUrls: ReadonlyArray<string>) =>
-      scanSemaphore.withPermits(1)(scanUnlocked(configuredUrls)),
+      scanSemaphore.withPermits(1)(
+        scanUnlocked(configuredUrls).pipe(
+          Effect.tap((snapshot) =>
+            Ref.update(processGenerationsRef, (current) => {
+              const next = new Map<string, ProcessGeneration>();
+              for (const server of snapshot.discovered) {
+                const key = localServerKey(server.host, server.port);
+                const previous = current.get(key);
+                next.set(
+                  key,
+                  previous?.pid === server.pid
+                    ? previous
+                    : { pid: server.pid, value: `generation-${(nextProcessGeneration += 1)}` },
+                );
+              }
+              return next;
+            }),
+          ),
+        ),
+      ),
   );
 
   const scanOnce: PortDiscovery["Service"]["scan"] = (configuredUrls = []) => {
@@ -546,6 +575,14 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       Effect.map((snapshot) => projectWebProbeSnapshot(snapshot, normalized)),
     );
   };
+
+  const processGeneration: PortDiscovery["Service"]["processGeneration"] = (server) =>
+    Ref.get(processGenerationsRef).pipe(
+      Effect.map((generations) => {
+        const generation = generations.get(localServerKey(server.host, server.port));
+        return generation?.pid === server.pid ? generation.value : undefined;
+      }),
+    );
 
   const pollTick = Effect.fn("PortDiscovery.pollTick")(
     function* () {
@@ -654,6 +691,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
 
   return PortDiscovery.of({
     scan: scanOnce,
+    processGeneration,
     subscribe,
     retain,
     registerTerminalProcesses,

@@ -229,15 +229,6 @@ const readinessFromTailscaleError = (
   return phase === "serve" ? "https-unavailable" : "tailscale-unavailable";
 };
 
-const processGenerationKey = (server: DiscoveredLocalServer): string =>
-  JSON.stringify([
-    server.port,
-    server.pid,
-    server.terminal?.threadId ?? null,
-    server.terminal?.terminalId ?? null,
-    server.connectHost ?? null,
-  ]);
-
 const relativeTarget = (server: DiscoveredLocalServer): string => {
   try {
     const url = new URL(server.url);
@@ -283,7 +274,7 @@ export const make = Effect.fn("TailnetPreviewPublisher.make")(function* (
   const leases = new Map<string, Lease>();
   const suppressions = new Map<string, Suppression>();
   const ownership = new Map<number, OwnedMapping>();
-  let discoveredServers = yield* discovery.scan();
+  let observationScope: Scope.Closeable | undefined;
 
   const withMutation = <A, E, R>(effect: Effect.Effect<A, E, R>) => mutex.withPermits(1)(effect);
 
@@ -372,13 +363,13 @@ export const make = Effect.fn("TailnetPreviewPublisher.make")(function* (
   const updateDiscovery = Effect.fn("TailnetPreviewPublisher.updateDiscovery")(function* (
     next: ReadonlyArray<DiscoveredLocalServer>,
   ) {
-    discoveredServers = next;
-    const currentGenerations = new Map(
-      next.map((server) => [
-        `${server.terminal?.threadId ?? ""}:${server.port}`,
-        processGenerationKey(server),
-      ]),
-    );
+    const currentGenerations = new Map<string, string>();
+    for (const server of next) {
+      const generation = yield* discovery.processGeneration(server);
+      if (generation !== undefined) {
+        currentGenerations.set(`${server.terminal?.threadId ?? ""}:${server.port}`, generation);
+      }
+    }
     for (const [key, suppression] of suppressions) {
       const current = currentGenerations.get(`${suppression.threadId}:${suppression.port}`);
       if (current !== undefined && current !== key) suppressions.delete(key);
@@ -398,7 +389,8 @@ export const make = Effect.fn("TailnetPreviewPublisher.make")(function* (
           leaseThreads.has(server.terminal.threadId),
       );
       if (present !== undefined) {
-        publication.processGenerationKey = processGenerationKey(present);
+        const generation = yield* discovery.processGeneration(present);
+        if (generation !== undefined) publication.processGenerationKey = generation;
         publication.missingSinceMillis = undefined;
         continue;
       }
@@ -420,18 +412,42 @@ export const make = Effect.fn("TailnetPreviewPublisher.make")(function* (
     }
   });
 
+  const startObservation = Effect.fn("TailnetPreviewPublisher.startObservation")(function* () {
+    if (observationScope !== undefined) return;
+    const initialSnapshot = yield* discovery.scan();
+    yield* updateDiscovery(initialSnapshot);
+    const scope = yield* Scope.make();
+    yield* discovery
+      .subscribe({ configuredUrls: [], initialSnapshot }, (servers) =>
+        withMutation(updateDiscovery(servers)),
+      )
+      .pipe(Effect.provideService(Scope.Scope, scope));
+    yield* discovery.retain.pipe(Effect.provideService(Scope.Scope, scope));
+    observationScope = scope;
+  });
+
+  const stopObservation = Effect.fn("TailnetPreviewPublisher.stopObservation")(function* () {
+    const scope = observationScope;
+    if (scope === undefined) return;
+    observationScope = undefined;
+    yield* Scope.close(scope, Exit.void);
+  });
+
   const currentServer = Effect.fn("TailnetPreviewPublisher.currentServer")(function* (
     threadId: string,
     port: number,
   ) {
     const scanned = yield* discovery.scan();
     yield* updateDiscovery(scanned);
-    return scanned.find(
+    const server = scanned.find(
       (server) =>
         server.port === port &&
         server.terminal?.threadId === threadId &&
         server.connectHost !== undefined,
     );
+    if (server === undefined) return undefined;
+    const generation = yield* discovery.processGeneration(server);
+    return generation === undefined ? undefined : { server, generation };
   });
 
   const status: TailnetPreviewPublisher["Service"]["status"] = Effect.fn(
@@ -509,140 +525,169 @@ export const make = Effect.fn("TailnetPreviewPublisher.make")(function* (
     };
   });
 
-  const acquire = Effect.fn("TailnetPreviewPublisher.acquire")(function* (input: AcquireInput) {
-    return yield* withMutation(
-      Effect.gen(function* () {
-        const magicDnsName = yield* requireReady(input.port);
-        const server = yield* currentServer(input.threadId, input.port);
-        if (server === undefined) {
-          return yield* new PreviewTailnetUnavailableError({
-            port: input.port,
-            readiness: "gateway-failed",
-          });
-        }
-        const generationKey = processGenerationKey(server);
-        if (suppressions.has(generationKey)) {
-          return yield* new PreviewTailnetUnavailableError({
-            port: input.port,
-            readiness: "disabled",
-          });
-        }
+  const findLease = (input: AcquireInput) =>
+    [...leases.values()].find(
+      (lease) =>
+        lease.sessionId === input.sessionId &&
+        lease.threadId === input.threadId &&
+        lease.port === input.port,
+    );
 
-        const now = yield* Clock.currentTimeMillis;
-        const existingLease = [...leases.values()].find(
-          (lease) =>
-            lease.sessionId === input.sessionId &&
-            lease.threadId === input.threadId &&
-            lease.port === input.port,
-        );
-        const existingPublication = publications.get(input.port);
-        if (existingLease !== undefined && existingPublication !== undefined) {
-          const renewed = { ...existingLease, expiresAtMillis: now + leaseTtlMs };
-          leases.set(renewed.leaseId, renewed);
-          yield* scheduleLeaseExpiry(renewed);
-          return yield* makeResult(renewed, existingPublication, server, magicDnsName);
-        }
+  const acquireLocked = Effect.fn("TailnetPreviewPublisher.acquireLocked")(function* (
+    input: AcquireInput,
+    requiredLease?: Lease,
+  ) {
+    const magicDnsName = yield* requireReady(input.port);
+    yield* startObservation();
+    const discovered = yield* currentServer(input.threadId, input.port);
+    if (discovered === undefined) {
+      return yield* new PreviewTailnetUnavailableError({
+        port: input.port,
+        readiness: "gateway-failed",
+      });
+    }
+    const { generation, server } = discovered;
+    if (suppressions.has(generation)) {
+      return yield* new PreviewTailnetUnavailableError({
+        port: input.port,
+        readiness: "disabled",
+      });
+    }
 
-        let publication = existingPublication;
-        if (publication === undefined) {
-          if (publications.size >= maxPublications) {
-            return yield* new PreviewTailnetUnavailableError({
-              port: input.port,
-              readiness: "capacity-reached",
-            });
-          }
-          const publicationScope = yield* Scope.make();
-          const authLeaseId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
-          const gateway = yield* Effect.acquireRelease(
-            gatewayFactory.start({
-              auth,
-              environmentId: options.environmentId,
-              leaseId: authLeaseId,
-              target: { host: server.connectHost!, port: input.port },
-            }),
-            (running) => running.close,
-          ).pipe(
-            Effect.provideService(Scope.Scope, publicationScope),
-            Effect.onError(() => Scope.close(publicationScope, Exit.void).pipe(Effect.ignore)),
-            Effect.mapError(
-              () =>
-                new PreviewTailnetUnavailableError({
-                  port: input.port,
-                  readiness: "gateway-failed",
-                }),
-            ),
-          );
-          const owned: OwnedMapping = {
-            servePort: input.port,
-            gatewayPort: gateway.gatewayPort,
-            targetUrl: `http://127.0.0.1:${gateway.gatewayPort}`,
-          };
-          const mapping = yield* Effect.result(tailscale.ensureOwned(mappingInput(owned)));
-          if (Result.isFailure(mapping)) {
-            yield* Scope.close(publicationScope, Exit.void).pipe(Effect.ignore);
-            return yield* new PreviewTailnetUnavailableError({
-              port: input.port,
-              readiness: readinessFromTailscaleError(mapping.failure, "serve"),
-            });
-          }
-          ownership.set(input.port, owned);
-          const persisted = yield* Effect.exit(persistOwnership());
-          if (persisted._tag === "Failure") {
-            ownership.delete(input.port);
-            yield* tailscale.disableOwned(mappingInput(owned)).pipe(Effect.ignore);
-            yield* Scope.close(publicationScope, Exit.void).pipe(Effect.ignore);
-            return yield* new PreviewTailnetUnavailableError({
+    const now = yield* Clock.currentTimeMillis;
+    const existingLease = requiredLease ?? findLease(input);
+    const existingPublication = publications.get(input.port);
+    if (existingLease !== undefined && existingPublication !== undefined) {
+      const renewed = { ...existingLease, expiresAtMillis: now + leaseTtlMs };
+      const result = yield* makeResult(renewed, existingPublication, server, magicDnsName);
+      leases.set(renewed.leaseId, renewed);
+      yield* scheduleLeaseExpiry(renewed);
+      return result;
+    }
+    if (requiredLease !== undefined) {
+      return yield* new PreviewTailnetUnavailableError({
+        port: input.port,
+        readiness: "gateway-failed",
+      });
+    }
+
+    let publication = existingPublication;
+    let createdPublication = false;
+    if (publication === undefined) {
+      if (publications.size >= maxPublications) {
+        return yield* new PreviewTailnetUnavailableError({
+          port: input.port,
+          readiness: "capacity-reached",
+        });
+      }
+      const publicationScope = yield* Scope.make();
+      const authLeaseId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+      const gateway = yield* Effect.acquireRelease(
+        gatewayFactory.start({
+          auth,
+          environmentId: options.environmentId,
+          leaseId: authLeaseId,
+          target: { host: server.connectHost!, port: input.port },
+        }),
+        (running) => running.close,
+      ).pipe(
+        Effect.provideService(Scope.Scope, publicationScope),
+        Effect.onError(() => Scope.close(publicationScope, Exit.void).pipe(Effect.ignore)),
+        Effect.mapError(
+          () =>
+            new PreviewTailnetUnavailableError({
               port: input.port,
               readiness: "gateway-failed",
-            });
-          }
-          publication = {
-            port: input.port,
-            authLeaseId,
-            processGenerationKey: generationKey,
-            scope: publicationScope,
-            gateway,
-            ownership: owned,
-            missingSinceMillis: undefined,
-          };
-          publications.set(input.port, publication);
-        }
-
-        const leaseId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
-        const lease: Lease = {
-          leaseId,
-          sessionId: input.sessionId,
-          threadId: input.threadId,
+            }),
+        ),
+      );
+      const owned: OwnedMapping = {
+        servePort: input.port,
+        gatewayPort: gateway.gatewayPort,
+        targetUrl: `http://127.0.0.1:${gateway.gatewayPort}`,
+      };
+      const mapping = yield* Effect.result(tailscale.ensureOwned(mappingInput(owned)));
+      if (Result.isFailure(mapping)) {
+        yield* auth.revokeLease(authLeaseId);
+        yield* Scope.close(publicationScope, Exit.void).pipe(Effect.ignore);
+        return yield* new PreviewTailnetUnavailableError({
           port: input.port,
-          expiresAtMillis: now + leaseTtlMs,
-        };
-        leases.set(leaseId, lease);
-        yield* scheduleLeaseExpiry(lease);
-        return yield* makeResult(lease, publication, server, magicDnsName);
-      }),
-    );
+          readiness: readinessFromTailscaleError(mapping.failure, "serve"),
+        });
+      }
+      ownership.set(input.port, owned);
+      const persisted = yield* Effect.exit(persistOwnership());
+      if (persisted._tag === "Failure") {
+        const rollback = yield* Effect.result(tailscale.disableOwned(mappingInput(owned)));
+        if (Result.isSuccess(rollback)) {
+          ownership.delete(input.port);
+        } else {
+          yield* persistOwnership().pipe(Effect.ignoreCause({ log: true }));
+          yield* Effect.logWarning(
+            "Tailnet preview registry write and mapping rollback both failed; exact ownership was retained for reconciliation.",
+            {
+              port: input.port,
+              readiness: readinessFromTailscaleError(rollback.failure, "serve"),
+            },
+          );
+        }
+        yield* auth.revokeLease(authLeaseId);
+        yield* Scope.close(publicationScope, Exit.void).pipe(Effect.ignore);
+        return yield* new PreviewTailnetUnavailableError({
+          port: input.port,
+          readiness: "gateway-failed",
+        });
+      }
+      publication = {
+        port: input.port,
+        authLeaseId,
+        processGenerationKey: generation,
+        scope: publicationScope,
+        gateway,
+        ownership: owned,
+        missingSinceMillis: undefined,
+      };
+      publications.set(input.port, publication);
+      createdPublication = true;
+    }
+
+    const leaseId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+    const lease: Lease = {
+      leaseId,
+      sessionId: input.sessionId,
+      threadId: input.threadId,
+      port: input.port,
+      expiresAtMillis: now + leaseTtlMs,
+    };
+    const result = yield* Effect.result(makeResult(lease, publication, server, magicDnsName));
+    if (Result.isFailure(result)) {
+      if (createdPublication) yield* teardownPublication(publication);
+      return yield* result.failure;
+    }
+    leases.set(leaseId, lease);
+    yield* scheduleLeaseExpiry(lease);
+    return result.success;
   });
+
+  const acquire: TailnetPreviewPublisher["Service"]["acquire"] = Effect.fn(
+    "TailnetPreviewPublisher.acquire",
+  )((input) => withMutation(acquireLocked(input)));
 
   const renew: TailnetPreviewPublisher["Service"]["renew"] = Effect.fn(
     "TailnetPreviewPublisher.renew",
-  )(function* (input) {
-    const exists = yield* withMutation(
-      Effect.sync(() =>
-        [...leases.values()].some(
-          (lease) =>
-            lease.sessionId === input.sessionId &&
-            lease.threadId === input.threadId &&
-            lease.port === input.port,
-        ),
-      ),
-    );
-    if (!exists) {
-      return yield* new PreviewTailnetLeaseNotFoundError({
-        leaseId: `${input.threadId}:${input.port}`,
-      });
-    }
-    return yield* acquire(input);
-  });
+  )((input) =>
+    withMutation(
+      Effect.gen(function* () {
+        const lease = findLease(input);
+        if (lease === undefined) {
+          return yield* new PreviewTailnetLeaseNotFoundError({
+            leaseId: `${input.threadId}:${input.port}`,
+          });
+        }
+        return yield* acquireLocked(input, lease);
+      }),
+    ),
+  );
 
   const release: TailnetPreviewPublisher["Service"]["release"] = Effect.fn(
     "TailnetPreviewPublisher.release",
@@ -694,20 +739,35 @@ export const make = Effect.fn("TailnetPreviewPublisher.make")(function* (
   )(function* (input) {
     return yield* withMutation(
       Effect.gen(function* () {
-        const server = yield* currentServer(input.threadId, input.port);
-        if (server === undefined) {
-          return yield* new PreviewTailnetUnavailableError({
-            port: input.port,
-            readiness: "gateway-failed",
-          });
-        }
-        const generationKey = processGenerationKey(server);
         if (input.enabled) {
-          suppressions.delete(generationKey);
+          const discovered = yield* currentServer(input.threadId, input.port);
+          if (discovered === undefined) {
+            return yield* new PreviewTailnetUnavailableError({
+              port: input.port,
+              readiness: "gateway-failed",
+            });
+          }
+          suppressions.delete(discovered.generation);
         } else {
-          suppressions.set(generationKey, { threadId: input.threadId, port: input.port });
+          const discovered = yield* currentServer(input.threadId, input.port);
+          if (discovered !== undefined) {
+            suppressions.set(discovered.generation, {
+              threadId: input.threadId,
+              port: input.port,
+            });
+          }
           const publication = publications.get(input.port);
-          if (publication !== undefined) yield* teardownPublication(publication);
+          const hasMatchingLease = [...leases.values()].some(
+            (lease) => lease.port === input.port && lease.threadId === input.threadId,
+          );
+          if (publication !== undefined && hasMatchingLease) {
+            yield* teardownPublication(publication);
+          } else if (discovered === undefined) {
+            return yield* new PreviewTailnetUnavailableError({
+              port: input.port,
+              readiness: "gateway-failed",
+            });
+          }
         }
         return yield* status();
       }),
@@ -717,9 +777,15 @@ export const make = Effect.fn("TailnetPreviewPublisher.make")(function* (
   const refreshSettings: TailnetPreviewPublisher["Service"]["refreshSettings"] = Effect.fn(
     "TailnetPreviewPublisher.refreshSettings",
   )(function* () {
-    if (yield* enabled) return;
     yield* withMutation(
-      Effect.forEach([...publications.values()], teardownPublication, { discard: true }),
+      Effect.gen(function* () {
+        if (yield* enabled) {
+          yield* startObservation();
+          return;
+        }
+        yield* Effect.forEach([...publications.values()], teardownPublication, { discard: true });
+        yield* stopObservation();
+      }),
     );
   });
 
@@ -759,11 +825,32 @@ export const make = Effect.fn("TailnetPreviewPublisher.make")(function* (
     );
   });
 
-  yield* discovery.retain;
-  yield* discovery.subscribe(
-    { configuredUrls: [], initialSnapshot: discoveredServers },
-    (servers) => withMutation(updateDiscovery(servers)),
+  const shutdown = withMutation(
+    Effect.gen(function* () {
+      yield* stopObservation();
+      yield* Effect.forEach([...publications.values()], teardownPublication, { discard: true });
+      leases.clear();
+      for (const record of ownership.values()) {
+        if (publications.has(record.servePort)) continue;
+        const removed = yield* Effect.result(tailscale.disableOwned(mappingInput(record)));
+        if (Result.isSuccess(removed)) {
+          ownership.delete(record.servePort);
+        } else {
+          yield* Effect.logWarning(
+            "Tailnet preview shutdown left exact mapping cleanup for startup reconciliation.",
+            {
+              port: record.servePort,
+              readiness: readinessFromTailscaleError(removed.failure, "serve"),
+            },
+          );
+        }
+      }
+      yield* persistOwnership().pipe(Effect.ignoreCause({ log: true }));
+    }),
   );
+  yield* Effect.addFinalizer(() => shutdown);
+
+  if (yield* enabled) yield* withMutation(startObservation());
 
   return TailnetPreviewPublisher.of({
     status,
@@ -783,4 +870,4 @@ export const layer = (options: TailnetPreviewPublisherOptions) =>
     Layer.provide(TailnetPreviewTailscale.layer),
   );
 
-export const __testing = { readinessFromTailscaleError, processGenerationKey };
+export const __testing = { readinessFromTailscaleError };

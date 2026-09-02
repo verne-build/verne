@@ -89,6 +89,8 @@ const LSOF_TEST_PORT = 43_123;
 const makeLsofScannerLayer = (input: {
   readonly pid: () => number;
   readonly fetch: typeof globalThis.fetch;
+  readonly listening?: () => boolean;
+  readonly processName?: () => string;
 }) =>
   PortScanner.layer.pipe(
     Layer.provide(
@@ -96,7 +98,10 @@ const makeLsofScannerLayer = (input: {
         Layer.succeed(ProcessRunner.ProcessRunner, {
           run: () =>
             Effect.succeed({
-              stdout: `p${input.pid()}\ncnode\nn*:${LSOF_TEST_PORT}\n`,
+              stdout:
+                input.listening?.() === false
+                  ? ""
+                  : `p${input.pid()}\nc${input.processName?.() ?? "node"}\nn*:${LSOF_TEST_PORT}\n`,
               stderr: "",
               code: null,
               timedOut: false,
@@ -271,6 +276,40 @@ effectIt.effect("revalidates a successful HTML probe after its cache entry expir
     ]);
   }).pipe(Effect.provide(layer));
 });
+
+effectIt.effect(
+  "issues a stable private generation across metadata updates and replaces it after PID reuse",
+  () => {
+    let listening = true;
+    let processName = "node";
+    const fetchFn = (() =>
+      Promise.resolve(
+        new Response("app", { headers: { "content-type": "text/html" } }),
+      )) as unknown as typeof globalThis.fetch;
+    const layer = makeLsofScannerLayer({
+      pid: () => 1234,
+      fetch: fetchFn,
+      listening: () => listening,
+      processName: () => processName,
+    });
+
+    return Effect.gen(function* () {
+      const scanner = yield* PortScanner.PortDiscovery;
+      const first = (yield* scanner.scan())[0]!;
+      const firstGeneration = yield* scanner.processGeneration(first);
+
+      processName = "bun";
+      const metadataUpdate = (yield* scanner.scan())[0]!;
+      expect(yield* scanner.processGeneration(metadataUpdate)).toBe(firstGeneration);
+
+      listening = false;
+      expect(yield* scanner.scan()).toEqual([]);
+      listening = true;
+      const reusedPid = (yield* scanner.scan())[0]!;
+      expect(yield* scanner.processGeneration(reusedPid)).not.toBe(firstGeneration);
+    }).pipe(Effect.provide(layer));
+  },
+);
 
 effectIt.effect("keeps a full configured URL when the discovered server root fails", () => {
   const requests: string[] = [];
