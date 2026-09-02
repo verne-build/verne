@@ -1,8 +1,13 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
+import * as NodePath from "@effect/platform-node/NodePath";
+import * as NodeOS from "node:os";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -548,9 +553,25 @@ describe("tailscale", () => {
 
   it.effect("creates an absent owned mapping after reading config", () => {
     const commands: Array<ReadonlyArray<string>> = [];
-    const layer = sequenceSpawnerLayer([{ stdout: tailscaleServeStatusJson }, {}], (args) => {
-      commands.push(args);
-    });
+    const layer = sequenceSpawnerLayer(
+      [
+        { stdout: tailscaleServeStatusJson },
+        {},
+        {
+          stdout: JSON.stringify({
+            TCP: { "5000": { HTTPS: true } },
+            Web: {
+              "host.tailnet.ts.net:5000": {
+                Handlers: { "/": { Proxy: "http://127.0.0.1:43121" } },
+              },
+            },
+          }),
+        },
+      ],
+      (args) => {
+        commands.push(args);
+      },
+    );
 
     return Effect.gen(function* () {
       const result = yield* ensureOwnedTailscaleServe({
@@ -562,8 +583,153 @@ describe("tailscale", () => {
       assert.deepEqual(commands, [
         ["serve", "status", "--json"],
         ["serve", "--bg", "--https=5000", "http://127.0.0.1:43121"],
+        ["serve", "status", "--json"],
       ]);
     });
+  });
+
+  it.effect("serializes competing owners of the same Serve port", () => {
+    let proxyUrl: string | null = null;
+    const commands: Array<ReadonlyArray<string>> = [];
+    const makeIndependentLayer = () =>
+      mockSpawnerLayer((_command, args) => {
+        commands.push(args);
+        if (args[0] === "serve" && args[1] === "status") {
+          return proxyUrl === null
+            ? { stdout: "{}" }
+            : {
+                stdout: JSON.stringify({
+                  TCP: { "54731": { HTTPS: true } },
+                  Web: {
+                    "host.tailnet.ts.net:54731": {
+                      Handlers: { "/": { Proxy: proxyUrl } },
+                    },
+                  },
+                }),
+              };
+        }
+        if (args[0] === "serve" && args[1] === "--bg") {
+          proxyUrl = args[3] ?? null;
+        }
+        return {};
+      });
+
+    const attempt = (localPort: number) =>
+      ensureOwnedTailscaleServe({
+        servePort: 54731,
+        localHost: "127.0.0.1",
+        localPort,
+      }).pipe(
+        Effect.map((value) => ({ _tag: "Success" as const, value })),
+        Effect.catch((error) => Effect.succeed({ _tag: "Failure" as const, error })),
+        Effect.provide(makeIndependentLayer()),
+      );
+
+    return Effect.gen(function* () {
+      const results = yield* Effect.all([attempt(43121), attempt(43122)], {
+        concurrency: "unbounded",
+      });
+
+      const successes = results.filter((result) => result._tag === "Success");
+      const failures = results.filter((result) => result._tag === "Failure");
+      assert.equal(successes.length, 1);
+      assert.equal(successes[0]?.value, "created");
+      assert.equal(failures.length, 1);
+      if (failures[0]?._tag === "Failure") {
+        assert.instanceOf(failures[0].error, TailscaleServeConflictError);
+      }
+      assert.include(["http://127.0.0.1:43121", "http://127.0.0.1:43122"], proxyUrl);
+      assert.equal(commands.filter((args) => args[0] === "serve" && args[1] === "--bg").length, 1);
+    });
+  });
+
+  it.effect("rejects a successful Serve command when verification finds another owner", () => {
+    const commands: Array<ReadonlyArray<string>> = [];
+    const layer = sequenceSpawnerLayer(
+      [
+        { stdout: "{}" },
+        {},
+        {
+          stdout: JSON.stringify({
+            TCP: { "54732": { HTTPS: true } },
+            Web: {
+              "host.tailnet.ts.net:54732": {
+                Handlers: { "/": { Proxy: "http://127.0.0.1:49999" } },
+              },
+            },
+          }),
+        },
+      ],
+      (args) => commands.push(args),
+    );
+
+    return Effect.gen(function* () {
+      const error = yield* ensureOwnedTailscaleServe({
+        servePort: 54732,
+        localHost: "127.0.0.1",
+        localPort: 43121,
+      }).pipe(Effect.flip, Effect.provide(layer));
+
+      assert.instanceOf(error, TailscaleServeConflictError);
+      assert.equal(error.servePort, 54732);
+      assert.deepEqual(commands, [
+        ["serve", "status", "--json"],
+        ["serve", "--bg", "--https=54732", "http://127.0.0.1:43121"],
+        ["serve", "status", "--json"],
+      ]);
+    });
+  });
+
+  it.effect("recovers a lock left by a terminated Verne process", () => {
+    const servePort = 54733;
+    const layer = sequenceSpawnerLayer([
+      { stdout: "{}" },
+      {},
+      {
+        stdout: JSON.stringify({
+          TCP: { "54733": { HTTPS: true } },
+          Web: {
+            "host.tailnet.ts.net:54733": {
+              Handlers: { "/": { Proxy: "http://127.0.0.1:43121" } },
+            },
+          },
+        }),
+      },
+    ]);
+
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const lockDirectory = path.join(
+        NodeOS.tmpdir(),
+        "verne-tailscale-serve-locks",
+        `${String(servePort)}.lock`,
+      );
+      return yield* Effect.acquireUseRelease(
+        fs
+          .makeDirectory(lockDirectory, { recursive: true })
+          .pipe(
+            Effect.andThen(
+              fs.writeFileString(
+                path.join(lockDirectory, "owner.json"),
+                '{"pid":2147483647,"token":"terminated-owner"}',
+              ),
+            ),
+          ),
+        () =>
+          Effect.gen(function* () {
+            const result = yield* ensureOwnedTailscaleServe({
+              servePort,
+              localHost: "127.0.0.1",
+              localPort: 43121,
+            }).pipe(Effect.provide(layer));
+
+            assert.equal(result, "created");
+            assert.equal(yield* fs.exists(lockDirectory), false);
+          }),
+        () => fs.remove(lockDirectory, { recursive: true, force: true }),
+      );
+    }).pipe(Effect.provide(Layer.merge(NodeFileSystem.layer, NodePath.layer)));
   });
 
   it.effect("refuses to overwrite a different target", () => {
@@ -583,9 +749,12 @@ describe("tailscale", () => {
 
   it.effect("removes only an exact owned mapping", () => {
     const commands: Array<ReadonlyArray<string>> = [];
-    const layer = sequenceSpawnerLayer([{ stdout: tailscaleServeStatusJson }, {}], (args) => {
-      commands.push(args);
-    });
+    const layer = sequenceSpawnerLayer(
+      [{ stdout: tailscaleServeStatusJson }, {}, { stdout: "{}" }],
+      (args) => {
+        commands.push(args);
+      },
+    );
 
     return Effect.gen(function* () {
       const result = yield* disableOwnedTailscaleServe({
@@ -597,6 +766,31 @@ describe("tailscale", () => {
       assert.deepEqual(commands, [
         ["serve", "status", "--json"],
         ["serve", "--https=3000", "off"],
+        ["serve", "status", "--json"],
+      ]);
+    });
+  });
+
+  it.effect("rejects a successful Serve removal when verification finds the port occupied", () => {
+    const commands: Array<ReadonlyArray<string>> = [];
+    const layer = sequenceSpawnerLayer(
+      [{ stdout: tailscaleServeStatusJson }, {}, { stdout: tailscaleServeStatusJson }],
+      (args) => commands.push(args),
+    );
+
+    return Effect.gen(function* () {
+      const error = yield* disableOwnedTailscaleServe({
+        servePort: 3000,
+        localHost: "127.0.0.1",
+        localPort: 43121,
+      }).pipe(Effect.flip, Effect.provide(layer));
+
+      assert.instanceOf(error, TailscaleServeConflictError);
+      assert.equal(error.servePort, 3000);
+      assert.deepEqual(commands, [
+        ["serve", "status", "--json"],
+        ["serve", "--https=3000", "off"],
+        ["serve", "status", "--json"],
       ]);
     });
   });
@@ -696,8 +890,34 @@ describe("tailscale", () => {
 
   it.effect("supports localhost and IPv6 loopback targets", () => {
     const commands: Array<ReadonlyArray<string>> = [];
-    const layer = sequenceSpawnerLayer([{ stdout: "{}" }, {}, { stdout: "{}" }, {}], (args) =>
-      commands.push(args),
+    const layer = sequenceSpawnerLayer(
+      [
+        { stdout: "{}" },
+        {},
+        {
+          stdout: JSON.stringify({
+            TCP: { "3000": { HTTPS: true } },
+            Web: {
+              "host.tailnet.ts.net:3000": {
+                Handlers: { "/": { Proxy: "http://localhost:43121" } },
+              },
+            },
+          }),
+        },
+        { stdout: "{}" },
+        {},
+        {
+          stdout: JSON.stringify({
+            TCP: { "3001": { HTTPS: true } },
+            Web: {
+              "host.tailnet.ts.net:3001": {
+                Handlers: { "/": { Proxy: "http://[::1]:43121" } },
+              },
+            },
+          }),
+        },
+      ],
+      (args) => commands.push(args),
     );
 
     return Effect.gen(function* () {
@@ -721,7 +941,9 @@ describe("tailscale", () => {
         ["serve", "status", "--json"],
         ["serve", "--bg", "--https=3000", "http://localhost:43121"],
         ["serve", "status", "--json"],
+        ["serve", "status", "--json"],
         ["serve", "--bg", "--https=3001", "http://[::1]:43121"],
+        ["serve", "status", "--json"],
       ]);
     });
   });

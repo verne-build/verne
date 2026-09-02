@@ -1,7 +1,15 @@
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
+import * as NodePath from "@effect/platform-node/NodePath";
+import { randomUUID } from "node:crypto";
+import * as NodeOS from "node:os";
+import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
@@ -153,6 +161,20 @@ export class TailscaleServeConflictError extends Schema.TaggedErrorClass<Tailsca
       return `Tailscale Serve port ${this.servePort} has additional configuration.`;
     }
     return `Tailscale Serve port ${this.servePort} is owned by a different target.`;
+  }
+}
+
+export class TailscaleServeLockError extends Schema.TaggedErrorClass<TailscaleServeLockError>()(
+  "TailscaleServeLockError",
+  {
+    servePort: Schema.Number,
+    reason: Schema.Literals(["timeout", "unavailable"]),
+  },
+) {
+  override get message(): string {
+    return this.reason === "timeout"
+      ? `Timed out waiting to update Tailscale Serve port ${this.servePort}.`
+      : `Could not lock Tailscale Serve port ${this.servePort} for update.`;
   }
 }
 
@@ -510,7 +532,174 @@ export interface TailscaleServeMapping {
 export type TailscaleServeMutationError =
   | TailscaleCommandError
   | TailscaleServeConfigParseError
-  | TailscaleServeConflictError;
+  | TailscaleServeConflictError
+  | TailscaleServeLockError;
+
+const SERVE_LOCK_WAIT_MS = 5_000;
+const SERVE_LOCK_RETRY_MS = 20;
+const SERVE_LOCK_INCOMPLETE_STALE_MS = 30_000;
+
+interface ServeMutationLock {
+  readonly directory: string;
+  readonly ownerPath: string;
+  readonly token: string;
+}
+
+interface ServeMutationLockOwner {
+  readonly pid: number;
+  readonly token: string;
+}
+
+const ServeMutationLockOwnerSchema = Schema.Struct({
+  pid: Schema.Int.check(Schema.isGreaterThan(0)),
+  token: Schema.String.check(Schema.isMinLength(1)),
+});
+const ServeMutationLockOwnerJson = Schema.fromJsonString(ServeMutationLockOwnerSchema);
+const decodeServeMutationLockOwner = Schema.decodeUnknownOption(ServeMutationLockOwnerJson);
+const encodeServeMutationLockOwner = Schema.encodeSync(ServeMutationLockOwnerJson);
+
+const processIsAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return !(
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "ESRCH"
+    );
+  }
+};
+
+const reclaimStaleServeMutationLock = Effect.fn("reclaimStaleServeMutationLock")(function* (
+  lock: ServeMutationLock,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const owner = yield* fs.readFileString(lock.ownerPath).pipe(
+    Effect.map(decodeServeMutationLockOwner),
+    Effect.map(Option.getOrNull),
+    Effect.catch((error) =>
+      error.reason._tag === "NotFound" ? Effect.succeed(null) : Effect.fail(error),
+    ),
+  );
+
+  if (owner !== null && processIsAlive(owner.pid)) return false;
+  if (owner === null) {
+    const info = yield* fs.stat(lock.directory).pipe(
+      Effect.map(Option.some),
+      Effect.catch((error) =>
+        error.reason._tag === "NotFound" ? Effect.succeed(Option.none()) : Effect.fail(error),
+      ),
+    );
+    if (Option.isNone(info)) return true;
+    const now = yield* Clock.currentTimeMillis;
+    const modifiedAt = Option.getOrNull(info.value.mtime)?.getTime() ?? 0;
+    if (now - modifiedAt < SERVE_LOCK_INCOMPLETE_STALE_MS) return false;
+  }
+
+  const claimPath = path.join(lock.directory, `reclaim-${randomUUID()}`);
+  const claimed = yield* (
+    owner === null
+      ? fs.writeFileString(claimPath, "claimed", { flag: "wx", mode: 0o600 })
+      : fs.rename(lock.ownerPath, claimPath)
+  ).pipe(
+    Effect.as(true),
+    Effect.catch((error) =>
+      error.reason._tag === "AlreadyExists" || error.reason._tag === "NotFound"
+        ? Effect.succeed(false)
+        : Effect.fail(error),
+    ),
+  );
+  if (!claimed) return false;
+  yield* fs.remove(lock.directory, { recursive: true, force: true });
+  return true;
+});
+
+const acquireServeMutationLock = Effect.fn("acquireServeMutationLock")(function* (
+  servePort: number,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const root = path.join(NodeOS.tmpdir(), "verne-tailscale-serve-locks");
+  const directory = path.join(root, `${String(servePort)}.lock`);
+  const ownerPath = path.join(directory, "owner.json");
+  const token = randomUUID();
+  const startedAt = yield* Clock.currentTimeMillis;
+  const deadline = startedAt + SERVE_LOCK_WAIT_MS;
+  let attempts = 0;
+  yield* fs.makeDirectory(root, { recursive: true, mode: 0o700 });
+
+  while (true) {
+    const acquired = yield* fs.makeDirectory(directory, { mode: 0o700 }).pipe(
+      Effect.as(true),
+      Effect.catch((error) =>
+        error.reason._tag === "AlreadyExists" ? Effect.succeed(false) : Effect.fail(error),
+      ),
+    );
+    if (acquired) {
+      const lock = { directory, ownerPath, token };
+      return yield* fs
+        .writeFileString(ownerPath, encodeServeMutationLockOwner({ pid: process.pid, token }), {
+          flag: "wx",
+          mode: 0o600,
+        })
+        .pipe(
+          Effect.andThen(fs.readFileString(ownerPath)),
+          Effect.map(decodeServeMutationLockOwner),
+          Effect.flatMap((installed) =>
+            Option.isSome(installed) && installed.value.token === token
+              ? Effect.succeed(lock)
+              : Effect.fail(new TailscaleServeLockError({ servePort, reason: "unavailable" })),
+          ),
+          Effect.onError(() =>
+            fs.remove(directory, { recursive: true, force: true }).pipe(Effect.ignore),
+          ),
+        );
+    }
+
+    const reclaimed = yield* reclaimStaleServeMutationLock({ directory, ownerPath, token });
+    if (reclaimed) continue;
+    const now = yield* Clock.currentTimeMillis;
+    if (now >= deadline) {
+      return yield* new TailscaleServeLockError({ servePort, reason: "timeout" });
+    }
+    yield* attempts++ < 8 ? Effect.yieldNow : Effect.sleep(Duration.millis(SERVE_LOCK_RETRY_MS));
+  }
+});
+
+const releaseServeMutationLock = Effect.fn("releaseServeMutationLock")(function* (
+  lock: ServeMutationLock,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const owner = yield* fs.readFileString(lock.ownerPath).pipe(
+    Effect.map(decodeServeMutationLockOwner),
+    Effect.map(Option.getOrNull),
+    Effect.orElseSucceed(() => null),
+  );
+  if (owner?.token !== lock.token) return;
+  const releasePath = path.join(lock.directory, `release-${lock.token}`);
+  yield* fs.rename(lock.ownerPath, releasePath);
+  yield* fs.remove(lock.directory, { recursive: true, force: true });
+});
+
+const withServeMutationLock = <A, E, R>(
+  servePort: number,
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E | TailscaleServeLockError, R> =>
+  Effect.acquireUseRelease(
+    acquireServeMutationLock(servePort).pipe(
+      Effect.mapError((error) =>
+        Schema.is(TailscaleServeLockError)(error)
+          ? error
+          : new TailscaleServeLockError({ servePort, reason: "unavailable" }),
+      ),
+    ),
+    () => effect,
+    (lock) => releaseServeMutationLock(lock).pipe(Effect.ignore),
+  ).pipe(Effect.provide(Layer.merge(NodeFileSystem.layer, NodePath.layer)));
 
 const readTailscaleServeConfigDetails: Effect.Effect<
   TailscaleServeConfigDetails,
@@ -576,30 +765,43 @@ export const ensureOwnedTailscaleServe = (input: {
         reason: "non-loopback",
       });
     }
-    const config = yield* readTailscaleServeConfigDetails;
-    if (!config.occupiedPorts.has(input.servePort)) {
-      yield* runTailscaleCommand(
-        [
-          "serve",
-          "--bg",
-          `--https=${String(input.servePort)}`,
-          `http://${target.host.includes(":") ? `[${target.host}]` : target.host}:${String(input.localPort)}`,
-        ],
-        TAILSCALE_SERVE_TIMEOUT,
-      );
-      return "created" as const;
-    }
-    const existing = config.mappings.get(input.servePort);
-    if (existing === undefined) {
-      return yield* new TailscaleServeConflictError({
-        servePort: input.servePort,
-        reason: "non-exclusive",
-      });
-    }
-    if (config.exclusivePorts.has(input.servePort) && existing.proxyUrl === target.proxyUrl) {
-      return "existing" as const;
-    }
-    return yield* new TailscaleServeConflictError({ servePort: input.servePort });
+    return yield* withServeMutationLock(
+      input.servePort,
+      Effect.gen(function* () {
+        const config = yield* readTailscaleServeConfigDetails;
+        if (!config.occupiedPorts.has(input.servePort)) {
+          yield* runTailscaleCommand(
+            [
+              "serve",
+              "--bg",
+              `--https=${String(input.servePort)}`,
+              `http://${target.host.includes(":") ? `[${target.host}]` : target.host}:${String(input.localPort)}`,
+            ],
+            TAILSCALE_SERVE_TIMEOUT,
+          );
+          const verified = yield* readTailscaleServeConfigDetails;
+          const installed = verified.mappings.get(input.servePort);
+          if (
+            !verified.exclusivePorts.has(input.servePort) ||
+            installed?.proxyUrl !== target.proxyUrl
+          ) {
+            return yield* new TailscaleServeConflictError({ servePort: input.servePort });
+          }
+          return "created" as const;
+        }
+        const existing = config.mappings.get(input.servePort);
+        if (existing === undefined) {
+          return yield* new TailscaleServeConflictError({
+            servePort: input.servePort,
+            reason: "non-exclusive",
+          });
+        }
+        if (config.exclusivePorts.has(input.servePort) && existing.proxyUrl === target.proxyUrl) {
+          return "existing" as const;
+        }
+        return yield* new TailscaleServeConflictError({ servePort: input.servePort });
+      }),
+    );
   });
 
 export const disableOwnedTailscaleServe = (input: {
@@ -619,23 +821,32 @@ export const disableOwnedTailscaleServe = (input: {
         reason: "non-loopback",
       });
     }
-    const config = yield* readTailscaleServeConfigDetails;
-    if (!config.occupiedPorts.has(input.servePort)) return "absent" as const;
-    const existing = config.mappings.get(input.servePort);
-    if (existing === undefined) {
-      return yield* new TailscaleServeConflictError({
-        servePort: input.servePort,
-        reason: "non-exclusive",
-      });
-    }
-    if (!config.exclusivePorts.has(input.servePort) || existing.proxyUrl !== target.proxyUrl) {
-      return yield* new TailscaleServeConflictError({ servePort: input.servePort });
-    }
-    yield* runTailscaleCommand(
-      ["serve", `--https=${String(input.servePort)}`, "off"],
-      TAILSCALE_SERVE_TIMEOUT,
+    return yield* withServeMutationLock(
+      input.servePort,
+      Effect.gen(function* () {
+        const config = yield* readTailscaleServeConfigDetails;
+        if (!config.occupiedPorts.has(input.servePort)) return "absent" as const;
+        const existing = config.mappings.get(input.servePort);
+        if (existing === undefined) {
+          return yield* new TailscaleServeConflictError({
+            servePort: input.servePort,
+            reason: "non-exclusive",
+          });
+        }
+        if (!config.exclusivePorts.has(input.servePort) || existing.proxyUrl !== target.proxyUrl) {
+          return yield* new TailscaleServeConflictError({ servePort: input.servePort });
+        }
+        yield* runTailscaleCommand(
+          ["serve", `--https=${String(input.servePort)}`, "off"],
+          TAILSCALE_SERVE_TIMEOUT,
+        );
+        const verified = yield* readTailscaleServeConfigDetails;
+        if (verified.occupiedPorts.has(input.servePort)) {
+          return yield* new TailscaleServeConflictError({ servePort: input.servePort });
+        }
+        return "removed" as const;
+      }),
     );
-    return "removed" as const;
   });
 
 export const ensureTailscaleServe = (input: {
