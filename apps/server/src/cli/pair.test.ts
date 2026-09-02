@@ -5,13 +5,18 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { EnvironmentId, type ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
 import * as NetService from "@t3tools/shared/Net";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/unstable/cli";
+import { HttpClient, HttpClientResponse } from "effect/unstable/http";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { cli } from "../bin.ts";
 import {
@@ -27,7 +32,9 @@ import {
 import {
   DevServerNotProxiableError,
   resolveDirectPairingBaseUrl,
+  resolveTailscalePairingBase,
   resolveTailscaleLocalTarget,
+  TailscaleServeFailedError,
 } from "./pair.ts";
 
 import packageJson from "../../package.json" with { type: "json" };
@@ -112,12 +119,120 @@ const captureStdout = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   );
 
 const testDescriptor = {
-  environmentId: "pair-test-environment",
+  environmentId: EnvironmentId.make("pair-test-environment"),
   label: "pair-test",
   platform: { os: "linux", arch: "x64" },
   serverVersion: "0.0.1",
   capabilities: { repositoryIdentity: true },
+} satisfies ExecutionEnvironmentDescriptor;
+
+const pairingTailscaleLayer = (input: { readonly changeTargetDuringProbe?: boolean } = {}) => {
+  let proxyUrl = "http://127.0.0.1:3773";
+  const commands: Array<ReadonlyArray<string>> = [];
+  const encoder = new TextEncoder();
+  const encode = (value: string) => Stream.make(encoder.encode(value));
+  const handle = (stdout = "") =>
+    ChildProcessSpawner.makeHandle({
+      pid: ChildProcessSpawner.ProcessId(1),
+      exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+      isRunning: Effect.succeed(false),
+      kill: () => Effect.void,
+      unref: Effect.succeed(Effect.void),
+      stdin: Sink.drain,
+      stdout: encode(stdout),
+      stderr: Stream.empty,
+      all: Stream.empty,
+      getInputFd: () => Sink.drain,
+      getOutputFd: () => Stream.empty,
+    });
+  const spawner = Layer.succeed(
+    ChildProcessSpawner.ChildProcessSpawner,
+    ChildProcessSpawner.make((command) => {
+      const args = "args" in command ? (command.args as ReadonlyArray<string>) : [];
+      commands.push(args);
+      if (args[0] === "status") {
+        return Effect.succeed(handle('{"Self":{"DNSName":"host.example.ts.net."}}'));
+      }
+      if (args[0] === "serve" && args[1] === "status") {
+        return Effect.succeed(
+          handle(
+            JSON.stringify({
+              TCP: { "8443": { HTTPS: true } },
+              Web: {
+                "host.example.ts.net:8443": {
+                  Handlers: { "/": { Proxy: proxyUrl } },
+                },
+              },
+            }),
+          ),
+        );
+      }
+      if (args[0] === "serve" && args[1] === "--bg") proxyUrl = args[3] ?? proxyUrl;
+      return Effect.succeed(handle());
+    }),
+  );
+  let probes = 0;
+  const http = Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) =>
+      Effect.sync(() => {
+        probes += 1;
+        if (input.changeTargetDuringProbe && probes === 1) {
+          proxyUrl = "http://127.0.0.1:49999";
+        }
+        return HttpClientResponse.fromWeb(request, Response.json(testDescriptor));
+      }),
+    ),
+  );
+  return { layer: Layer.merge(spawner, http), commands, proxyUrl: () => proxyUrl };
 };
+
+describe("pair tailscale repoint", () => {
+  it.effect("repoints a verified backend mapping to a non-loopback dev origin", () => {
+    const harness = pairingTailscaleLayer();
+    return Effect.gen(function* () {
+      const result = yield* resolveTailscalePairingBase({
+        servePort: 8443,
+        target: {
+          baseDir: "/tmp/pair-test",
+          variant: "userdata",
+          state: { ...baseState, devUrl: "http://192.168.1.10:5733/" },
+          descriptor: testDescriptor,
+        },
+      }).pipe(Effect.provide(harness.layer));
+
+      expect(result.baseUrl).toBe("https://host.example.ts.net:8443/");
+      expect(harness.proxyUrl()).toBe("http://192.168.1.10:5733");
+      expect(harness.commands).toContainEqual([
+        "serve",
+        "--bg",
+        "--https=8443",
+        "http://192.168.1.10:5733",
+      ]);
+    });
+  });
+
+  it.effect("refuses to repoint when the mapping changes after identity proof starts", () => {
+    const harness = pairingTailscaleLayer({ changeTargetDuringProbe: true });
+    return Effect.gen(function* () {
+      const error = yield* resolveTailscalePairingBase({
+        servePort: 8443,
+        target: {
+          baseDir: "/tmp/pair-test",
+          variant: "userdata",
+          state: { ...baseState, devUrl: "http://192.168.1.10:5733/" },
+          descriptor: testDescriptor,
+        },
+      }).pipe(Effect.flip, Effect.provide(harness.layer));
+
+      expect(error).toBeInstanceOf(TailscaleServeFailedError);
+      expect(harness.proxyUrl()).toBe("http://127.0.0.1:49999");
+      expect(harness.commands.some((args) => args[0] === "serve" && args[1] === "--bg")).toBe(
+        false,
+      );
+    });
+  });
+});
 
 const withDescriptorServer = <A, E, R>(run: (origin: string) => Effect.Effect<A, E, R>) =>
   Effect.acquireUseRelease(

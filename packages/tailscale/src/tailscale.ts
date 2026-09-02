@@ -830,6 +830,53 @@ const disableExactTailscaleServe = (
     }),
   );
 
+/**
+ * Repoints a Serve port only while it still has the exact exclusive target a
+ * caller already verified. The comparison and mutation share the machine lock,
+ * so the identity proof cannot be applied to a replacement mapping.
+ */
+export const transitionTailscaleServe = (input: {
+  readonly servePort: number;
+  readonly expectedProxyUrl: string;
+  readonly localHost: string;
+  readonly localPort: number;
+}): Effect.Effect<
+  "updated" | "existing",
+  TailscaleServeMutationError,
+  ChildProcessSpawner.ChildProcessSpawner
+> => {
+  const expectedProxyUrl = normalizeServeProxyUrl(input.expectedProxyUrl);
+  const desired = serveTarget(input, false);
+  if (expectedProxyUrl === null || desired === null) {
+    return new TailscaleServeConflictError({ servePort: input.servePort });
+  }
+  return withServeMutationLock(
+    input.servePort,
+    Effect.gen(function* () {
+      const config = yield* readTailscaleServeConfigDetails;
+      const existing = config.mappings.get(input.servePort);
+      if (!config.exclusivePorts.has(input.servePort) || existing?.proxyUrl !== expectedProxyUrl) {
+        return yield* new TailscaleServeConflictError({ servePort: input.servePort });
+      }
+      if (existing.proxyUrl === desired.proxyUrl) return "existing" as const;
+
+      yield* runTailscaleCommand(
+        ["serve", "--bg", `--https=${String(input.servePort)}`, desired.proxyUrl],
+        TAILSCALE_SERVE_TIMEOUT,
+      );
+      const verified = yield* readTailscaleServeConfigDetails;
+      const installed = verified.mappings.get(input.servePort);
+      if (
+        !verified.exclusivePorts.has(input.servePort) ||
+        installed?.proxyUrl !== desired.proxyUrl
+      ) {
+        return yield* new TailscaleServeConflictError({ servePort: input.servePort });
+      }
+      return "updated" as const;
+    }),
+  );
+};
+
 export const ensureOwnedTailscaleServe = (input: {
   readonly servePort: number;
   readonly localHost: string;

@@ -33,6 +33,7 @@ import {
   TailscaleServeConfigParseError,
   TailscaleServeConflictError,
   TailscaleStatusParseError,
+  transitionTailscaleServe,
 } from "./tailscale.ts";
 
 const encoder = new TextEncoder();
@@ -603,6 +604,61 @@ describe("tailscale", () => {
       const error = yield* disableTailscaleServe({
         servePort: 8443,
         localPort: 13773,
+      }).pipe(Effect.flip, Effect.provide(layer));
+
+      assert.instanceOf(error, TailscaleServeConflictError);
+      assert.deepEqual(commands, [["serve", "status", "--json"]]);
+    });
+  });
+
+  it.effect("atomically repoints an exact verified Serve target", () => {
+    const commands: Array<ReadonlyArray<string>> = [];
+    const layer = sequenceSpawnerLayer(
+      [
+        { stdout: tailscaleServeStatusJson },
+        {},
+        {
+          stdout: JSON.stringify({
+            TCP: { "3000": { HTTPS: true } },
+            Web: {
+              "host.tailnet.ts.net:3000": {
+                Handlers: { "/": { Proxy: "http://192.168.1.20:5733" } },
+              },
+            },
+          }),
+        },
+      ],
+      (args) => commands.push(args),
+    );
+
+    return Effect.gen(function* () {
+      yield* transitionTailscaleServe({
+        servePort: 3000,
+        expectedProxyUrl: "http://127.0.0.1:43121",
+        localHost: "192.168.1.20",
+        localPort: 5733,
+      }).pipe(Effect.provide(layer));
+
+      assert.deepEqual(commands, [
+        ["serve", "status", "--json"],
+        ["serve", "--bg", "--https=3000", "http://192.168.1.20:5733"],
+        ["serve", "status", "--json"],
+      ]);
+    });
+  });
+
+  it.effect("refuses a repoint when the verified target changed before the lock", () => {
+    const commands: Array<ReadonlyArray<string>> = [];
+    const layer = sequenceSpawnerLayer([{ stdout: tailscaleServeStatusJson }], (args) =>
+      commands.push(args),
+    );
+
+    return Effect.gen(function* () {
+      const error = yield* transitionTailscaleServe({
+        servePort: 3000,
+        expectedProxyUrl: "http://127.0.0.1:49999",
+        localHost: "192.168.1.20",
+        localPort: 5733,
       }).pipe(Effect.flip, Effect.provide(layer));
 
       assert.instanceOf(error, TailscaleServeConflictError);

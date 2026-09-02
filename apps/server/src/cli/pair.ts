@@ -19,7 +19,9 @@ import {
   buildTailscaleHttpsBaseUrl,
   DEFAULT_TAILSCALE_SERVE_PORT,
   ensureTailscaleServe,
+  readTailscaleServeConfig,
   readTailscaleStatus,
+  transitionTailscaleServe,
 } from "@t3tools/tailscale";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
@@ -240,7 +242,7 @@ const isProcessAlive = (pid: number): boolean => {
   }
 };
 
-interface DiscoveredPairTarget {
+export interface DiscoveredPairTarget {
   readonly baseDir: string;
   readonly variant: PairStateVariant;
   readonly state: PersistedServerRuntimeState;
@@ -366,7 +368,7 @@ const awaitEnvironmentDescriptor = Effect.fn(function* (baseUrl: string) {
   return last;
 });
 
-const resolveTailscalePairingBase = Effect.fn("pair.resolveTailscalePairingBase")(
+export const resolveTailscalePairingBase = Effect.fn("pair.resolveTailscalePairingBase")(
   function* (input: { readonly target: DiscoveredPairTarget; readonly servePort: number }) {
     const notes: Array<string> = [];
     const status = yield* readTailscaleStatus.pipe(
@@ -380,10 +382,24 @@ const resolveTailscalePairingBase = Effect.fn("pair.resolveTailscalePairingBase"
       servePort: input.servePort,
     });
 
+    // Capture the exact target before proving the endpoint's identity. A later
+    // locked compare-and-swap rejects the proof if another process changes the
+    // mapping between this snapshot, the HTTP probe, and the mutation.
+    const observedDevProxyUrl =
+      input.target.state.devUrl === undefined
+        ? undefined
+        : yield* readTailscaleServeConfig.pipe(
+            Effect.map((config) => config.get(input.servePort)?.proxyUrl),
+            Effect.mapError(
+              (cause) => new TailscaleServeFailedError({ servePort: input.servePort, cause }),
+            ),
+          );
+
     // Only an unreachable port, or a mapping already fronting this exact
     // environment, is safe to (re)configure. Any other responder — T3 or not
     // — must not have its mapping silently replaced.
     const existing = yield* probeEnvironmentDescriptor(baseUrl);
+    let verifiedDevProxyUrl: string | undefined;
     if (existing._tag === "descriptor") {
       if (existing.descriptor.environmentId !== input.target.descriptor.environmentId) {
         return yield* new ServesOtherEnvironmentError({ servePort: input.servePort });
@@ -396,6 +412,7 @@ const resolveTailscalePairingBase = Effect.fn("pair.resolveTailscalePairingBase"
       if (input.target.state.devUrl === undefined) {
         return { baseUrl, notes };
       }
+      verifiedDevProxyUrl = observedDevProxyUrl ?? "";
     }
     if (existing._tag === "not-a-t3-server") {
       return yield* new ServePortOccupiedError({ servePort: input.servePort });
@@ -405,11 +422,20 @@ const resolveTailscalePairingBase = Effect.fn("pair.resolveTailscalePairingBase"
     if (isDevServerNotProxiableError(localTarget)) {
       return yield* localTarget;
     }
-    yield* ensureTailscaleServe({
-      localPort: localTarget.localPort,
-      servePort: input.servePort,
-      ...(localTarget.localHost !== undefined ? { localHost: localTarget.localHost } : {}),
-    }).pipe(
+    const configure =
+      verifiedDevProxyUrl === undefined
+        ? ensureTailscaleServe({
+            localPort: localTarget.localPort,
+            servePort: input.servePort,
+            ...(localTarget.localHost !== undefined ? { localHost: localTarget.localHost } : {}),
+          })
+        : transitionTailscaleServe({
+            servePort: input.servePort,
+            expectedProxyUrl: verifiedDevProxyUrl,
+            localHost: localTarget.localHost ?? "127.0.0.1",
+            localPort: localTarget.localPort,
+          });
+    yield* configure.pipe(
       Effect.mapError(
         (cause) => new TailscaleServeFailedError({ servePort: input.servePort, cause }),
       ),
