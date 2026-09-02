@@ -95,8 +95,10 @@ export function resolveTailscalePreviewSettingView(input: {
 }): TailscalePreviewSettingView | null {
   if (!input.supported) return null;
 
+  const authoritativeStatus =
+    input.statusPending || input.statusError !== null ? null : input.status;
   const checked =
-    input.pendingEnabled ?? input.status?.enabled ?? (input.persistedEnabled ? true : false);
+    input.pendingEnabled ?? authoritativeStatus?.enabled ?? (input.persistedEnabled ? true : false);
   if (input.pendingEnabled !== null) {
     return {
       checked,
@@ -113,21 +115,21 @@ export function resolveTailscalePreviewSettingView(input: {
       description: input.mutationError,
     };
   }
-  if (input.statusPending && input.status === null) {
+  if (input.statusPending) {
     return {
       checked,
       status: "Checking status…",
       description: TAILSCALE_PREVIEW_BASE_DESCRIPTION,
     };
   }
-  if (input.status === null) {
+  if (authoritativeStatus === null) {
     return {
       checked,
       status: checked ? "Enabled" : input.statusError === null ? null : "Status unavailable",
       description: TAILSCALE_PREVIEW_BASE_DESCRIPTION,
     };
   }
-  const presentation = describeTailscalePreviewReadiness(input.status.readiness);
+  const presentation = describeTailscalePreviewReadiness(authoritativeStatus.readiness);
   return {
     checked,
     status: presentation.status,

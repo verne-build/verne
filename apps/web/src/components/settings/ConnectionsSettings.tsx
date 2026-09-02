@@ -1411,7 +1411,7 @@ function SavedBackendListRow({
     supported: supportsTailnetPreviewOptIn,
     status: tailnetPreviewStatus.data,
     statusError: tailnetPreviewStatus.error,
-    statusPending: tailnetPreviewStatus.isPending && tailnetPreviewStatus.data === null,
+    statusPending: tailnetPreviewStatus.isPending,
     pendingEnabled: pendingTailscalePreviewsEnabled,
     persistedEnabled: environment.serverConfig?.settings.tailscalePreviewsEnabled === true,
     mutationError: null,

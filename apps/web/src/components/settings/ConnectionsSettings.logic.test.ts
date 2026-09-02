@@ -305,11 +305,45 @@ describe("resolveTailscalePreviewSettingView", () => {
     });
   });
 
+  it("ignores a stale disabled status while a refresh is pending", () => {
+    expect(
+      resolveTailscalePreviewSettingView({
+        supported: true,
+        status: { enabled: false, readiness: "disabled" },
+        statusError: null,
+        statusPending: true,
+        pendingEnabled: null,
+        persistedEnabled: true,
+        mutationError: null,
+      }),
+    ).toMatchObject({
+      checked: true,
+      status: "Checking status…",
+    });
+  });
+
   it("keeps a persisted opt-in checked when live status fails to load", () => {
     expect(
       resolveTailscalePreviewSettingView({
         supported: true,
         status: null,
+        statusError: "status failed",
+        statusPending: false,
+        pendingEnabled: null,
+        persistedEnabled: true,
+        mutationError: null,
+      }),
+    ).toMatchObject({
+      checked: true,
+      status: "Enabled",
+    });
+  });
+
+  it("ignores a stale disabled status after a refresh error", () => {
+    expect(
+      resolveTailscalePreviewSettingView({
+        supported: true,
+        status: { enabled: false, readiness: "disabled" },
         statusError: "status failed",
         statusPending: false,
         pendingEnabled: null,
@@ -353,6 +387,40 @@ describe("resolveTailscalePreviewSettingView", () => {
     ).toMatchObject({
       checked: false,
       status: "Closed",
+    });
+  });
+
+  it("ignores a stale ready status while a refresh is pending", () => {
+    expect(
+      resolveTailscalePreviewSettingView({
+        supported: true,
+        status: readyStatus,
+        statusError: null,
+        statusPending: true,
+        pendingEnabled: null,
+        persistedEnabled: false,
+        mutationError: null,
+      }),
+    ).toMatchObject({
+      checked: false,
+      status: "Checking status…",
+    });
+  });
+
+  it("ignores a stale ready status after a refresh error", () => {
+    expect(
+      resolveTailscalePreviewSettingView({
+        supported: true,
+        status: readyStatus,
+        statusError: "status failed",
+        statusPending: false,
+        pendingEnabled: null,
+        persistedEnabled: false,
+        mutationError: null,
+      }),
+    ).toMatchObject({
+      checked: false,
+      status: "Status unavailable",
     });
   });
 
