@@ -486,6 +486,7 @@ const buildAppUnderTest = (options?: {
       DesktopTelemetryReceiver.DesktopTelemetryReceiver["Service"]
     >;
     tailnetPreviewPublisher?: Partial<TailnetPreviewPublisher.TailnetPreviewPublisher["Service"]>;
+    portDiscovery?: Partial<PortScanner.PortDiscovery["Service"]>;
   };
 }) =>
   Effect.gen(function* () {
@@ -848,6 +849,7 @@ const buildAppUnderTest = (options?: {
             retain: Effect.void,
             registerTerminalProcesses: () => Effect.void,
             unregisterTerminal: () => Effect.void,
+            ...options?.layers?.portDiscovery,
           }),
         ),
       ),
@@ -1113,6 +1115,21 @@ const withWsRpcClient = <A, E, R>(
   wsUrl: string,
   f: (client: WsRpcClient) => Effect.Effect<A, E, R>,
 ) => makeWsRpcClient.pipe(Effect.flatMap(f), Effect.provide(wsRpcProtocolLayer(wsUrl)));
+
+const probeWebSocketUpgrade = (wsUrl: string) =>
+  Effect.callback<"opened" | number, Error>((resume) => {
+    const socket = new NodeSocket.NodeWS.WebSocket(wsUrl);
+    socket.once("open", () => {
+      socket.close();
+      resume(Effect.succeed("opened"));
+    });
+    socket.once("unexpected-response", (_request, response) => {
+      response.resume();
+      resume(Effect.succeed(response.statusCode ?? 0));
+    });
+    socket.once("error", (error) => resume(Effect.fail(error)));
+    return Effect.sync(() => socket.terminate());
+  });
 
 const appendSessionCookieToWsUrl = (url: string, sessionCookieHeader: string) => {
   const isAbsoluteUrl = /^[a-zA-Z][a-zA-Z\d+.-]*:/.test(url);
@@ -4462,6 +4479,140 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const error = yield* Effect.flip(
         Effect.scoped(
           withWsRpcClient(wsUrl, (client) => client[WS_METHODS.previewTailnetStatus]({})),
+        ),
+      );
+
+      assert.equal(error._tag, "EnvironmentAuthorizationError");
+      if (error._tag === "EnvironmentAuthorizationError") {
+        assert.equal(error.requiredScope, "preview:access");
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect(
+    "releases an authenticated port-forward ticket when its websocket session disconnects",
+    () =>
+      Effect.gen(function* () {
+        yield* buildAppUnderTest({
+          layers: {
+            portDiscovery: {
+              scan: () =>
+                Effect.succeed([
+                  {
+                    host: "localhost",
+                    connectHost: "127.0.0.1" as const,
+                    port: 4173,
+                    url: "http://localhost:4173/",
+                    processName: "node",
+                    pid: 4173,
+                    terminal: null,
+                  },
+                ]),
+            },
+          },
+        });
+
+        const observerToken = yield* getAuthenticatedBearerSessionToken();
+        const loadAccessSnapshot = Effect.fn("ServerTest.loadAccessSnapshot")(function* () {
+          const observerTicketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+            headers: { authorization: `Bearer ${observerToken}` },
+          });
+          const observerTicket = (yield* observerTicketResponse.json) as {
+            readonly ticket: string;
+          };
+          assert.equal(observerTicketResponse.status, 200);
+          const adminWsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(observerTicket.ticket)}`;
+          const events = yield* Effect.scoped(
+            withWsRpcClient(adminWsUrl, (client) =>
+              client[WS_METHODS.subscribeAuthAccess]({}).pipe(Stream.take(1), Stream.runCollect),
+            ),
+          );
+          const snapshot = events[0];
+          if (snapshot?.type !== "snapshot") {
+            return yield* Effect.die("Expected an auth access snapshot");
+          }
+          return snapshot.payload;
+        });
+
+        const { response: exchangeResponse, body: token } = yield* exchangeAccessToken(
+          defaultDesktopBootstrapToken,
+          { scope: "preview:access" },
+        );
+        assert.equal(exchangeResponse.status, 200);
+        assert.isDefined(token.access_token);
+        const ticketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+          headers: { authorization: `Bearer ${token.access_token ?? ""}` },
+        });
+        const ticketBody = (yield* ticketResponse.json) as { readonly ticket: string };
+        assert.equal(ticketResponse.status, 200);
+        const clientWsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(ticketBody.ticket)}`;
+
+        const acquired = yield* Effect.scoped(
+          withWsRpcClient(clientWsUrl, (client) =>
+            Effect.gen(function* () {
+              const lease = yield* client[WS_METHODS.previewPortForwardAcquire]({ port: 4173 });
+              const connected = (yield* loadAccessSnapshot()).clientSessions.find(
+                (session) =>
+                  session.connected &&
+                  session.scopes.length === 1 &&
+                  session.scopes[0] === "preview:access",
+              );
+              if (!connected) {
+                return yield* Effect.die("Expected a connected preview client session");
+              }
+              return { lease, sessionId: connected.sessionId };
+            }),
+          ),
+        );
+
+        const disconnected = (yield* loadAccessSnapshot()).clientSessions.find(
+          (session) => session.sessionId === acquired.sessionId,
+        );
+        assert.isDefined(disconnected);
+        assert.isFalse(disconnected?.connected ?? true);
+        const tunnelResult = yield* probeWebSocketUpgrade(
+          `${yield* getWsServerUrl("/preview/tunnel", { authenticated: false })}?forwardTicket=${encodeURIComponent(acquired.lease.ticket)}`,
+        );
+
+        assert.equal(acquired.lease.port, 4173);
+        assert.equal(tunnelResult, 401);
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("denies port-forward acquisition without preview access scope", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        layers: {
+          portDiscovery: {
+            scan: () =>
+              Effect.succeed([
+                {
+                  host: "localhost",
+                  connectHost: "127.0.0.1" as const,
+                  port: 4173,
+                  url: "http://localhost:4173/",
+                  processName: "node",
+                  pid: 4173,
+                  terminal: null,
+                },
+              ]),
+          },
+        },
+      });
+      const { body: token } = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
+        scope: "orchestration:read",
+      });
+      const ticketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+        headers: { authorization: `Bearer ${token.access_token ?? ""}` },
+      });
+      const ticketBody = (yield* ticketResponse.json) as { readonly ticket: string };
+      const clientWsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(ticketBody.ticket)}`;
+
+      const error = yield* Effect.flip(
+        Effect.scoped(
+          withWsRpcClient(clientWsUrl, (client) =>
+            client[WS_METHODS.previewPortForwardAcquire]({ port: 4173 }),
+          ),
         ),
       );
 

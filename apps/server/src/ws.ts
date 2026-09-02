@@ -2630,12 +2630,11 @@ export const websocketRpcRouteLayer = Layer.unwrap(
           () =>
             Effect.all(
               [
-                sessions.markDisconnected(session.sessionId),
                 portForwarding.releaseSession(session.sessionId),
                 tailnetPreviewPublisher.releaseSession(session.sessionId),
               ],
               { concurrency: "unbounded", discard: true },
-            ),
+            ).pipe(Effect.andThen(sessions.markDisconnected(session.sessionId))),
         );
       }).pipe(
         Effect.catchTags({

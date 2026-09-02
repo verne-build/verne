@@ -59,6 +59,10 @@
       "types": "./src/Net.ts",
       "import": "./src/Net.ts"
     },
+    "./portForwardProtocol": {
+      "types": "./src/portForwardProtocol.ts",
+      "import": "./src/portForwardProtocol.ts"
+    },
     "./DrainableWorker": {
       "types": "./src/DrainableWorker.ts",
       "import": "./src/DrainableWorker.ts"
