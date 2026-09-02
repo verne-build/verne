@@ -7,6 +7,7 @@ import {
 import {
   EnvironmentId,
   PreviewTailnetLeaseNotFoundError,
+  PreviewTailnetUnavailableError,
   ThreadId,
   type DiscoveredLocalServer,
   type PreviewTailnetAcquireResult,
@@ -585,6 +586,70 @@ describe("preview access controller", () => {
       port: 5173,
       enabled: false,
     });
+  });
+
+  it("restores persisted process suppression after a ready status", async () => {
+    const timers = manualTimers();
+    const operations: string[] = [];
+    const acquire = vi
+      .fn<PreviewAccessControllerDependencies["tailnet"]["acquire"]>()
+      .mockImplementationOnce(async ({ port }) => {
+        operations.push("acquire");
+        throw new PreviewTailnetUnavailableError({ port, readiness: "disabled" });
+      })
+      .mockImplementationOnce(async ({ port }) => {
+        operations.push("acquire");
+        return tailnetResult(port);
+      });
+    const setPortEnabled = vi.fn<PreviewAccessControllerDependencies["tailnet"]["setPortEnabled"]>(
+      async ({ enabled }) => {
+        operations.push(enabled ? "enable" : "disable");
+        return { enabled: true, readiness: "ready" };
+      },
+    );
+    const controller = createPreviewAccessController(
+      dependencies({ acquire, setPortEnabled, timers: timers.api, now: timers.now }),
+    );
+
+    await controller.reconcile({
+      environmentId,
+      threadId,
+      servers: [server(5173)],
+      status: { enabled: true, readiness: "ready" },
+    });
+
+    expect(controller.getPortState({ environmentId, threadId, port: 5173 })).toEqual({
+      state: "suppressed",
+    });
+    expect(timers.size()).toBe(0);
+
+    await controller.setPortEnabled({ environmentId, threadId, port: 5173, enabled: true });
+    await expect(
+      controller.prepare({
+        environmentId,
+        threadId,
+        target: { kind: "url", url: "http://localhost:5173/app" },
+      }),
+    ).resolves.toMatchObject({ state: "ready", transport: "tailnet" });
+    expect(operations).toEqual(["acquire", "enable", "acquire"]);
+  });
+
+  it("keeps globally disabled publication unavailable instead of process-suppressed", async () => {
+    const deps = dependencies();
+    const controller = createPreviewAccessController(deps);
+
+    await controller.reconcile({
+      environmentId,
+      threadId,
+      servers: [server(5173)],
+      status: { enabled: false, readiness: "disabled" },
+    });
+
+    expect(controller.getPortState({ environmentId, threadId, port: 5173 })).toEqual({
+      state: "unavailable",
+      readiness: "disabled",
+    });
+    expect(deps.tailnet.acquire).not.toHaveBeenCalled();
   });
 
   it("keeps explicit disable authoritative over an in-flight automatic acquisition", async () => {

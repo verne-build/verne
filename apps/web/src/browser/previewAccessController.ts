@@ -256,7 +256,10 @@ export function createPreviewAccessController(
     retryTimers.delete(key);
   };
 
-  let ensureLease!: (input: TailnetOperationInput) => Promise<void>;
+  let ensureLease!: (
+    input: TailnetOperationInput,
+    restoreSuppressionOnAcquire?: boolean,
+  ) => Promise<void>;
 
   const retryAllowed = (input: TailnetOperationInput) => {
     if (disposed || !desiredKeys.has(keyFor(input)) || isSuppressed(keyFor(input))) return false;
@@ -379,7 +382,7 @@ export function createPreviewAccessController(
     return result;
   };
 
-  ensureLease = async (input: TailnetOperationInput) => {
+  ensureLease = async (input: TailnetOperationInput, restoreSuppressionOnAcquire = false) => {
     const key = keyFor(input);
     if (disposed || isSuppressed(key)) return;
     const startedAtIntent = intentEpoch(key);
@@ -415,9 +418,15 @@ export function createPreviewAccessController(
           .catch(() => undefined);
       }
       if (!isSuppressed(key)) {
+        const readiness = readinessFromError(error) ?? "gateway-failed";
+        if (restoreSuppressionOnAcquire && staleLease === undefined && readiness === "disabled") {
+          suppressed.set(key, observations.get(key)?.lifetime ?? 0);
+          setState(key, { state: "suppressed" });
+          return;
+        }
         setState(key, {
           state: "unavailable",
-          readiness: readinessFromError(error) ?? "gateway-failed",
+          readiness,
         });
         scheduleRetry(input);
       }
@@ -673,6 +682,12 @@ export function createPreviewAccessController(
       threadId: input.threadId,
       port: candidate.port,
     }));
+    const statusConfirmsGlobalReady =
+      input.status !== undefined &&
+      input.status !== null &&
+      !("state" in input.status) &&
+      input.status.enabled &&
+      input.status.readiness === "ready";
     const nextDesiredKeys = new Set(desired.map(keyFor));
     const inScope = (key: string) => {
       const [keyEnvironmentId, keyThreadId] = JSON.parse(key) as [string, string, number];
@@ -704,7 +719,7 @@ export function createPreviewAccessController(
           await dependencies.tailnet.setPortEnabled({ ...candidate, enabled: true });
           needsEnable.delete(key);
         }
-        await ensureLease(candidate);
+        await ensureLease(candidate, statusConfirmsGlobalReady);
       }),
     );
   };
