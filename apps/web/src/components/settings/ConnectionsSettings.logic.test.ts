@@ -214,8 +214,10 @@ describe("resolveTailscalePreviewSettingView", () => {
       resolveTailscalePreviewSettingView({
         supported: false,
         status: null,
+        statusError: null,
         statusPending: false,
         pendingEnabled: null,
+        persistedEnabled: false,
         mutationError: null,
       }),
     ).toBeNull();
@@ -226,8 +228,10 @@ describe("resolveTailscalePreviewSettingView", () => {
       resolveTailscalePreviewSettingView({
         supported: true,
         status: readyStatus,
+        statusError: null,
         statusPending: false,
         pendingEnabled: null,
+        persistedEnabled: false,
         mutationError: null,
       }),
     ).toMatchObject({
@@ -239,8 +243,10 @@ describe("resolveTailscalePreviewSettingView", () => {
       resolveTailscalePreviewSettingView({
         supported: true,
         status: readyStatus,
+        statusError: null,
         statusPending: false,
         pendingEnabled: null,
+        persistedEnabled: false,
         mutationError: null,
       })?.description,
     ).toContain("ACL");
@@ -251,8 +257,10 @@ describe("resolveTailscalePreviewSettingView", () => {
       resolveTailscalePreviewSettingView({
         supported: true,
         status: { enabled: false, readiness: "disabled" },
+        statusError: null,
         statusPending: false,
         pendingEnabled: null,
+        persistedEnabled: false,
         mutationError: null,
       }),
     ).toMatchObject({
@@ -266,8 +274,10 @@ describe("resolveTailscalePreviewSettingView", () => {
     const view = resolveTailscalePreviewSettingView({
       supported: true,
       status: { enabled: true, readiness: "permission-denied" },
+      statusError: null,
       statusPending: false,
       pendingEnabled: null,
+      persistedEnabled: false,
       mutationError: null,
     });
 
@@ -276,6 +286,91 @@ describe("resolveTailscalePreviewSettingView", () => {
       description: expect.stringContaining("sudo tailscale set --operator=<service account>"),
     });
     expect(view?.description).toContain("Verne never runs sudo.");
+  });
+
+  it("keeps a persisted opt-in checked while live status is still loading", () => {
+    expect(
+      resolveTailscalePreviewSettingView({
+        supported: true,
+        status: null,
+        statusError: null,
+        statusPending: true,
+        pendingEnabled: null,
+        persistedEnabled: true,
+        mutationError: null,
+      }),
+    ).toMatchObject({
+      checked: true,
+      status: "Checking status…",
+    });
+  });
+
+  it("keeps a persisted opt-in checked when live status fails to load", () => {
+    expect(
+      resolveTailscalePreviewSettingView({
+        supported: true,
+        status: null,
+        statusError: "status failed",
+        statusPending: false,
+        pendingEnabled: null,
+        persistedEnabled: true,
+        mutationError: null,
+      }),
+    ).toMatchObject({
+      checked: true,
+      status: "Enabled",
+    });
+  });
+
+  it("keeps a persisted opt-in checked when the environment is disconnected", () => {
+    expect(
+      resolveTailscalePreviewSettingView({
+        supported: true,
+        status: null,
+        statusError: null,
+        statusPending: false,
+        pendingEnabled: null,
+        persistedEnabled: true,
+        mutationError: null,
+      }),
+    ).toMatchObject({
+      checked: true,
+      status: "Enabled",
+    });
+  });
+
+  it("lets an authoritative live status override a persisted opt-in", () => {
+    expect(
+      resolveTailscalePreviewSettingView({
+        supported: true,
+        status: { enabled: false, readiness: "disabled" },
+        statusError: null,
+        statusPending: false,
+        pendingEnabled: null,
+        persistedEnabled: true,
+        mutationError: null,
+      }),
+    ).toMatchObject({
+      checked: false,
+      status: "Closed",
+    });
+  });
+
+  it("keeps the pending optimistic toggle state ahead of persisted settings", () => {
+    expect(
+      resolveTailscalePreviewSettingView({
+        supported: true,
+        status: null,
+        statusError: null,
+        statusPending: false,
+        pendingEnabled: false,
+        persistedEnabled: true,
+        mutationError: null,
+      }),
+    ).toMatchObject({
+      checked: false,
+      status: "Closing…",
+    });
   });
 });
 

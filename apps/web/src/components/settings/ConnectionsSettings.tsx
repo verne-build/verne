@@ -1410,8 +1410,10 @@ function SavedBackendListRow({
   const tailscalePreviewView = resolveTailscalePreviewSettingView({
     supported: supportsTailnetPreviewOptIn,
     status: tailnetPreviewStatus.data,
+    statusError: tailnetPreviewStatus.error,
     statusPending: tailnetPreviewStatus.isPending && tailnetPreviewStatus.data === null,
     pendingEnabled: pendingTailscalePreviewsEnabled,
+    persistedEnabled: environment.serverConfig?.settings.tailscalePreviewsEnabled === true,
     mutationError: null,
   });
   const stateDotClassName =

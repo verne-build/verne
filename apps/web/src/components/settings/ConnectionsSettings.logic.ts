@@ -87,13 +87,16 @@ function describeTailscalePreviewReadiness(
 export function resolveTailscalePreviewSettingView(input: {
   readonly supported: boolean;
   readonly status: PreviewTailnetStatusResult | null;
+  readonly statusError: string | null;
   readonly statusPending: boolean;
   readonly pendingEnabled: boolean | null;
+  readonly persistedEnabled: boolean;
   readonly mutationError: string | null;
 }): TailscalePreviewSettingView | null {
   if (!input.supported) return null;
 
-  const checked = input.pendingEnabled ?? input.status?.enabled ?? false;
+  const checked =
+    input.pendingEnabled ?? input.status?.enabled ?? (input.persistedEnabled ? true : false);
   if (input.pendingEnabled !== null) {
     return {
       checked,
@@ -120,7 +123,7 @@ export function resolveTailscalePreviewSettingView(input: {
   if (input.status === null) {
     return {
       checked,
-      status: checked ? "Enabled" : null,
+      status: checked ? "Enabled" : input.statusError === null ? null : "Status unavailable",
       description: TAILSCALE_PREVIEW_BASE_DESCRIPTION,
     };
   }
