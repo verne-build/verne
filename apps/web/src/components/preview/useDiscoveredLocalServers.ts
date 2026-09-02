@@ -20,6 +20,9 @@ import {
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { readPreparedConnection } from "~/state/session";
 import { useDiscoveredPortsState } from "~/portDiscoveryState";
+import { useServerConfigs } from "~/state/entities";
+import { previewEnvironment } from "~/state/preview";
+import { useEnvironmentQuery } from "~/state/query";
 
 export interface PreviewableServer extends DiscoveredLocalServer {
   source: "scanner" | "configured";
@@ -87,6 +90,19 @@ export function useThreadPreviewAccessController(input: {
   readonly threadId: ThreadId | null;
 }): PreviewAccessController {
   const scannerState = useDiscoveredPortsState(input.environmentId);
+  const serverConfigs = useServerConfigs();
+  const serverConfig = input.environmentId === null ? null : serverConfigs.get(input.environmentId);
+  const isWeb = typeof window === "undefined" || window.desktopBridge === undefined;
+  const supportsTailnet =
+    serverConfig?.environment.capabilities.tailnetPreviewPublishing?.protocolVersion === 1;
+  const tailnetEnabled = serverConfig?.settings.tailscalePreviewsEnabled === true;
+  const shouldReadStatus =
+    isWeb && input.environmentId !== null && supportsTailnet && tailnetEnabled;
+  const tailnetStatus = useEnvironmentQuery(
+    shouldReadStatus && input.environmentId !== null
+      ? previewEnvironment.tailnetStatus({ environmentId: input.environmentId, input: {} })
+      : null,
+  );
   const controller = useMemo(
     () => createDefaultPreviewAccessController(),
     [input.environmentId, input.threadId],
@@ -98,8 +114,20 @@ export function useThreadPreviewAccessController(input: {
       environmentId: input.environmentId,
       threadId: input.threadId,
       servers: scannerState.servers,
+      ...(shouldReadStatus ? { status: tailnetStatus.data } : {}),
     });
-  }, [controller, input.environmentId, input.threadId, scannerState.servers]);
+  }, [
+    controller,
+    input.environmentId,
+    input.threadId,
+    scannerState.servers,
+    shouldReadStatus,
+    supportsTailnet,
+    tailnetEnabled,
+    tailnetStatus.data,
+    tailnetStatus.error,
+    tailnetStatus.isPending,
+  ]);
 
   useEffect(() => () => void controller.cleanup(), [controller]);
   return controller;

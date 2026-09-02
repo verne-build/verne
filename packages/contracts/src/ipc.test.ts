@@ -1,7 +1,31 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { DesktopEnvironmentBootstrapSchema } from "./ipc.ts";
+import {
+  DesktopEnvironmentBootstrapSchema,
+  DesktopPortForwardEnsureInputSchema,
+  DesktopPortForwardEnsureResultSchema,
+} from "./ipc.ts";
+
+describe("DesktopPortForward", () => {
+  it("accepts a scoped tunnel bootstrap and loopback result", () => {
+    expect(
+      Schema.decodeUnknownSync(DesktopPortForwardEnsureInputSchema)({
+        environmentId: "environment-1",
+        leaseId: "lease-1",
+        httpBaseUrl: "https://vps.example.com/",
+        forwardTicket: "ticket",
+        remotePort: 5173,
+      }),
+    ).toMatchObject({ remotePort: 5173 });
+    expect(
+      Schema.decodeUnknownSync(DesktopPortForwardEnsureResultSchema)({
+        localPort: 5173,
+        localUrl: "http://localhost:5173/",
+      }),
+    ).toEqual({ localPort: 5173, localUrl: "http://localhost:5173/" });
+  });
+});
 
 describe("DesktopEnvironmentBootstrapSchema", () => {
   const decode = Schema.decodeUnknownSync(DesktopEnvironmentBootstrapSchema);

@@ -391,6 +391,38 @@ export const DesktopSshPasswordPromptResolutionInputSchema = Schema.Struct({
   password: Schema.NullOr(Schema.String),
 });
 
+const DesktopPortForwardPortSchema = Schema.Int.check(Schema.isGreaterThan(0)).check(
+  Schema.isLessThan(65_536),
+);
+
+export const DesktopPortForwardEnsureInputSchema = Schema.Struct({
+  environmentId: EnvironmentId,
+  leaseId: Schema.String,
+  httpBaseUrl: Schema.String,
+  forwardTicket: Schema.String,
+  remotePort: DesktopPortForwardPortSchema,
+});
+export type DesktopPortForwardEnsureInput = typeof DesktopPortForwardEnsureInputSchema.Type;
+
+export const DesktopPortForwardEnsureResultSchema = Schema.Struct({
+  localPort: DesktopPortForwardPortSchema,
+  localUrl: Schema.String,
+});
+export type DesktopPortForwardEnsureResult = typeof DesktopPortForwardEnsureResultSchema.Type;
+
+export const DesktopPortForwardReleaseInputSchema = Schema.Struct({
+  environmentId: EnvironmentId,
+  remotePort: DesktopPortForwardPortSchema,
+});
+export type DesktopPortForwardReleaseInput = typeof DesktopPortForwardReleaseInputSchema.Type;
+
+export const DesktopPortForwardClosedEventSchema = Schema.Struct({
+  ...DesktopPortForwardReleaseInputSchema.fields,
+  leaseId: Schema.String,
+  localPort: DesktopPortForwardPortSchema,
+});
+export type DesktopPortForwardClosedEvent = typeof DesktopPortForwardClosedEventSchema.Type;
+
 export const PersistedSavedEnvironmentRecordSchema = Schema.Struct({
   environmentId: EnvironmentId,
   label: Schema.String,
@@ -1117,6 +1149,14 @@ export interface DesktopBridge {
     httpBaseUrl: string,
     bearerToken: string,
   ) => Promise<AuthWebSocketTicketResult>;
+  /** Optional while older desktop shells can host a newer web client. */
+  ensurePortForward?: (
+    input: DesktopPortForwardEnsureInput,
+  ) => Promise<DesktopPortForwardEnsureResult>;
+  /** Optional while older desktop shells can host a newer web client. */
+  releasePortForward?: (input: DesktopPortForwardReleaseInput) => Promise<void>;
+  /** Optional while older desktop shells can host a newer web client. */
+  onPortForwardClosed?: (listener: (event: DesktopPortForwardClosedEvent) => void) => () => void;
   onSshPasswordPrompt: (listener: (request: DesktopSshPasswordPromptRequest) => void) => () => void;
   resolveSshPasswordPrompt: (requestId: string, password: string | null) => Promise<void>;
   getServerExposureState: () => Promise<DesktopServerExposureState>;

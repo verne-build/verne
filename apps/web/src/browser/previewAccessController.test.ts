@@ -6,6 +6,7 @@ import {
 } from "@t3tools/client-runtime/connection";
 import {
   EnvironmentId,
+  PreviewTailnetLeaseNotFoundError,
   ThreadId,
   type DiscoveredLocalServer,
   type PreviewTailnetAcquireResult,
@@ -37,7 +38,11 @@ const tailnetResult = (port: number, generation = 1): PreviewTailnetAcquireResul
   readiness: "ready",
 });
 
-const server = (port: number, owner: string = threadId): DiscoveredLocalServer => ({
+const server = (
+  port: number,
+  owner: string = threadId,
+  overrides: Partial<DiscoveredLocalServer> = {},
+): DiscoveredLocalServer => ({
   host: "localhost",
   connectHost: "127.0.0.1",
   port,
@@ -45,6 +50,7 @@ const server = (port: number, owner: string = threadId): DiscoveredLocalServer =
   processName: "vite",
   pid: 1000 + port,
   terminal: { threadId: ThreadId.make(owner), terminalId: `terminal-${port}` },
+  ...overrides,
 });
 
 function environment(overrides: Partial<PreviewAccessEnvironment> = {}): PreviewAccessEnvironment {
@@ -61,21 +67,33 @@ function environment(overrides: Partial<PreviewAccessEnvironment> = {}): Preview
 
 function manualTimers() {
   let nextId = 0;
+  let now = Date.parse("2026-09-02T11:59:00.000Z");
   const pending = new Map<
     number,
-    { readonly callback: () => void | Promise<void>; readonly delayMs: number }
+    {
+      readonly callback: () => void | Promise<void>;
+      readonly delayMs: number;
+      readonly dueAt: number;
+    }
   >();
   return {
     api: {
       setTimeout: (callback: () => void | Promise<void>, delayMs: number) => {
         const id = ++nextId;
-        pending.set(id, { callback, delayMs });
+        pending.set(id, { callback, delayMs, dueAt: now + delayMs });
         return id;
       },
       clearTimeout: (id: unknown) => pending.delete(id as number),
     },
     size: () => pending.size,
     delays: () => [...pending.values()].map(({ delayMs }) => delayMs),
+    now: () => now,
+    advanceBy: async (delayMs: number) => {
+      now += delayMs;
+      const due = [...pending.entries()].filter(([, timer]) => timer.dueAt <= now);
+      for (const [id] of due) pending.delete(id);
+      await Promise.all(due.map(([, timer]) => timer.callback()));
+    },
     fireAll: async () => {
       const callbacks = [...pending.values()].map(({ callback }) => callback);
       pending.clear();
@@ -88,17 +106,19 @@ function dependencies(
   input: {
     readonly surface?: "desktop" | "web";
     readonly environment?: PreviewAccessEnvironment;
+    readonly readEnvironment?: PreviewAccessControllerDependencies["readEnvironment"];
     readonly acquire?: PreviewAccessControllerDependencies["tailnet"]["acquire"];
     readonly renew?: PreviewAccessControllerDependencies["tailnet"]["renew"];
     readonly release?: PreviewAccessControllerDependencies["tailnet"]["release"];
     readonly setPortEnabled?: PreviewAccessControllerDependencies["tailnet"]["setPortEnabled"];
     readonly prepareDesktop?: PreviewAccessControllerDependencies["prepareDesktop"];
     readonly timers?: PreviewAccessControllerDependencies["timers"];
+    readonly now?: PreviewAccessControllerDependencies["now"];
   } = {},
 ) {
   return {
     surface: input.surface ?? "web",
-    readEnvironment: vi.fn(() => input.environment ?? environment()),
+    readEnvironment: input.readEnvironment ?? vi.fn(() => input.environment ?? environment()),
     prepareDesktop:
       input.prepareDesktop ??
       vi.fn(async ({ target }) => ({
@@ -121,7 +141,7 @@ function dependencies(
         setTimeout: (callback, delayMs) => globalThis.setTimeout(callback, delayMs),
         clearTimeout: (timer) => globalThis.clearTimeout(timer as ReturnType<typeof setTimeout>),
       } satisfies PreviewAccessControllerDependencies["timers"]),
-    now: () => Date.parse("2026-09-02T11:59:00.000Z"),
+    now: input.now ?? (() => Date.parse("2026-09-02T11:59:00.000Z")),
   } satisfies PreviewAccessControllerDependencies;
 }
 
@@ -238,6 +258,29 @@ describe("preview access controller", () => {
       cleanUrl: "https://machine.tailnet.ts.net:5173/app",
       launchUrl: "https://machine.tailnet.ts.net:5173/.well-known/verne-preview/auth#launch-1",
     });
+  });
+
+  it("cancels a pending renewal retry when opt-in is disabled", async () => {
+    const timers = manualTimers();
+    let currentEnvironment = environment();
+    const renew = vi.fn().mockRejectedValueOnce(new Error("socket closed"));
+    const deps = dependencies({
+      readEnvironment: () => currentEnvironment,
+      renew,
+      timers: timers.api,
+      now: timers.now,
+    });
+    const controller = createPreviewAccessController(deps);
+
+    await controller.reconcile({ environmentId, threadId, servers: [server(5173)] });
+    await timers.advanceBy(45_000);
+    expect(timers.size()).toBe(1);
+
+    currentEnvironment = environment({ tailscalePreviewsEnabled: false });
+    await controller.reconcile({ environmentId, threadId, servers: [server(5173)] });
+    expect(timers.size()).toBe(0);
+    await timers.advanceBy(15_000);
+    expect(deps.tailnet.acquire).toHaveBeenCalledOnce();
   });
 
   it("reports unsupported without RPCs when the web capability is absent", async () => {
@@ -375,6 +418,96 @@ describe("preview access controller", () => {
     expect(release).not.toHaveBeenCalled();
   });
 
+  it("applies disappearance grace while the first automatic acquisition is pending", async () => {
+    const timers = manualTimers();
+    let resolveAcquire!: (result: PreviewTailnetAcquireResult) => void;
+    const acquire = vi.fn(
+      () => new Promise<PreviewTailnetAcquireResult>((resolve) => (resolveAcquire = resolve)),
+    );
+    const release = vi.fn(async () => undefined);
+    const controller = createPreviewAccessController(
+      dependencies({ acquire, release, timers: timers.api, now: timers.now }),
+    );
+
+    const acquiring = controller.reconcile({
+      environmentId,
+      threadId,
+      servers: [server(5173)],
+    });
+    await controller.reconcile({ environmentId, threadId, servers: [] });
+    expect(timers.delays()).toContain(15_000);
+
+    await timers.advanceBy(10_000);
+    resolveAcquire(tailnetResult(5173));
+    await acquiring;
+    expect(controller.getPortState({ environmentId, threadId, port: 5173 })).toMatchObject({
+      state: "disappearing",
+    });
+    expect(release).not.toHaveBeenCalled();
+
+    await timers.advanceBy(5_000);
+    expect(release).toHaveBeenCalledWith({ environmentId, leaseId: "lease-5173" });
+  });
+
+  it("releases a late first acquisition after its disappearance grace has elapsed", async () => {
+    const timers = manualTimers();
+    let resolveAcquire!: (result: PreviewTailnetAcquireResult) => void;
+    const acquire = vi.fn(
+      () => new Promise<PreviewTailnetAcquireResult>((resolve) => (resolveAcquire = resolve)),
+    );
+    const release = vi.fn(async () => undefined);
+    const controller = createPreviewAccessController(
+      dependencies({ acquire, release, timers: timers.api, now: timers.now }),
+    );
+
+    const acquiring = controller.reconcile({
+      environmentId,
+      threadId,
+      servers: [server(5173)],
+    });
+    await controller.reconcile({ environmentId, threadId, servers: [] });
+    await timers.advanceBy(15_000);
+    resolveAcquire(tailnetResult(5173));
+    await acquiring;
+
+    expect(release).toHaveBeenCalledWith({ environmentId, leaseId: "lease-5173" });
+    expect(controller.getPortState({ environmentId, threadId, port: 5173 })).toEqual({
+      state: "idle",
+    });
+  });
+
+  it("cancels pending-acquisition disappearance grace when the port is rediscovered", async () => {
+    const timers = manualTimers();
+    let resolveAcquire!: (result: PreviewTailnetAcquireResult) => void;
+    const acquire = vi.fn(
+      () => new Promise<PreviewTailnetAcquireResult>((resolve) => (resolveAcquire = resolve)),
+    );
+    const release = vi.fn(async () => undefined);
+    const controller = createPreviewAccessController(
+      dependencies({ acquire, release, timers: timers.api, now: timers.now }),
+    );
+
+    const acquiring = controller.reconcile({
+      environmentId,
+      threadId,
+      servers: [server(5173)],
+    });
+    await controller.reconcile({ environmentId, threadId, servers: [] });
+    const rediscovered = controller.reconcile({
+      environmentId,
+      threadId,
+      servers: [server(5173)],
+    });
+    resolveAcquire(tailnetResult(5173));
+    await Promise.all([acquiring, rediscovered]);
+    await timers.advanceBy(15_000);
+
+    expect(controller.getPortState({ environmentId, threadId, port: 5173 })).toMatchObject({
+      state: "active",
+    });
+    expect(release).not.toHaveBeenCalled();
+  });
+
   it("renews an existing automatic lease idempotently", async () => {
     const deps = dependencies();
     const controller = createPreviewAccessController(deps);
@@ -397,6 +530,42 @@ describe("preview access controller", () => {
 
     expect(deps.tailnet.renew).toHaveBeenCalledOnce();
   });
+
+  it.each([
+    [
+      "missing lease",
+      new PreviewTailnetLeaseNotFoundError({ leaseId: "lease-5173" }),
+      "gateway-failed",
+    ],
+    ["transport failure", new Error("socket closed"), "gateway-failed"],
+    ["readiness failure", { readiness: "tailscale-unavailable" }, "tailscale-unavailable"],
+  ] as const)(
+    "releases stale state and retries a %s renewal failure",
+    async (_name, failure, readiness) => {
+      const timers = manualTimers();
+      const renew = vi.fn().mockRejectedValueOnce(failure);
+      const release = vi.fn(async () => undefined);
+      const deps = dependencies({ renew, release, timers: timers.api, now: timers.now });
+      const controller = createPreviewAccessController(deps);
+
+      await controller.reconcile({ environmentId, threadId, servers: [server(5173)] });
+      await timers.advanceBy(45_000);
+
+      expect(release).toHaveBeenCalledWith({ environmentId, leaseId: "lease-5173" });
+      expect(controller.getPortState({ environmentId, threadId, port: 5173 })).toEqual({
+        state: "unavailable",
+        readiness,
+      });
+      expect(timers.size()).toBe(1);
+      expect(timers.delays()[0]).toBeGreaterThanOrEqual(1_000);
+
+      await timers.advanceBy(timers.delays()[0] ?? 0);
+      expect(deps.tailnet.acquire).toHaveBeenCalledTimes(2);
+      expect(controller.getPortState({ environmentId, threadId, port: 5173 })).toMatchObject({
+        state: "active",
+      });
+    },
+  );
 
   it("marks a disabled process suppressed and releases its owned lease immediately", async () => {
     const release = vi.fn(async () => undefined);
@@ -446,6 +615,171 @@ describe("preview access controller", () => {
     expect(controller.getPortState({ environmentId, threadId, port: 5173 })).toEqual({
       state: "suppressed",
     });
+    expect(release).toHaveBeenCalledWith({ environmentId, leaseId: "lease-5173" });
+  });
+
+  it("revokes a late fresh launch when explicit disable wins the same port", async () => {
+    let resolveAcquire!: (result: PreviewTailnetAcquireResult) => void;
+    const acquire = vi.fn(
+      () => new Promise<PreviewTailnetAcquireResult>((resolve) => (resolveAcquire = resolve)),
+    );
+    const release = vi.fn(
+      async (_input: { readonly environmentId: EnvironmentId; readonly leaseId: string }) =>
+        undefined,
+    );
+    const controller = createPreviewAccessController(dependencies({ acquire, release }));
+
+    const preparing = controller.prepare({
+      environmentId,
+      threadId,
+      target: { kind: "url", url: "http://localhost:5173/app" },
+    });
+    const disabling = controller.setPortEnabled({
+      environmentId,
+      threadId,
+      port: 5173,
+      enabled: false,
+    });
+    resolveAcquire(tailnetResult(5173));
+
+    await expect(preparing).resolves.toMatchObject({
+      state: "unavailable",
+      readiness: "disabled",
+    });
+    await disabling;
+    expect(controller.getPortState({ environmentId, threadId, port: 5173 })).toEqual({
+      state: "suppressed",
+    });
+    expect(release).toHaveBeenCalledWith({ environmentId, leaseId: "lease-5173" });
+  });
+
+  it("keeps suppression for metadata-only changes in the same observed process", async () => {
+    const deps = dependencies();
+    const controller = createPreviewAccessController(deps);
+    await controller.reconcile({ environmentId, threadId, servers: [server(5173)] });
+    await controller.setPortEnabled({ environmentId, threadId, port: 5173, enabled: false });
+    vi.mocked(deps.tailnet.acquire).mockClear();
+    vi.mocked(deps.tailnet.setPortEnabled).mockClear();
+
+    await controller.reconcile({
+      environmentId,
+      threadId,
+      servers: [
+        server(5173, threadId, { processName: "vite dev", url: "http://localhost:5173/new" }),
+      ],
+    });
+
+    expect(controller.getPortState({ environmentId, threadId, port: 5173 })).toEqual({
+      state: "suppressed",
+    });
+    expect(deps.tailnet.acquire).not.toHaveBeenCalled();
+    expect(deps.tailnet.setPortEnabled).not.toHaveBeenCalled();
+  });
+
+  it("re-enables a suppressed port when a known PID is replaced", async () => {
+    const deps = dependencies();
+    const controller = createPreviewAccessController(deps);
+    await controller.reconcile({ environmentId, threadId, servers: [server(5173)] });
+    await controller.setPortEnabled({ environmentId, threadId, port: 5173, enabled: false });
+    vi.mocked(deps.tailnet.acquire).mockClear();
+    vi.mocked(deps.tailnet.setPortEnabled).mockClear();
+
+    await controller.reconcile({
+      environmentId,
+      threadId,
+      servers: [server(5173, threadId, { pid: 9999 })],
+    });
+
+    expect(deps.tailnet.setPortEnabled).toHaveBeenCalledWith({
+      environmentId,
+      threadId,
+      port: 5173,
+      enabled: true,
+    });
+    expect(deps.tailnet.acquire).toHaveBeenCalledOnce();
+    expect(controller.getPortState({ environmentId, threadId, port: 5173 })).toMatchObject({
+      state: "active",
+    });
+  });
+
+  it("re-enables a suppressed port after disappearance and reappearance", async () => {
+    const deps = dependencies();
+    const controller = createPreviewAccessController(deps);
+    await controller.reconcile({ environmentId, threadId, servers: [server(5173)] });
+    await controller.setPortEnabled({ environmentId, threadId, port: 5173, enabled: false });
+    await controller.reconcile({ environmentId, threadId, servers: [] });
+    vi.mocked(deps.tailnet.acquire).mockClear();
+    vi.mocked(deps.tailnet.setPortEnabled).mockClear();
+
+    await controller.reconcile({ environmentId, threadId, servers: [server(5173)] });
+
+    expect(deps.tailnet.setPortEnabled).toHaveBeenCalledWith({
+      environmentId,
+      threadId,
+      port: 5173,
+      enabled: true,
+    });
+    expect(deps.tailnet.acquire).toHaveBeenCalledOnce();
+  });
+
+  it("observes suppressed-process disappearance while publication is opted out", async () => {
+    let currentEnvironment = environment();
+    const deps = dependencies({ readEnvironment: () => currentEnvironment });
+    const controller = createPreviewAccessController(deps);
+    await controller.reconcile({ environmentId, threadId, servers: [server(5173)] });
+    await controller.setPortEnabled({ environmentId, threadId, port: 5173, enabled: false });
+
+    currentEnvironment = environment({ tailscalePreviewsEnabled: false });
+    await controller.reconcile({ environmentId, threadId, servers: [] });
+    expect(controller.getPortState({ environmentId, threadId, port: 5173 })).toEqual({
+      state: "idle",
+    });
+
+    currentEnvironment = environment();
+    vi.mocked(deps.tailnet.acquire).mockClear();
+    vi.mocked(deps.tailnet.setPortEnabled).mockClear();
+    await controller.reconcile({ environmentId, threadId, servers: [server(5173)] });
+    expect(deps.tailnet.setPortEnabled).toHaveBeenCalledWith({
+      environmentId,
+      threadId,
+      port: 5173,
+      enabled: true,
+    });
+    expect(deps.tailnet.acquire).toHaveBeenCalledOnce();
+  });
+
+  it("reacts to unchanged-port opt-in and status transitions", async () => {
+    let currentEnvironment = environment({ tailscalePreviewsEnabled: false });
+    const release = vi.fn(async () => undefined);
+    const deps = dependencies({
+      readEnvironment: () => currentEnvironment,
+      release,
+    });
+    const controller = createPreviewAccessController(deps);
+    const servers = [server(5173)];
+
+    await controller.reconcile({ environmentId, threadId, servers });
+    expect(deps.tailnet.acquire).not.toHaveBeenCalled();
+
+    currentEnvironment = environment({ tailscalePreviewsEnabled: true });
+    await controller.reconcile({
+      environmentId,
+      threadId,
+      servers,
+      status: { enabled: true, readiness: "tailscale-unavailable" },
+    });
+    expect(deps.tailnet.acquire).not.toHaveBeenCalled();
+
+    await controller.reconcile({
+      environmentId,
+      threadId,
+      servers,
+      status: { enabled: true, readiness: "ready" },
+    });
+    expect(deps.tailnet.acquire).toHaveBeenCalledOnce();
+
+    currentEnvironment = environment({ tailscalePreviewsEnabled: false });
+    await controller.reconcile({ environmentId, threadId, servers });
     expect(release).toHaveBeenCalledWith({ environmentId, leaseId: "lease-5173" });
   });
 

@@ -26,6 +26,7 @@ const MAX_AUTOMATIC_PORTS = 16;
 const DISAPPEARANCE_GRACE_MS = 15_000;
 const RENEWAL_MARGIN_MS = 15_000;
 const MIN_RENEWAL_DELAY_MS = 1_000;
+const MAX_RETRY_DELAY_MS = 15_000;
 
 export interface PreviewAccessEnvironment {
   readonly connection: {
@@ -120,6 +121,7 @@ export interface PreviewAccessReconcileInput {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly servers: ReadonlyArray<DiscoveredLocalServer>;
+  readonly status?: PreviewTailnetStatusResult | null;
 }
 
 export interface PreviewAccessController {
@@ -177,6 +179,10 @@ const readinessFromError = (error: unknown): TailnetPreviewReadiness | null => {
   return null;
 };
 
+class PreviewAccessIntentCancelledError extends Error {
+  readonly readiness = "disabled" as const;
+}
+
 export function createPreviewAccessController(
   dependencies: PreviewAccessControllerDependencies,
 ): PreviewAccessController {
@@ -184,14 +190,32 @@ export function createPreviewAccessController(
   const states = new Map<string, PreviewAccessPortState>();
   const pending = new Map<string, Promise<PreviewTailnetAcquireResult>>();
   const disappearanceTimers = new Map<string, unknown>();
+  const disappearanceDeadlines = new Map<string, number>();
   const renewalTimers = new Map<string, unknown>();
-  const suppressed = new Set<string>();
+  const retryTimers = new Map<string, unknown>();
+  const retryAttempts = new Map<string, number>();
+  const desiredKeys = new Set<string>();
+  const suppressed = new Map<string, number>();
+  const observations = new Map<
+    string,
+    { readonly present: boolean; readonly pid: number | null; readonly lifetime: number }
+  >();
+  const needsEnable = new Set<string>();
+  const intentEpochs = new Map<string, number>();
   const listeners = new Set<() => void>();
   let disposed = false;
   let cleanupPromise: Promise<void> | undefined;
 
   const publish = () => {
     for (const listener of listeners) listener();
+  };
+
+  const intentEpoch = (key: string) => intentEpochs.get(key) ?? 0;
+  const advanceIntent = (key: string) => intentEpochs.set(key, intentEpoch(key) + 1);
+  const isSuppressed = (key: string) => {
+    const suppressedLifetime = suppressed.get(key);
+    if (suppressedLifetime === undefined) return false;
+    return suppressedLifetime === (observations.get(key)?.lifetime ?? 0);
   };
 
   const setState = (key: string, state: PreviewAccessPortState) => {
@@ -205,13 +229,46 @@ export function createPreviewAccessController(
     disappearanceTimers.delete(key);
   };
 
+  const cancelDisappearance = (key: string) => {
+    clearDisappearanceTimer(key);
+    disappearanceDeadlines.delete(key);
+  };
+
   const clearRenewalTimer = (key: string) => {
     const timer = renewalTimers.get(key);
     if (timer !== undefined) dependencies.timers.clearTimeout(timer);
     renewalTimers.delete(key);
   };
 
+  const clearRetryTimer = (key: string) => {
+    const timer = retryTimers.get(key);
+    if (timer !== undefined) dependencies.timers.clearTimeout(timer);
+    retryTimers.delete(key);
+  };
+
   let ensureLease!: (input: TailnetOperationInput) => Promise<void>;
+
+  const retryAllowed = (input: TailnetOperationInput) => {
+    if (disposed || !desiredKeys.has(keyFor(input)) || isSuppressed(keyFor(input))) return false;
+    const environment = dependencies.readEnvironment(input.environmentId);
+    return (
+      environment?.tailnetPreviewPublishing?.protocolVersion === 1 &&
+      environment.tailscalePreviewsEnabled
+    );
+  };
+
+  const scheduleRetry = (input: TailnetOperationInput) => {
+    const key = keyFor(input);
+    if (!retryAllowed(input) || retryTimers.has(key)) return;
+    const attempt = retryAttempts.get(key) ?? 0;
+    const delayMs = Math.min(MAX_RETRY_DELAY_MS, MIN_RENEWAL_DELAY_MS * 2 ** attempt);
+    retryAttempts.set(key, attempt + 1);
+    const timer = dependencies.timers.setTimeout(async () => {
+      retryTimers.delete(key);
+      if (retryAllowed(input)) await ensureLease(input);
+    }, delayMs);
+    retryTimers.set(key, timer);
+  };
 
   const scheduleRenewal = (input: TailnetOperationInput, expiresAt: string) => {
     const key = keyFor(input);
@@ -227,8 +284,14 @@ export function createPreviewAccessController(
     renewalTimers.set(key, timer);
   };
 
-  const remember = (input: TailnetOperationInput, result: PreviewTailnetAcquireResult) => {
+  const remember = (
+    input: TailnetOperationInput,
+    result: PreviewTailnetAcquireResult,
+    state: "active" | "disappearing" = "active",
+  ) => {
     const key = keyFor(input);
+    clearRetryTimer(key);
+    retryAttempts.delete(key);
     leases.set(key, {
       ...input,
       leaseId: result.leaseId,
@@ -236,11 +299,11 @@ export function createPreviewAccessController(
       expiresAt: result.expiresAt,
     });
     setState(key, {
-      state: "active",
+      state,
       cleanUrl: result.cleanUrl,
       expiresAt: result.expiresAt,
     });
-    scheduleRenewal(input, result.expiresAt);
+    if (state === "active") scheduleRenewal(input, result.expiresAt);
   };
 
   const singleFlight = (
@@ -265,20 +328,28 @@ export function createPreviewAccessController(
 
   const acquireFresh = async (input: TailnetOperationInput) => {
     if (disposed) throw new Error("This preview access controller has been disposed.");
+    const key = keyFor(input);
+    const startedAtIntent = intentEpoch(key);
     const result = await singleFlight(input, () => dependencies.tailnet.acquire(input));
+    if (disposed || isSuppressed(key) || intentEpoch(key) !== startedAtIntent) {
+      await dependencies.tailnet
+        .release({ environmentId: input.environmentId, leaseId: result.leaseId })
+        .catch(() => undefined);
+      throw new PreviewAccessIntentCancelledError();
+    }
     remember(input, result);
     return result;
   };
 
   ensureLease = async (input: TailnetOperationInput) => {
-    if (disposed || suppressed.has(keyFor(input))) return;
+    const key = keyFor(input);
+    if (disposed || isSuppressed(key)) return;
+    const startedAtIntent = intentEpoch(key);
     try {
       const result = await singleFlight(input, () =>
-        leases.has(keyFor(input))
-          ? dependencies.tailnet.renew(input)
-          : dependencies.tailnet.acquire(input),
+        leases.has(key) ? dependencies.tailnet.renew(input) : dependencies.tailnet.acquire(input),
       );
-      if (disposed || suppressed.has(keyFor(input))) {
+      if (disposed || isSuppressed(key) || intentEpoch(key) !== startedAtIntent) {
         await dependencies.tailnet
           .release({
             environmentId: input.environmentId,
@@ -287,19 +358,47 @@ export function createPreviewAccessController(
           .catch(() => undefined);
         return;
       }
+      if (!desiredKeys.has(key)) {
+        const deadline = disappearanceDeadlines.get(key);
+        if (deadline === undefined || deadline <= dependencies.now()) {
+          await dependencies.tailnet
+            .release({ environmentId: input.environmentId, leaseId: result.leaseId })
+            .catch(() => undefined);
+          states.delete(key);
+          publish();
+          return;
+        }
+        remember(input, result, "disappearing");
+        return;
+      }
       remember(input, result);
     } catch (error) {
-      const readiness = readinessFromError(error);
-      if (readiness !== null) setState(keyFor(input), { state: "unavailable", readiness });
+      clearRenewalTimer(key);
+      const staleLease = leases.get(key);
+      leases.delete(key);
+      if (staleLease !== undefined) {
+        await dependencies.tailnet
+          .release({ environmentId: staleLease.environmentId, leaseId: staleLease.leaseId })
+          .catch(() => undefined);
+      }
+      if (!isSuppressed(key)) {
+        setState(key, {
+          state: "unavailable",
+          readiness: readinessFromError(error) ?? "gateway-failed",
+        });
+        scheduleRetry(input);
+      }
     }
   };
 
   const releaseKey = async (key: string) => {
     clearDisappearanceTimer(key);
     clearRenewalTimer(key);
+    clearRetryTimer(key);
+    retryAttempts.delete(key);
     const lease = leases.get(key);
     leases.delete(key);
-    if (!suppressed.has(key)) states.delete(key);
+    if (!isSuppressed(key)) states.delete(key);
     if (lease === undefined) return;
     publish();
     await dependencies.tailnet.release({
@@ -308,12 +407,102 @@ export function createPreviewAccessController(
     });
   };
 
+  const scheduleDisappearance = (input: TailnetOperationInput) => {
+    const key = keyFor(input);
+    if (disappearanceDeadlines.has(key)) return;
+    const deadline = dependencies.now() + DISAPPEARANCE_GRACE_MS;
+    disappearanceDeadlines.set(key, deadline);
+    clearRenewalTimer(key);
+    const lease = leases.get(key);
+    if (lease !== undefined) {
+      setState(key, {
+        state: "disappearing",
+        cleanUrl: lease.cleanUrl,
+        expiresAt: lease.expiresAt,
+      });
+    }
+    const timer = dependencies.timers.setTimeout(async () => {
+      disappearanceTimers.delete(key);
+      await releaseKey(key).catch(() => undefined);
+      if (!pending.has(key)) disappearanceDeadlines.delete(key);
+    }, DISAPPEARANCE_GRACE_MS);
+    disappearanceTimers.set(key, timer);
+  };
+
   const releaseMatching = async (environmentId: EnvironmentId, threadId: ThreadId) => {
-    await Promise.allSettled(
-      [...leases.entries()]
-        .filter(([, lease]) => lease.environmentId === environmentId && lease.threadId === threadId)
-        .map(([key]) => releaseKey(key)),
+    const scopedKeys = new Set([
+      ...leases.keys(),
+      ...pending.keys(),
+      ...desiredKeys,
+      ...retryTimers.keys(),
+      ...renewalTimers.keys(),
+      ...disappearanceTimers.keys(),
+      ...states.keys(),
+    ]);
+    const matchingKeys = [...scopedKeys].filter((key) => {
+      const [keyEnvironmentId, keyThreadId] = JSON.parse(key) as [string, string, number];
+      return keyEnvironmentId === environmentId && keyThreadId === threadId;
+    });
+    for (const key of matchingKeys) {
+      desiredKeys.delete(key);
+      advanceIntent(key);
+    }
+    await Promise.allSettled(matchingKeys.map((key) => releaseKey(key)));
+  };
+
+  const observeProcesses = (input: PreviewAccessReconcileInput) => {
+    const current = new Map(
+      input.servers
+        .filter((server) => server.terminal?.threadId === input.threadId)
+        .map((server) => [
+          keyFor({
+            environmentId: input.environmentId,
+            threadId: input.threadId,
+            port: server.port,
+          }),
+          server,
+        ]),
     );
+    const inScope = (key: string) => {
+      const [keyEnvironmentId, keyThreadId] = JSON.parse(key) as [string, string, number];
+      return keyEnvironmentId === input.environmentId && keyThreadId === input.threadId;
+    };
+
+    for (const [key, previous] of observations) {
+      if (!inScope(key) || current.has(key) || !previous.present) continue;
+      observations.set(key, { ...previous, present: false });
+      if (isSuppressed(key)) {
+        suppressed.delete(key);
+        needsEnable.add(key);
+        states.delete(key);
+        publish();
+      }
+    }
+
+    for (const [key, server] of current) {
+      const previous = observations.get(key);
+      const pid = server.pid ?? null;
+      const replaced =
+        previous !== undefined &&
+        previous.present &&
+        previous.pid !== null &&
+        pid !== null &&
+        previous.pid !== pid;
+      const reappeared = previous?.present === false;
+      if (previous === undefined) {
+        observations.set(key, { present: true, pid, lifetime: suppressed.has(key) ? 0 : 1 });
+      } else if (replaced || reappeared) {
+        observations.set(key, { present: true, pid, lifetime: previous.lifetime + 1 });
+        if (suppressed.has(key)) {
+          suppressed.delete(key);
+          needsEnable.add(key);
+          states.delete(key);
+          publish();
+        }
+      } else {
+        observations.set(key, { ...previous, present: true, pid });
+      }
+    }
   };
 
   const prepare = async (input: PreviewAccessPrepareInput): Promise<PreviewAccessResolution> => {
@@ -408,6 +597,7 @@ export function createPreviewAccessController(
 
   const reconcile = async (input: PreviewAccessReconcileInput) => {
     if (disposed || dependencies.surface !== "web") return;
+    observeProcesses(input);
     const environment = dependencies.readEnvironment(input.environmentId);
     if (
       environment?.tailnetPreviewPublishing?.protocolVersion !== 1 ||
@@ -417,54 +607,90 @@ export function createPreviewAccessController(
       return;
     }
 
-    const desired = input.servers
-      .filter((candidate) => candidate.terminal?.threadId === input.threadId)
-      .slice(0, MAX_AUTOMATIC_PORTS)
-      .map((candidate) => ({
-        environmentId: input.environmentId,
-        threadId: input.threadId,
-        port: candidate.port,
-      }));
-    const desiredKeys = new Set(desired.map(keyFor));
-    for (const candidate of desired) clearDisappearanceTimer(keyFor(candidate));
-
-    for (const [key, lease] of leases) {
-      if (
-        lease.environmentId !== input.environmentId ||
-        lease.threadId !== input.threadId ||
-        desiredKeys.has(key) ||
-        disappearanceTimers.has(key)
-      ) {
-        continue;
+    if (input.status === null) {
+      await releaseMatching(input.environmentId, input.threadId);
+      return;
+    }
+    if (
+      input.status !== undefined &&
+      (!input.status.enabled || input.status.readiness !== "ready")
+    ) {
+      await releaseMatching(input.environmentId, input.threadId);
+      for (const candidate of input.servers
+        .filter((server) => server.terminal?.threadId === input.threadId)
+        .slice(0, MAX_AUTOMATIC_PORTS)) {
+        setState(
+          keyFor({
+            environmentId: input.environmentId,
+            threadId: input.threadId,
+            port: candidate.port,
+          }),
+          { state: "unavailable", readiness: input.status.readiness },
+        );
       }
-      setState(key, {
-        state: "disappearing",
-        cleanUrl: lease.cleanUrl,
-        expiresAt: lease.expiresAt,
-      });
-      clearRenewalTimer(key);
-      const timer = dependencies.timers.setTimeout(async () => {
-        disappearanceTimers.delete(key);
-        await releaseKey(key).catch(() => undefined);
-      }, DISAPPEARANCE_GRACE_MS);
-      disappearanceTimers.set(key, timer);
+      return;
     }
 
-    await Promise.all(desired.map(ensureLease));
+    const desiredServers = input.servers
+      .filter((candidate) => candidate.terminal?.threadId === input.threadId)
+      .slice(0, MAX_AUTOMATIC_PORTS);
+    const desired = desiredServers.map((candidate) => ({
+      environmentId: input.environmentId,
+      threadId: input.threadId,
+      port: candidate.port,
+    }));
+    const nextDesiredKeys = new Set(desired.map(keyFor));
+    const inScope = (key: string) => {
+      const [keyEnvironmentId, keyThreadId] = JSON.parse(key) as [string, string, number];
+      return keyEnvironmentId === input.environmentId && keyThreadId === input.threadId;
+    };
+    for (const key of [...desiredKeys]) {
+      if (!inScope(key)) continue;
+      if (!nextDesiredKeys.has(key)) {
+        desiredKeys.delete(key);
+        const lease = leases.get(key);
+        const port = lease?.port ?? (JSON.parse(key) as [string, string, number])[2];
+        scheduleDisappearance({
+          environmentId: input.environmentId,
+          threadId: input.threadId,
+          port,
+        });
+      }
+    }
+    for (const candidate of desired) {
+      const key = keyFor(candidate);
+      desiredKeys.add(key);
+      cancelDisappearance(key);
+    }
+
+    await Promise.all(
+      desired.map(async (candidate) => {
+        const key = keyFor(candidate);
+        if (needsEnable.has(key)) {
+          await dependencies.tailnet.setPortEnabled({ ...candidate, enabled: true });
+          needsEnable.delete(key);
+        }
+        await ensureLease(candidate);
+      }),
+    );
   };
 
   const setPortEnabled = async (input: TailnetOperationInput & { readonly enabled: boolean }) => {
     const key = keyFor(input);
+    advanceIntent(key);
     clearDisappearanceTimer(key);
+    clearRetryTimer(key);
+    retryAttempts.delete(key);
     if (input.enabled) {
       suppressed.delete(key);
+      needsEnable.delete(key);
       states.delete(key);
       publish();
       await dependencies.tailnet.setPortEnabled(input);
       return;
     }
 
-    suppressed.add(key);
+    suppressed.set(key, observations.get(key)?.lifetime ?? 0);
     setState(key, { state: "suppressed" });
     const releaseResult = releaseKey(key).catch(() => undefined);
     const settingResult = dependencies.tailnet.setPortEnabled(input);
@@ -477,6 +703,7 @@ export function createPreviewAccessController(
     disposed = true;
     for (const key of disappearanceTimers.keys()) clearDisappearanceTimer(key);
     for (const key of renewalTimers.keys()) clearRenewalTimer(key);
+    for (const key of retryTimers.keys()) clearRetryTimer(key);
     cleanupPromise = (async () => {
       await Promise.allSettled([...pending.values()]);
       await Promise.allSettled([...leases.keys()].map(releaseKey));

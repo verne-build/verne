@@ -50,6 +50,7 @@ export function createPreviewEnvironmentAtoms<R, E>(
       label: "environment-data:preview:tailnet-status",
       tag: WS_METHODS.previewTailnetStatus,
       staleTimeMs: 5_000,
+      refreshIntervalMs: 15_000,
     }),
     acquireTailnetPreview: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:preview:tailnet-acquire",
