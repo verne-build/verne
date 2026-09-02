@@ -169,6 +169,10 @@ new ones from opening until you enable it again.
 These previews stay private. Verne does not create public sharing links for them and does not fall
 back to Cloudflare or another public route when Tailnet access is unavailable.
 
+An environment supports up to 16 distinct active preview openings at a time. If another port shows
+**Capacity reached**, disable an unused port or wait for an older server or process to disappear
+before retrying.
+
 If Tailnet previews show setup is required, install and start Tailscale on the environment, sign in
 to Tailscale, and enable MagicDNS and Tailscale HTTPS for your tailnet. On Linux, an operator may
 also need to run `sudo tailscale set --operator=<service account>`. Verne never runs `sudo` for
