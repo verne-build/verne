@@ -123,7 +123,7 @@ interface WebProbeSnapshot {
 }
 
 interface ProcessGeneration {
-  readonly pid: number | null;
+  readonly lastKnownPid: number | null;
   readonly value: string;
 }
 
@@ -555,12 +555,21 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
               for (const server of snapshot.discovered) {
                 const key = localServerKey(server.host, server.port);
                 const previous = current.get(key);
-                next.set(
-                  key,
-                  previous?.pid === server.pid
-                    ? previous
-                    : { pid: server.pid, value: `generation-${(nextProcessGeneration += 1)}` },
-                );
+                const generation =
+                  previous === undefined
+                    ? {
+                        lastKnownPid: server.pid,
+                        value: `generation-${(nextProcessGeneration += 1)}`,
+                      }
+                    : server.pid === null
+                      ? previous
+                      : previous.lastKnownPid === null || previous.lastKnownPid === server.pid
+                        ? { ...previous, lastKnownPid: server.pid }
+                        : {
+                            lastKnownPid: server.pid,
+                            value: `generation-${(nextProcessGeneration += 1)}`,
+                          };
+                next.set(key, generation);
               }
               return next;
             }),
@@ -580,7 +589,12 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     Ref.get(processGenerationsRef).pipe(
       Effect.map((generations) => {
         const generation = generations.get(localServerKey(server.host, server.port));
-        return generation?.pid === server.pid ? generation.value : undefined;
+        if (generation === undefined) return undefined;
+        return server.pid === null ||
+          generation.lastKnownPid === null ||
+          generation.lastKnownPid === server.pid
+          ? generation.value
+          : undefined;
       }),
     );
 

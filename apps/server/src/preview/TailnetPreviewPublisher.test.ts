@@ -96,6 +96,7 @@ const makeHarness = Effect.fn("TailnetPreviewPublisherTest.makeHarness")(functio
   readonly servers?: ReadonlyArray<DiscoveredLocalServer>;
   readonly maxPublications?: number;
   readonly leaseTtl?: Duration.Input;
+  readonly publishDuringRetain?: ReadonlyArray<DiscoveredLocalServer>;
 }) {
   const initialServers = input?.servers ?? [server(5173)];
   const discoveredRef = yield* Ref.make(initialServers);
@@ -136,6 +137,8 @@ const makeHarness = Effect.fn("TailnetPreviewPublisherTest.makeHarness")(functio
   const startsRef = yield* Ref.make<ReadonlyArray<{ host: string; port: number }>>([]);
   const closesRef = yield* Ref.make<ReadonlyArray<number>>([]);
   const closeSignal = yield* Deferred.make<void>();
+  const retainPublishStarted = yield* Deferred.make<void>();
+  const retainPublishCompleted = yield* Deferred.make<void>();
   const revokesRef = yield* Ref.make<ReadonlyArray<string>>([]);
   const realAuth = yield* TailnetPreviewAuth.TailnetPreviewAuth;
   const realFileSystem = yield* FileSystem.FileSystem;
@@ -158,7 +161,14 @@ const makeHarness = Effect.fn("TailnetPreviewPublisherTest.makeHarness")(functio
         Ref.set(discoveryListenerRef, undefined),
       ),
     retain: Effect.acquireRelease(
-      Ref.update(discoveryRetainsRef, (count) => count + 1),
+      Effect.gen(function* () {
+        yield* Ref.update(discoveryRetainsRef, (count) => count + 1);
+        if (input?.publishDuringRetain === undefined) return;
+        yield* Deferred.succeed(retainPublishStarted, undefined);
+        const listener = yield* Ref.get(discoveryListenerRef);
+        if (listener !== undefined) yield* listener(input.publishDuringRetain);
+        yield* Deferred.succeed(retainPublishCompleted, undefined);
+      }),
       () => Ref.update(discoveryRetainsRef, (count) => count - 1),
     ),
     registerTerminalProcesses: () => Effect.void,
@@ -337,6 +347,8 @@ const makeHarness = Effect.fn("TailnetPreviewPublisherTest.makeHarness")(functio
     startsRef,
     closesRef,
     closeSignal,
+    retainPublishStarted,
+    retainPublishCompleted,
     revokesRef,
   };
 });
@@ -364,6 +376,44 @@ effectIt.effect("reports disabled without invoking Tailscale", () =>
     yield* harness.settings.updateSettings({ tailscalePreviewsEnabled: false });
     yield* harness.publisher.refreshSettings();
     expect(yield* Ref.get(harness.discoveryRetainsRef)).toBe(0);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+effectIt.effect("enables while retain synchronously publishes and awaits its listener", () =>
+  Effect.gen(function* () {
+    const published = [server(5174)];
+    const harness = yield* makeHarness({
+      enabled: false,
+      publishDuringRetain: published,
+      servers: published,
+    });
+    yield* harness.settings.updateSettings({ tailscalePreviewsEnabled: true });
+
+    const enabled = yield* Deferred.make<void>();
+    const enabling = yield* Effect.all(
+      [harness.publisher.refreshSettings(), harness.publisher.refreshSettings()],
+      { concurrency: "unbounded", discard: true },
+    ).pipe(Effect.andThen(Deferred.succeed(enabled, undefined)), Effect.forkChild);
+    yield* Deferred.await(harness.retainPublishStarted);
+    yield* Deferred.await(harness.retainPublishCompleted);
+    yield* Deferred.await(enabled);
+    yield* Fiber.join(enabling);
+
+    const lease = yield* harness.publisher.acquire({
+      sessionId: "session-a",
+      threadId: "thread-a",
+      port: 5174,
+    });
+    expect(lease).toMatchObject({ port: 5174, readiness: "ready" });
+    expect(yield* Ref.get(harness.discoveryRetainsRef)).toBe(1);
+
+    yield* harness.settings.updateSettings({ tailscalePreviewsEnabled: false });
+    yield* Effect.all([harness.publisher.refreshSettings(), harness.publisher.refreshSettings()], {
+      concurrency: "unbounded",
+      discard: true,
+    });
+    expect(yield* Ref.get(harness.discoveryRetainsRef)).toBe(0);
+    expect(yield* Ref.get(harness.closesRef)).toEqual([43_000]);
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 

@@ -87,7 +87,7 @@ const TestPortDiscoveryLive = PortScanner.layer.pipe(
 const LSOF_TEST_PORT = 43_123;
 
 const makeLsofScannerLayer = (input: {
-  readonly pid: () => number;
+  readonly pid: () => number | null;
   readonly fetch: typeof globalThis.fetch;
   readonly listening?: () => boolean;
   readonly processName?: () => string;
@@ -277,39 +277,112 @@ effectIt.effect("revalidates a successful HTML probe after its cache entry expir
   }).pipe(Effect.provide(layer));
 });
 
-effectIt.effect(
-  "issues a stable private generation across metadata updates and replaces it after PID reuse",
-  () => {
-    let listening = true;
-    let processName = "node";
-    const fetchFn = (() =>
+effectIt.effect("keeps a generation through known, unknown, then the same known PID", () => {
+  let pid: number | null = 1234;
+  const layer = makeLsofScannerLayer({
+    pid: () => pid,
+    fetch: (() =>
       Promise.resolve(
         new Response("app", { headers: { "content-type": "text/html" } }),
-      )) as unknown as typeof globalThis.fetch;
-    const layer = makeLsofScannerLayer({
-      pid: () => 1234,
-      fetch: fetchFn,
-      listening: () => listening,
-      processName: () => processName,
-    });
+      )) as unknown as typeof globalThis.fetch,
+  });
 
-    return Effect.gen(function* () {
-      const scanner = yield* PortScanner.PortDiscovery;
-      const first = (yield* scanner.scan())[0]!;
-      const firstGeneration = yield* scanner.processGeneration(first);
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    const first = (yield* scanner.scan())[0]!;
+    const generation = yield* scanner.processGeneration(first);
+    pid = null;
+    const unknown = (yield* scanner.scan())[0]!;
+    expect(yield* scanner.processGeneration(unknown)).toBe(generation);
+    pid = 1234;
+    const restored = (yield* scanner.scan())[0]!;
+    expect(yield* scanner.processGeneration(restored)).toBe(generation);
+  }).pipe(Effect.provide(layer));
+});
 
-      processName = "bun";
-      const metadataUpdate = (yield* scanner.scan())[0]!;
-      expect(yield* scanner.processGeneration(metadataUpdate)).toBe(firstGeneration);
+effectIt.effect("rotates a generation after unknown PID resolves to a different known PID", () => {
+  let pid: number | null = 1234;
+  const layer = makeLsofScannerLayer({
+    pid: () => pid,
+    fetch: (() =>
+      Promise.resolve(
+        new Response("app", { headers: { "content-type": "text/html" } }),
+      )) as unknown as typeof globalThis.fetch,
+  });
 
-      listening = false;
-      expect(yield* scanner.scan()).toEqual([]);
-      listening = true;
-      const reusedPid = (yield* scanner.scan())[0]!;
-      expect(yield* scanner.processGeneration(reusedPid)).not.toBe(firstGeneration);
-    }).pipe(Effect.provide(layer));
-  },
-);
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    const first = (yield* scanner.scan())[0]!;
+    const generation = yield* scanner.processGeneration(first);
+    pid = null;
+    yield* scanner.scan();
+    pid = 5678;
+    const replacement = (yield* scanner.scan())[0]!;
+    expect(yield* scanner.processGeneration(replacement)).not.toBe(generation);
+  }).pipe(Effect.provide(layer));
+});
+
+effectIt.effect("keeps a generation stable across continuous unknown PID observations", () => {
+  const layer = makeLsofScannerLayer({
+    pid: () => null,
+    fetch: (() =>
+      Promise.resolve(
+        new Response("app", { headers: { "content-type": "text/html" } }),
+      )) as unknown as typeof globalThis.fetch,
+  });
+
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    const first = (yield* scanner.scan())[0]!;
+    const generation = yield* scanner.processGeneration(first);
+    const next = (yield* scanner.scan())[0]!;
+    expect(yield* scanner.processGeneration(next)).toBe(generation);
+  }).pipe(Effect.provide(layer));
+});
+
+effectIt.effect("keeps a generation stable across process metadata changes", () => {
+  let processName = "node";
+  const layer = makeLsofScannerLayer({
+    pid: () => 1234,
+    fetch: (() =>
+      Promise.resolve(
+        new Response("app", { headers: { "content-type": "text/html" } }),
+      )) as unknown as typeof globalThis.fetch,
+    processName: () => processName,
+  });
+
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    const first = (yield* scanner.scan())[0]!;
+    const generation = yield* scanner.processGeneration(first);
+    processName = "bun";
+    const metadataUpdate = (yield* scanner.scan())[0]!;
+    expect(yield* scanner.processGeneration(metadataUpdate)).toBe(generation);
+  }).pipe(Effect.provide(layer));
+});
+
+effectIt.effect("rotates a generation after disappearance even when the PID is reused", () => {
+  let listening = true;
+  const layer = makeLsofScannerLayer({
+    pid: () => 1234,
+    fetch: (() =>
+      Promise.resolve(
+        new Response("app", { headers: { "content-type": "text/html" } }),
+      )) as unknown as typeof globalThis.fetch,
+    listening: () => listening,
+  });
+
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    const first = (yield* scanner.scan())[0]!;
+    const generation = yield* scanner.processGeneration(first);
+    listening = false;
+    expect(yield* scanner.scan()).toEqual([]);
+    listening = true;
+    const reused = (yield* scanner.scan())[0]!;
+    expect(yield* scanner.processGeneration(reused)).not.toBe(generation);
+  }).pipe(Effect.provide(layer));
+});
 
 effectIt.effect("keeps a full configured URL when the discovered server root fails", () => {
   const requests: string[] = [];

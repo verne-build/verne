@@ -263,6 +263,7 @@ export const make = Effect.fn("TailnetPreviewPublisher.make")(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const mutex = yield* Semaphore.make(1);
+  const observationMutex = yield* Semaphore.make(1);
   const workerScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
     Scope.close(scope, Exit.void),
   );
@@ -277,6 +278,8 @@ export const make = Effect.fn("TailnetPreviewPublisher.make")(function* (
   let observationScope: Scope.Closeable | undefined;
 
   const withMutation = <A, E, R>(effect: Effect.Effect<A, E, R>) => mutex.withPermits(1)(effect);
+  const withObservationLifecycle = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    observationMutex.withPermits(1)(effect);
 
   const enabled = settings.getSettings.pipe(
     Effect.map((current) => current.tailscalePreviewsEnabled),
@@ -414,16 +417,16 @@ export const make = Effect.fn("TailnetPreviewPublisher.make")(function* (
 
   const startObservation = Effect.fn("TailnetPreviewPublisher.startObservation")(function* () {
     if (observationScope !== undefined) return;
-    const initialSnapshot = yield* discovery.scan();
-    yield* updateDiscovery(initialSnapshot);
     const scope = yield* Scope.make();
+    observationScope = scope;
     yield* discovery
-      .subscribe({ configuredUrls: [], initialSnapshot }, (servers) =>
+      .subscribe({ configuredUrls: [], initialSnapshot: [] }, (servers) =>
         withMutation(updateDiscovery(servers)),
       )
       .pipe(Effect.provideService(Scope.Scope, scope));
     yield* discovery.retain.pipe(Effect.provideService(Scope.Scope, scope));
-    observationScope = scope;
+    const currentSnapshot = yield* discovery.scan();
+    yield* withMutation(updateDiscovery(currentSnapshot));
   });
 
   const stopObservation = Effect.fn("TailnetPreviewPublisher.stopObservation")(function* () {
@@ -538,7 +541,6 @@ export const make = Effect.fn("TailnetPreviewPublisher.make")(function* (
     requiredLease?: Lease,
   ) {
     const magicDnsName = yield* requireReady(input.port);
-    yield* startObservation();
     const discovered = yield* currentServer(input.threadId, input.port);
     if (discovered === undefined) {
       return yield* new PreviewTailnetUnavailableError({
@@ -671,7 +673,16 @@ export const make = Effect.fn("TailnetPreviewPublisher.make")(function* (
 
   const acquire: TailnetPreviewPublisher["Service"]["acquire"] = Effect.fn(
     "TailnetPreviewPublisher.acquire",
-  )((input) => withMutation(acquireLocked(input)));
+  )((input) =>
+    Effect.gen(function* () {
+      yield* withObservationLifecycle(
+        Effect.gen(function* () {
+          if (yield* enabled) yield* startObservation();
+        }),
+      );
+      return yield* withMutation(acquireLocked(input));
+    }),
+  );
 
   const renew: TailnetPreviewPublisher["Service"]["renew"] = Effect.fn(
     "TailnetPreviewPublisher.renew",
@@ -777,13 +788,15 @@ export const make = Effect.fn("TailnetPreviewPublisher.make")(function* (
   const refreshSettings: TailnetPreviewPublisher["Service"]["refreshSettings"] = Effect.fn(
     "TailnetPreviewPublisher.refreshSettings",
   )(function* () {
-    yield* withMutation(
+    yield* withObservationLifecycle(
       Effect.gen(function* () {
         if (yield* enabled) {
           yield* startObservation();
           return;
         }
-        yield* Effect.forEach([...publications.values()], teardownPublication, { discard: true });
+        yield* withMutation(
+          Effect.forEach([...publications.values()], teardownPublication, { discard: true }),
+        );
         yield* stopObservation();
       }),
     );
@@ -825,32 +838,42 @@ export const make = Effect.fn("TailnetPreviewPublisher.make")(function* (
     );
   });
 
-  const shutdown = withMutation(
+  const shutdown = withObservationLifecycle(
     Effect.gen(function* () {
+      yield* withMutation(
+        Effect.gen(function* () {
+          yield* Effect.forEach([...publications.values()], teardownPublication, {
+            discard: true,
+          });
+          leases.clear();
+          for (const record of ownership.values()) {
+            if (publications.has(record.servePort)) continue;
+            const removed = yield* Effect.result(tailscale.disableOwned(mappingInput(record)));
+            if (Result.isSuccess(removed)) {
+              ownership.delete(record.servePort);
+            } else {
+              yield* Effect.logWarning(
+                "Tailnet preview shutdown left exact mapping cleanup for startup reconciliation.",
+                {
+                  port: record.servePort,
+                  readiness: readinessFromTailscaleError(removed.failure, "serve"),
+                },
+              );
+            }
+          }
+          yield* persistOwnership().pipe(Effect.ignoreCause({ log: true }));
+        }),
+      );
       yield* stopObservation();
-      yield* Effect.forEach([...publications.values()], teardownPublication, { discard: true });
-      leases.clear();
-      for (const record of ownership.values()) {
-        if (publications.has(record.servePort)) continue;
-        const removed = yield* Effect.result(tailscale.disableOwned(mappingInput(record)));
-        if (Result.isSuccess(removed)) {
-          ownership.delete(record.servePort);
-        } else {
-          yield* Effect.logWarning(
-            "Tailnet preview shutdown left exact mapping cleanup for startup reconciliation.",
-            {
-              port: record.servePort,
-              readiness: readinessFromTailscaleError(removed.failure, "serve"),
-            },
-          );
-        }
-      }
-      yield* persistOwnership().pipe(Effect.ignoreCause({ log: true }));
     }),
   );
   yield* Effect.addFinalizer(() => shutdown);
 
-  if (yield* enabled) yield* withMutation(startObservation());
+  yield* withObservationLifecycle(
+    Effect.gen(function* () {
+      if (yield* enabled) yield* startObservation();
+    }),
+  );
 
   return TailnetPreviewPublisher.of({
     status,
