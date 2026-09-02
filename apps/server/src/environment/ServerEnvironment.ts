@@ -222,6 +222,8 @@ export const make = Effect.gen(function* () {
       threadPinReorder: true,
       threadTitleRegeneration: true,
       threadPullRequestLinking: true,
+      tailnetPreviewPublishing: { protocolVersion: 1, requiredScope: "preview:access" },
+      portForwarding: { protocolVersion: 1, requiredScope: "preview:access" },
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
       ...(serverSelfUpdate === "boot-service" ? { serverSelfUpdateProgress: true } : {}),
     },

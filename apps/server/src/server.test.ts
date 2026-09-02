@@ -26,6 +26,7 @@ import {
   type OrchestrationEvent,
   ORCHESTRATION_WS_METHODS,
   type PreviewEvent,
+  PreviewTailnetUnavailableError,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -137,6 +138,7 @@ import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
+import * as TailnetPreviewPublisher from "./preview/TailnetPreviewPublisher.ts";
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "./project/T3ProjectFileLoader.ts";
@@ -483,6 +485,7 @@ const buildAppUnderTest = (options?: {
     desktopTelemetryReceiver?: Partial<
       DesktopTelemetryReceiver.DesktopTelemetryReceiver["Service"]
     >;
+    tailnetPreviewPublisher?: Partial<TailnetPreviewPublisher.TailnetPreviewPublisher["Service"]>;
   };
 }) =>
   Effect.gen(function* () {
@@ -724,6 +727,7 @@ const buildAppUnderTest = (options?: {
           getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
           updateSettings: () => Effect.succeed(DEFAULT_SERVER_SETTINGS),
           streamChanges: Stream.empty,
+          subscribeChanges: Effect.succeed(Stream.empty),
           ...options?.layers?.serverSettings,
         }),
       ),
@@ -917,6 +921,20 @@ const buildAppUnderTest = (options?: {
 
     const appLayer = servedRoutesLayer.pipe(
       Layer.provide(resourceTelemetryLayer),
+      Layer.provide(
+        Layer.mock(TailnetPreviewPublisher.TailnetPreviewPublisher)({
+          status: () => Effect.succeed({ enabled: false, readiness: "disabled" as const }),
+          acquire: () => Effect.die("Tailnet preview acquire is not stubbed in this test"),
+          renew: () => Effect.die("Tailnet preview renew is not stubbed in this test"),
+          release: () => Effect.die("Tailnet preview release is not stubbed in this test"),
+          releaseSession: () => Effect.void,
+          setPortEnabled: () =>
+            Effect.die("Tailnet preview setPortEnabled is not stubbed in this test"),
+          refreshSettings: () => Effect.void,
+          reconcileStartup: () => Effect.succeed({ conflicts: [] }),
+          ...options?.layers?.tailnetPreviewPublisher,
+        }),
+      ),
       Layer.provide(UsageService.layerTest),
       Layer.provide(
         Layer.mock(AnalyticsService.AnalyticsService)({
@@ -1167,7 +1185,7 @@ const exchangeAccessToken = (
         requested_token_type: AuthAccessTokenType,
         scope:
           options?.scope ??
-          "orchestration:read orchestration:operate terminal:operate review:write relay:read access:read access:write relay:write",
+          "orchestration:read orchestration:operate terminal:operate review:write relay:read preview:access access:read access:write relay:write",
         ...(options?.clientMetadata?.label ? { client_label: options.clientMetadata.label } : {}),
         ...(options?.clientMetadata?.deviceType
           ? { client_device_type: options.clientMetadata.deviceType }
@@ -1775,7 +1793,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(tokenBody.token_type, "Bearer");
       assert.equal(
         tokenBody.scope,
-        "orchestration:read orchestration:operate terminal:operate review:write relay:read access:read access:write relay:write",
+        "orchestration:read orchestration:operate terminal:operate review:write relay:read preview:access access:read access:write relay:write",
       );
       assert.equal(typeof tokenBody.access_token, "string");
 
@@ -1800,6 +1818,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         "terminal:operate",
         "review:write",
         "relay:read",
+        "preview:access",
         "access:read",
         "access:write",
         "relay:write",
@@ -4329,6 +4348,245 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.equal(response.environment.environmentId, testEnvironmentDescriptor.environmentId);
         assert.equal(response.auth.policy, "desktop-managed-local");
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect(
+    "routes Tailnet preview RPCs with socket-owned sessions and releases on disconnect",
+    () =>
+      Effect.gen(function* () {
+        const calls: Array<{
+          readonly operation: string;
+          readonly sessionId?: string;
+        }> = [];
+        const disconnected = yield* Deferred.make<string>();
+        const result = {
+          leaseId: "tailnet-lease-test",
+          port: 4173,
+          cleanUrl: "https://example.tailnet.ts.net:4173/",
+          launchUrl: "https://example.tailnet.ts.net:4173/__verne/launch#secret",
+          expiresAt: "2026-09-02T01:00:00.000Z",
+          readiness: "ready" as const,
+        };
+        yield* buildAppUnderTest({
+          layers: {
+            tailnetPreviewPublisher: {
+              status: () => Effect.succeed({ enabled: true, readiness: "ready" }),
+              acquire: (input) =>
+                Effect.sync(() => {
+                  calls.push({ operation: "acquire", sessionId: input.sessionId });
+                  return result;
+                }),
+              renew: (input) =>
+                Effect.sync(() => {
+                  calls.push({ operation: "renew", sessionId: input.sessionId });
+                  return result;
+                }),
+              release: (input) =>
+                Effect.sync(() => {
+                  calls.push({ operation: "release", sessionId: input.sessionId });
+                }),
+              releaseSession: (sessionId) =>
+                Effect.sync(() => calls.push({ operation: "releaseSession", sessionId })).pipe(
+                  Effect.andThen(Deferred.succeed(disconnected, sessionId)),
+                  Effect.asVoid,
+                ),
+              setPortEnabled: () =>
+                Effect.sync(() => {
+                  calls.push({ operation: "setPortEnabled" });
+                  return { enabled: true, readiness: "ready" as const };
+                }),
+            },
+          },
+        });
+
+        const { cookie } = yield* bootstrapBrowserSession();
+        const wsUrl = appendSessionCookieToWsUrl(
+          yield* getWsServerUrl("/ws", { authenticated: false }),
+          cookie?.split(";")[0] ?? "",
+        );
+        yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            Effect.gen(function* () {
+              assert.deepEqual(yield* client[WS_METHODS.previewTailnetStatus]({}), {
+                enabled: true,
+                readiness: "ready",
+              });
+              yield* client[WS_METHODS.previewTailnetAcquire]({
+                threadId: defaultThreadId,
+                port: 4173,
+                sessionId: "payload-controlled-session",
+              } as { threadId: ThreadId; port: number });
+              yield* client[WS_METHODS.previewTailnetRenew]({
+                threadId: defaultThreadId,
+                port: 4173,
+              });
+              yield* client[WS_METHODS.previewTailnetSetPortEnabled]({
+                threadId: defaultThreadId,
+                port: 4173,
+                enabled: false,
+              });
+              yield* client[WS_METHODS.previewTailnetRelease]({ leaseId: result.leaseId });
+            }),
+          ),
+        );
+        const disconnectedSessionId = yield* Deferred.await(disconnected).pipe(
+          Effect.timeout("2 seconds"),
+        );
+        const sessionIds = calls.flatMap((call) =>
+          call.sessionId === undefined ? [] : [call.sessionId],
+        );
+
+        assert.deepEqual(
+          calls.map((call) => call.operation),
+          ["acquire", "renew", "setPortEnabled", "release", "releaseSession"],
+        );
+        assert.isTrue(sessionIds.every((sessionId) => sessionId === disconnectedSessionId));
+        assert.notEqual(disconnectedSessionId, "payload-controlled-session");
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("denies Tailnet preview RPCs without preview access scope", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const { body } = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
+        scope: "orchestration:read",
+      });
+      const wsTicketUrl = yield* getHttpServerUrl("/api/auth/websocket-ticket");
+      const wsTicketResponse = yield* fetchEffect(wsTicketUrl, {
+        method: "POST",
+        headers: { authorization: `Bearer ${body.access_token ?? ""}` },
+      });
+      const wsTicket = yield* responseJsonEffect<{ readonly ticket: string }>(wsTicketResponse);
+      const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(wsTicket.ticket)}`;
+
+      const error = yield* Effect.flip(
+        Effect.scoped(
+          withWsRpcClient(wsUrl, (client) => client[WS_METHODS.previewTailnetStatus]({})),
+        ),
+      );
+
+      assert.equal(error._tag, "EnvironmentAuthorizationError");
+      if (error._tag === "EnvironmentAuthorizationError") {
+        assert.equal(error.requiredScope, "preview:access");
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("preserves typed Tailnet publication failures across websocket RPC", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        layers: {
+          tailnetPreviewPublisher: {
+            acquire: ({ port }) =>
+              Effect.fail(new PreviewTailnetUnavailableError({ port, readiness: "not-logged-in" })),
+          },
+        },
+      });
+      const wsUrl = yield* getWsServerUrl("/ws");
+
+      const error = yield* Effect.flip(
+        Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.previewTailnetAcquire]({ threadId: defaultThreadId, port: 4173 }),
+          ),
+        ),
+      );
+
+      assert.equal(error._tag, "PreviewTailnetUnavailableError");
+      if (error._tag === "PreviewTailnetUnavailableError") {
+        assert.equal(error.port, 4173);
+        assert.equal(error.readiness, "not-logged-in");
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("reconciles Tailnet publications before an acquire can run", () =>
+    Effect.gen(function* () {
+      const reconciled = yield* Ref.make(false);
+      yield* buildAppUnderTest({
+        layers: {
+          tailnetPreviewPublisher: {
+            reconcileStartup: () => Ref.set(reconciled, true).pipe(Effect.as({ conflicts: [] })),
+            acquire: ({ port }) =>
+              Ref.get(reconciled).pipe(
+                Effect.flatMap((ready) =>
+                  ready
+                    ? Effect.succeed({
+                        leaseId: "startup-lease",
+                        port,
+                        cleanUrl: `https://example.tailnet.ts.net:${port}/`,
+                        launchUrl: `https://example.tailnet.ts.net:${port}/__verne/launch#secret`,
+                        expiresAt: "2026-09-02T01:00:00.000Z",
+                        readiness: "ready" as const,
+                      })
+                    : Effect.die("Tailnet preview acquire ran before startup reconciliation"),
+                ),
+              ),
+          },
+        },
+      });
+      const wsUrl = yield* getWsServerUrl("/ws");
+
+      const lease = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.previewTailnetAcquire]({ threadId: defaultThreadId, port: 4173 }),
+        ),
+      );
+
+      assert.equal(lease.leaseId, "startup-lease");
+      assert.isTrue(yield* Ref.get(reconciled));
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("refreshes Tailnet publications when the existing settings patch opts out", () =>
+    Effect.gen(function* () {
+      const changes = yield* PubSub.unbounded<typeof DEFAULT_SERVER_SETTINGS>();
+      const current = yield* Ref.make({
+        ...DEFAULT_SERVER_SETTINGS,
+        tailscalePreviewsEnabled: true,
+      });
+      const cleanedUp = yield* Deferred.make<void>();
+      yield* buildAppUnderTest({
+        layers: {
+          serverSettings: {
+            getSettings: Ref.get(current),
+            updateSettings: (patch) =>
+              Ref.updateAndGet(current, (settings) => ({
+                ...settings,
+                ...(patch.tailscalePreviewsEnabled === undefined
+                  ? {}
+                  : { tailscalePreviewsEnabled: patch.tailscalePreviewsEnabled }),
+              })).pipe(Effect.tap((settings) => PubSub.publish(changes, settings))),
+            streamChanges: Stream.fromPubSub(changes),
+            subscribeChanges: PubSub.subscribe(changes).pipe(
+              Effect.map((subscription) => Stream.fromSubscription(subscription)),
+            ),
+          },
+          tailnetPreviewPublisher: {
+            refreshSettings: () =>
+              Ref.get(current).pipe(
+                Effect.flatMap((settings) =>
+                  settings.tailscalePreviewsEnabled
+                    ? Effect.void
+                    : Deferred.succeed(cleanedUp, undefined).pipe(Effect.asVoid),
+                ),
+              ),
+          },
+        },
+      });
+      const wsUrl = yield* getWsServerUrl("/ws");
+
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.serverUpdateSettings]({
+            patch: { tailscalePreviewsEnabled: false },
+          }),
+        ),
+      );
+      yield* Deferred.await(cleanedUp).pipe(Effect.timeout("2 seconds"));
+
+      assert.isFalse((yield* Ref.get(current)).tailscalePreviewsEnabled);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("proxies browser OTLP trace exports through the server", () =>

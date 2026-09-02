@@ -106,6 +106,8 @@ import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
 import { deletePendingAttachment, issueAttachmentUploadUrl } from "./assets/AttachmentUpload.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
+import * as PortForwarding from "./preview/PortForwarding.ts";
+import * as TailnetPreviewPublisher from "./preview/TailnetPreviewPublisher.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import { readWorkflowScript } from "./orchestration/workflowScriptQuery.ts";
@@ -456,6 +458,8 @@ const makeWsRpcLayer = (
   clientOrigin: OrchestrationClientOrigin,
   clientAnalyticsProps: Readonly<Record<string, unknown>>,
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
+  portForwarding: PortForwarding.PortForwarding["Service"],
+  tailnetPreviewPublisher: TailnetPreviewPublisher.TailnetPreviewPublisher["Service"],
 ) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
@@ -2314,6 +2318,46 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.previewReportStatus, previewManager.reportStatus(input), {
             "rpc.aggregate": "preview",
           }),
+        [WS_METHODS.previewTailnetStatus]: (_input) =>
+          observeRpcEffect(WS_METHODS.previewTailnetStatus, tailnetPreviewPublisher.status(), {
+            "rpc.aggregate": "preview-tailnet",
+          }),
+        [WS_METHODS.previewTailnetAcquire]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.previewTailnetAcquire,
+            tailnetPreviewPublisher.acquire({ ...input, sessionId: currentSessionId }),
+            { "rpc.aggregate": "preview-tailnet" },
+          ),
+        [WS_METHODS.previewTailnetRenew]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.previewTailnetRenew,
+            tailnetPreviewPublisher.renew({ ...input, sessionId: currentSessionId }),
+            { "rpc.aggregate": "preview-tailnet" },
+          ),
+        [WS_METHODS.previewTailnetRelease]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.previewTailnetRelease,
+            tailnetPreviewPublisher.release({ ...input, sessionId: currentSessionId }),
+            { "rpc.aggregate": "preview-tailnet" },
+          ),
+        [WS_METHODS.previewTailnetSetPortEnabled]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.previewTailnetSetPortEnabled,
+            tailnetPreviewPublisher.setPortEnabled(input),
+            { "rpc.aggregate": "preview-tailnet" },
+          ),
+        [WS_METHODS.previewPortForwardAcquire]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.previewPortForwardAcquire,
+            portForwarding.acquire({ sessionId: currentSessionId, port: input.port }),
+            { "rpc.aggregate": "preview-port-forward" },
+          ),
+        [WS_METHODS.previewPortForwardRelease]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.previewPortForwardRelease,
+            portForwarding.release({ sessionId: currentSessionId, leaseId: input.leaseId }),
+            { "rpc.aggregate": "preview-port-forward" },
+          ),
         [WS_METHODS.previewAutomationConnect]: (input) =>
           observeRpcStreamEffect(
             WS_METHODS.previewAutomationConnect,
@@ -2511,6 +2555,8 @@ const makeWsRpcLayer = (
 export const websocketRpcRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+    const portForwarding = yield* PortForwarding.PortForwarding;
+    const tailnetPreviewPublisher = yield* TailnetPreviewPublisher.TailnetPreviewPublisher;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const pullRequests = yield* PullRequestService.PullRequestService;
     return HttpRouter.add(
@@ -2545,6 +2591,8 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               clientOrigin,
               clientAnalyticsProps,
               previewAutomationBroker,
+              portForwarding,
+              tailnetPreviewPublisher,
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(ProviderMaintenanceRunner.layer),
@@ -2579,7 +2627,15 @@ export const websocketRpcRouteLayer = Layer.unwrap(
         return yield* Effect.acquireUseRelease(
           sessions.markConnected(session.sessionId),
           () => rpcWebSocketHttpEffect,
-          () => sessions.markDisconnected(session.sessionId),
+          () =>
+            Effect.all(
+              [
+                sessions.markDisconnected(session.sessionId),
+                portForwarding.releaseSession(session.sessionId),
+                tailnetPreviewPublisher.releaseSession(session.sessionId),
+              ],
+              { concurrency: "unbounded", discard: true },
+            ),
         );
       }).pipe(
         Effect.catchTags({

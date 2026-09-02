@@ -4,6 +4,8 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
+import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
@@ -51,6 +53,10 @@ import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
+import * as PortForwarding from "./preview/PortForwarding.ts";
+import * as PortForwardTunnel from "./preview/PortForwardTunnel.ts";
+import * as TailnetPreviewAuth from "./preview/TailnetPreviewAuth.ts";
+import * as TailnetPreviewPublisher from "./preview/TailnetPreviewPublisher.ts";
 import * as ProcessRunner from "./processRunner.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
@@ -353,6 +359,44 @@ const PreviewLayerLive = Layer.empty.pipe(
   Layer.provideMerge(PortScannerLayerLive),
 );
 
+const TailnetPreviewPublisherLayerLive = Layer.unwrap(
+  Effect.gen(function* () {
+    const environment = yield* ServerEnvironment.ServerEnvironment;
+    const environmentId = yield* environment.getEnvironmentId;
+    return TailnetPreviewPublisher.layer({ environmentId }).pipe(
+      Layer.provide(TailnetPreviewAuth.layer),
+      Layer.provide(PortScannerLayerLive),
+      Layer.provide(ServerSettingsLayerLive),
+    );
+  }),
+);
+
+const tailnetPreviewLifecycleLayer = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const publisher = yield* TailnetPreviewPublisher.TailnetPreviewPublisher;
+    const changes = yield* settings.subscribeChanges;
+    yield* settings.start;
+    const enabled = yield* settings.getSettings.pipe(
+      Effect.map((current) => current.tailscalePreviewsEnabled),
+    );
+    const enabledRef = yield* Ref.make(enabled);
+    yield* publisher.reconcileStartup();
+    yield* changes.pipe(
+      Stream.runForEach((current) =>
+        Ref.getAndSet(enabledRef, current.tailscalePreviewsEnabled).pipe(
+          Effect.flatMap((previous) =>
+            previous === current.tailscalePreviewsEnabled
+              ? Effect.void
+              : publisher.refreshSettings(),
+          ),
+        ),
+      ),
+      Effect.forkScoped,
+    );
+  }),
+);
+
 const WorkspaceEntriesLayerLive = WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer));
 
 const WorkspaceFileSystemLayerLive = WorkspaceFileSystem.layer.pipe(
@@ -373,6 +417,10 @@ const ProjectFaviconResolverLayerLive = ProjectFaviconResolver.layer.pipe(
 
 const ServerEnvironmentLayerLive = ServerEnvironment.layer.pipe(
   Layer.provide(ServerSecretStore.layer),
+);
+
+const TailnetPreviewServicesLayerLive = TailnetPreviewPublisherLayerLive.pipe(
+  Layer.provideMerge(ServerEnvironmentLayerLive),
 );
 
 const AuthLayerLive = EnvironmentAuth.layer.pipe(
@@ -434,7 +482,7 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(WorkspaceLayerLive),
   Layer.provideMerge(ProjectFaviconResolverLayerLive),
   Layer.provideMerge(RepositoryIdentityResolver.layer),
-  Layer.provideMerge(ServerEnvironmentLayerLive),
+  Layer.provideMerge(TailnetPreviewServicesLayerLive),
   Layer.provideMerge(AuthLayerLive),
   Layer.provideMerge(ServerSecretStore.layer),
   Layer.provideMerge(
@@ -484,6 +532,8 @@ export const makeRoutesLayer = Layer.mergeAll(
     attachmentUploadRouteLayer,
     staticAndDevRouteLayer,
     websocketRpcRouteLayer,
+    PortForwardTunnel.routeLayer,
+    tailnetPreviewLifecycleLayer,
   ),
   McpHttpServer.layer.pipe(Layer.provide(McpSessionRegistry.layer)),
 ).pipe(
@@ -492,6 +542,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   Layer.provide(PullRequestServiceLive),
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(ServerSelfUpdate.layer),
+  Layer.provide(PortForwarding.layer),
   Layer.provide(commandReadinessLayer),
   Layer.provide(browserApiCorsLayer),
   Layer.provide(httpCompressionLayer),

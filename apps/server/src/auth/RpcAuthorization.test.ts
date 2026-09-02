@@ -1,6 +1,7 @@
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthPreviewAccessScope,
   AuthRelayReadScope,
   AuthRelayWriteScope,
   WS_METHODS,
@@ -41,6 +42,27 @@ describe("RPC authorization scopes", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.providerUploadFeedback)).toBe(
       AuthOrchestrationOperateScope,
     );
+  });
+
+  it("requires dedicated preview access for port-forward leases", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.previewPortForwardAcquire)).toBe(
+      AuthPreviewAccessScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.previewPortForwardRelease)).toBe(
+      AuthPreviewAccessScope,
+    );
+  });
+
+  it("requires dedicated preview access for every Tailnet publication operation", () => {
+    for (const method of [
+      WS_METHODS.previewTailnetStatus,
+      WS_METHODS.previewTailnetAcquire,
+      WS_METHODS.previewTailnetRenew,
+      WS_METHODS.previewTailnetRelease,
+      WS_METHODS.previewTailnetSetPortEnabled,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthPreviewAccessScope);
+    }
   });
 
   it("reads the reviewer menu under the same scope as the pull request it belongs to", () => {
