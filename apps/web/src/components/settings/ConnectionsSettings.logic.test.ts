@@ -1,10 +1,17 @@
-import type { AdvertisedEndpoint, DesktopWslState } from "@t3tools/contracts";
+import type {
+  AdvertisedEndpoint,
+  DesktopWslState,
+  PreviewTailnetStatusResult,
+} from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
+  applyTailscalePreviewsSettingChange,
   applyWslEnableSelection,
   isQrShareableEndpoint,
+  resolveTailscalePreviewSettingView,
   isWslSettingsRowVisible,
   selectQrEndpointOption,
+  supportsTailscalePreviewSettings,
 } from "./ConnectionsSettings.logic";
 
 const baseWslState: DesktopWslState = {
@@ -181,5 +188,143 @@ describe("selectQrEndpointOption", () => {
     const loopbackOnly = options.slice(0, 1);
     expect(selectQrEndpointOption(loopbackOnly, null, null)?.id).toBe("desktop-loopback:4780");
     expect(selectQrEndpointOption([], "anything", "anything")).toBeNull();
+  });
+});
+
+describe("supportsTailscalePreviewSettings", () => {
+  it("shows the opt-in only for environments that advertise protocol v1", () => {
+    expect(supportsTailscalePreviewSettings(undefined)).toBe(false);
+    expect(
+      supportsTailscalePreviewSettings({
+        protocolVersion: 1,
+        requiredScope: "preview:access",
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("resolveTailscalePreviewSettingView", () => {
+  const readyStatus: PreviewTailnetStatusResult = {
+    enabled: true,
+    readiness: "ready",
+  };
+
+  it("hides the toggle under version skew", () => {
+    expect(
+      resolveTailscalePreviewSettingView({
+        supported: false,
+        status: null,
+        statusPending: false,
+        pendingEnabled: null,
+        mutationError: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("explains same-Tailnet browser access when previews are active", () => {
+    expect(
+      resolveTailscalePreviewSettingView({
+        supported: true,
+        status: readyStatus,
+        statusPending: false,
+        pendingEnabled: null,
+        mutationError: null,
+      }),
+    ).toMatchObject({
+      checked: true,
+      status: "Active",
+      description: expect.stringContaining("same Tailnet"),
+    });
+    expect(
+      resolveTailscalePreviewSettingView({
+        supported: true,
+        status: readyStatus,
+        statusPending: false,
+        pendingEnabled: null,
+        mutationError: null,
+      })?.description,
+    ).toContain("ACL");
+  });
+
+  it("keeps closed-state remediation actionable after opting out", () => {
+    expect(
+      resolveTailscalePreviewSettingView({
+        supported: true,
+        status: { enabled: false, readiness: "disabled" },
+        statusPending: false,
+        pendingEnabled: null,
+        mutationError: null,
+      }),
+    ).toMatchObject({
+      checked: false,
+      status: "Closed",
+      description: expect.stringContaining("Enable Tailscale previews"),
+    });
+  });
+
+  it("shows the Linux operator command as user-run guidance only", () => {
+    const view = resolveTailscalePreviewSettingView({
+      supported: true,
+      status: { enabled: true, readiness: "permission-denied" },
+      statusPending: false,
+      pendingEnabled: null,
+      mutationError: null,
+    });
+
+    expect(view).toMatchObject({
+      status: "Permission required",
+      description: expect.stringContaining("sudo tailscale set --operator=<service account>"),
+    });
+    expect(view?.description).toContain("Verne never runs sudo.");
+  });
+});
+
+describe("applyTailscalePreviewsSettingChange", () => {
+  it("enables Tailnet previews by patching the selected environment settings", async () => {
+    const patchSettings = vi.fn(async () => undefined);
+    const confirmDisable = vi.fn(async () => true);
+
+    const result = await applyTailscalePreviewsSettingChange({
+      enabled: true,
+      hasActivePublications: false,
+      patchSettings,
+      confirmDisable,
+    });
+
+    expect(result).toBe("updated");
+    expect(confirmDisable).not.toHaveBeenCalled();
+    expect(patchSettings).toHaveBeenCalledWith({ tailscalePreviewsEnabled: true });
+  });
+
+  it("confirms before disabling when publications are active, then patches false", async () => {
+    const patchSettings = vi.fn(async () => undefined);
+    const confirmDisable = vi.fn(async () => true);
+
+    const result = await applyTailscalePreviewsSettingChange({
+      enabled: false,
+      hasActivePublications: true,
+      patchSettings,
+      confirmDisable,
+    });
+
+    expect(result).toBe("updated");
+    expect(confirmDisable).toHaveBeenCalledTimes(1);
+    expect(patchSettings).toHaveBeenCalledWith({ tailscalePreviewsEnabled: false });
+  });
+
+  it("leaves previews enabled when the disable confirmation is canceled", async () => {
+    const patchSettings = vi.fn(async () => undefined);
+    const confirmDisable = vi.fn(async () => false);
+
+    const result = await applyTailscalePreviewsSettingChange({
+      enabled: false,
+      hasActivePublications: true,
+      patchSettings,
+      confirmDisable,
+    });
+
+    expect(result).toBe("cancelled");
+    expect(confirmDisable).toHaveBeenCalledTimes(1);
+    expect(patchSettings).not.toHaveBeenCalled();
   });
 });

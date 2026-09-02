@@ -1,6 +1,150 @@
-import type { AdvertisedEndpoint, DesktopBridge, DesktopWslState } from "@t3tools/contracts";
+import type {
+  AdvertisedEndpoint,
+  DesktopBridge,
+  DesktopWslState,
+  PreviewTailnetStatusResult,
+  TailnetPreviewReadiness,
+} from "@t3tools/contracts";
 
 type WslEnableBridge = Pick<DesktopBridge, "setWslBackendEnabled" | "setWslDistro" | "setWslOnly">;
+
+const TAILSCALE_PREVIEW_BASE_DESCRIPTION =
+  "Publish this environment’s current-thread dev server previews to your Tailnet. Open them from a browser device connected to the same Tailnet and allowed by its ACL.";
+
+export interface TailscalePreviewSettingView {
+  readonly checked: boolean;
+  readonly status: string | null;
+  readonly description: string;
+}
+
+export function supportsTailscalePreviewSettings(
+  capability: { readonly protocolVersion: 1; readonly requiredScope: "preview:access" } | undefined,
+): boolean {
+  return capability?.protocolVersion === 1;
+}
+
+function describeTailscalePreviewReadiness(
+  readiness: TailnetPreviewReadiness,
+): Pick<TailscalePreviewSettingView, "status" | "description"> {
+  switch (readiness) {
+    case "ready":
+      return {
+        status: "Active",
+        description:
+          "Open previews from a browser device connected to the same Tailnet and allowed by its ACL.",
+      };
+    case "disabled":
+      return {
+        status: "Closed",
+        description:
+          "Enable Tailscale previews to publish this environment’s current-thread Ports again.",
+      };
+    case "tailscale-unavailable":
+      return {
+        status: "Unavailable",
+        description: "Install and start Tailscale on the environment.",
+      };
+    case "not-logged-in":
+      return {
+        status: "Setup required",
+        description: "Sign in to Tailscale on the environment.",
+      };
+    case "magic-dns-unavailable":
+      return {
+        status: "Setup required",
+        description: "Enable MagicDNS for the tailnet.",
+      };
+    case "https-unavailable":
+      return {
+        status: "Setup required",
+        description: "Enable Tailscale HTTPS for the tailnet.",
+      };
+    case "permission-denied":
+      return {
+        status: "Permission required",
+        description:
+          "On Linux, an operator can grant the Verne service account permission with `sudo tailscale set --operator=<service account>`. Verne never runs sudo.",
+      };
+    case "mapping-conflict":
+      return {
+        status: "Port conflict",
+        description:
+          "A Tailnet preview mapping is already using one of this environment’s target ports. Verne left that mapping unchanged.",
+      };
+    case "gateway-failed":
+      return {
+        status: "Unavailable",
+        description: "Verne could not start or reach the preview gateway. Retry from Ports.",
+      };
+    case "capacity-reached":
+      return {
+        status: "Capacity reached",
+        description: "This environment has reached its 16-port preview capacity.",
+      };
+  }
+}
+
+export function resolveTailscalePreviewSettingView(input: {
+  readonly supported: boolean;
+  readonly status: PreviewTailnetStatusResult | null;
+  readonly statusPending: boolean;
+  readonly pendingEnabled: boolean | null;
+  readonly mutationError: string | null;
+}): TailscalePreviewSettingView | null {
+  if (!input.supported) return null;
+
+  const checked = input.pendingEnabled ?? input.status?.enabled ?? false;
+  if (input.pendingEnabled !== null) {
+    return {
+      checked,
+      status: input.pendingEnabled ? "Enabling…" : "Closing…",
+      description: input.pendingEnabled
+        ? "Saving this environment’s Tailnet preview opt-in."
+        : "Closing active Tailnet preview publications and disabling new ones.",
+    };
+  }
+  if (input.mutationError !== null) {
+    return {
+      checked,
+      status: "Update failed",
+      description: input.mutationError,
+    };
+  }
+  if (input.statusPending && input.status === null) {
+    return {
+      checked,
+      status: "Checking status…",
+      description: TAILSCALE_PREVIEW_BASE_DESCRIPTION,
+    };
+  }
+  if (input.status === null) {
+    return {
+      checked,
+      status: checked ? "Enabled" : null,
+      description: TAILSCALE_PREVIEW_BASE_DESCRIPTION,
+    };
+  }
+  const presentation = describeTailscalePreviewReadiness(input.status.readiness);
+  return {
+    checked,
+    status: presentation.status,
+    description: presentation.description,
+  };
+}
+
+export async function applyTailscalePreviewsSettingChange(input: {
+  readonly enabled: boolean;
+  readonly hasActivePublications: boolean;
+  readonly patchSettings: (patch: { readonly tailscalePreviewsEnabled: boolean }) => Promise<void>;
+  readonly confirmDisable: () => Promise<boolean>;
+}): Promise<"updated" | "cancelled"> {
+  if (!input.enabled && input.hasActivePublications) {
+    const confirmed = await input.confirmDisable();
+    if (!confirmed) return "cancelled";
+  }
+  await input.patchSettings({ tailscalePreviewsEnabled: input.enabled });
+  return "updated";
+}
 
 /**
  * A QR code encoding a loopback URL makes the scanning device dial itself, so

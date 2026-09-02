@@ -6,7 +6,15 @@ import {
   TerminalIcon,
 } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
-import { type ReactNode, memo, useCallback, useId, useMemo, useState } from "react";
+import {
+  type ReactNode,
+  memo,
+  useCallback,
+  useId,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import {
   AuthAccessReadScope,
   AuthAccessWriteScope,
@@ -41,8 +49,11 @@ import { cn } from "../../lib/utils";
 import { formatElapsedDurationLabel, formatExpiresInLabel } from "../../timestampFormat";
 import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
 import {
+  applyTailscalePreviewsSettingChange,
   applyWslEnableSelection,
   isQrShareableEndpoint,
+  resolveTailscalePreviewSettingView,
+  supportsTailscalePreviewSettings,
   isWslSettingsRowVisible,
   selectQrEndpointOption,
 } from "./ConnectionsSettings.logic";
@@ -113,7 +124,9 @@ import {
   connectPairing as connectPairingAtom,
   connectSshEnvironment as connectSshEnvironmentAtom,
 } from "~/connection/onboarding";
+import { ensureLocalApi, readLocalApi } from "~/localApi";
 import { useEnvironmentQuery } from "~/state/query";
+import { previewEnvironment } from "~/state/preview";
 import {
   desktopNetworkAccessStateAtom,
   refreshDesktopNetworkAccessState,
@@ -131,6 +144,12 @@ import { ConnectionStatusDot } from "../ConnectionStatusDot";
 import { ServerUpdateAction, ServerUpdateProgress } from "../ServerUpdateAction";
 import { CloudEnvironmentConnectRows } from "../cloud/CloudEnvironmentConnectList";
 import { ITEM_ROW_CLASSNAME, ITEM_ROW_INNER_CLASSNAME } from "./itemRows";
+import {
+  isEnvironmentAutoForwardEnabled,
+  portForwardSnapshot,
+  setEnvironmentAutoForwardEnabled,
+  subscribePortForwards,
+} from "~/browser/prepareBrowserNavigationTarget";
 
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
 const EMPTY_ADVERTISED_ENDPOINTS: ReadonlyArray<AdvertisedEndpoint> = [];
@@ -1366,6 +1385,35 @@ function SavedBackendListRow({
   const connectionState = environment.connection.phase;
   const isConnected = connectionState === "connected";
   const isConnecting = connectionState === "connecting" || connectionState === "reconnecting";
+  useSyncExternalStore(subscribePortForwards, portForwardSnapshot, portForwardSnapshot);
+  const supportsPortForwarding =
+    environment.serverConfig?.environment.capabilities.portForwarding?.protocolVersion === 1 &&
+    window.desktopBridge?.ensurePortForward !== undefined;
+  const supportsTailnetPreviewOptIn = supportsTailscalePreviewSettings(
+    environment.serverConfig?.environment.capabilities.tailnetPreviewPublishing,
+  );
+  const autoForwardEnabled = isEnvironmentAutoForwardEnabled(environmentId);
+  const updateEnvironmentSettings = useAtomCommand(serverEnvironment.updateSettings, {
+    reportFailure: false,
+  });
+  const [pendingTailscalePreviewsEnabled, setPendingTailscalePreviewsEnabled] = useState<
+    boolean | null
+  >(null);
+  const [tailscalePreviewMutationError, setTailscalePreviewMutationError] = useState<string | null>(
+    null,
+  );
+  const tailnetPreviewStatus = useEnvironmentQuery(
+    supportsTailnetPreviewOptIn && isConnected
+      ? previewEnvironment.tailnetStatus({ environmentId, input: {} })
+      : null,
+  );
+  const tailscalePreviewView = resolveTailscalePreviewSettingView({
+    supported: supportsTailnetPreviewOptIn,
+    status: tailnetPreviewStatus.data,
+    statusPending: tailnetPreviewStatus.isPending && tailnetPreviewStatus.data === null,
+    pendingEnabled: pendingTailscalePreviewsEnabled,
+    mutationError: null,
+  });
   const stateDotClassName =
     connectionState === "connected"
       ? "bg-success"
@@ -1421,6 +1469,65 @@ function SavedBackendListRow({
   // environment you connect to or remove here — its lifecycle is driven by the
   // WSL on/off + distro picker on this page.
   const isWslEnvironment = isDesktopLocalConnectionTarget(environment.entry.target);
+  const patchTailscalePreviewSettings = useCallback(
+    async (patch: { readonly tailscalePreviewsEnabled: boolean }) => {
+      const result = await updateEnvironmentSettings({
+        environmentId,
+        input: { patch },
+      });
+      if (result._tag === "Failure") {
+        throw squashAtomCommandFailure(result);
+      }
+    },
+    [environmentId, updateEnvironmentSettings],
+  );
+  const handleToggleTailscalePreviews = useCallback(
+    (enabled: boolean) => {
+      setTailscalePreviewMutationError(null);
+      void (async () => {
+        let didPersist = false;
+        try {
+          const result = await applyTailscalePreviewsSettingChange({
+            enabled,
+            hasActivePublications:
+              tailnetPreviewStatus.data?.enabled === true &&
+              tailnetPreviewStatus.data.readiness === "ready",
+            confirmDisable: async () =>
+              await (readLocalApi() ?? ensureLocalApi()).dialogs.confirm(
+                [
+                  "Disable Tailnet previews?",
+                  "Any active Tailnet preview URLs for this environment will stop working until you re-enable them.",
+                ].join("\n\n"),
+              ),
+            patchSettings: async (patch) => {
+              didPersist = true;
+              setPendingTailscalePreviewsEnabled(enabled);
+              await patchTailscalePreviewSettings(patch);
+            },
+          });
+          if (result === "cancelled") {
+            return;
+          }
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : "Failed to update Tailnet previews.";
+          setTailscalePreviewMutationError(message);
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not update Tailnet previews",
+              description: message,
+            }),
+          );
+        } finally {
+          if (didPersist) {
+            setPendingTailscalePreviewsEnabled(null);
+          }
+        }
+      })();
+    },
+    [patchTailscalePreviewSettings, tailnetPreviewStatus.data],
+  );
 
   return (
     <div className={ITEM_ROW_CLASSNAME}>
@@ -1440,6 +1547,16 @@ function SavedBackendListRow({
           </div>
           {metadataBits.length > 0 ? (
             <p className="text-xs text-muted-foreground">{metadataBits.join(" · ")}</p>
+          ) : null}
+          {tailscalePreviewView ? (
+            <p className="text-xs text-muted-foreground">
+              {tailscalePreviewView.status ? (
+                <span className="font-medium text-foreground/80">
+                  {tailscalePreviewView.status}{" "}
+                </span>
+              ) : null}
+              {tailscalePreviewView.description}
+            </p>
           ) : null}
           {serverUpdateState.status !== "idle" ? (
             <div className="max-w-md">
@@ -1463,6 +1580,14 @@ function SavedBackendListRow({
               </TooltipPopup>
             </Tooltip>
           ) : null}
+          {tailnetPreviewStatus.error ? (
+            <p className="text-destructive text-xs">
+              Couldn&apos;t load Tailnet preview status: {tailnetPreviewStatus.error}
+            </p>
+          ) : null}
+          {tailscalePreviewMutationError ? (
+            <p className="text-destructive text-xs">{tailscalePreviewMutationError}</p>
+          ) : null}
           {environment.connection.error && !resumingServerUpdate ? (
             <p className="flex min-w-0 items-center gap-2 text-destructive text-xs">
               <span className="truncate">{connectionStatusText(environment.connection)}</span>
@@ -1479,6 +1604,27 @@ function SavedBackendListRow({
           ) : null}
         </div>
         <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
+          {supportsPortForwarding ? (
+            <label className="flex items-center gap-2 text-muted-foreground text-xs">
+              Auto-forward dev servers
+              <Switch
+                checked={autoForwardEnabled}
+                onCheckedChange={(checked) =>
+                  setEnvironmentAutoForwardEnabled(environmentId, checked)
+                }
+              />
+            </label>
+          ) : null}
+          {tailscalePreviewView ? (
+            <label className="flex items-center gap-2 text-muted-foreground text-xs">
+              Enable Tailscale previews
+              <Switch
+                checked={tailscalePreviewView.checked}
+                disabled={!isConnected || pendingTailscalePreviewsEnabled !== null}
+                onCheckedChange={(checked) => handleToggleTailscalePreviews(Boolean(checked))}
+              />
+            </label>
+          ) : null}
           {versionMismatch &&
           (serverUpdateState.status === "idle" || serverUpdateState.status === "failed") ? (
             <ServerUpdateAction

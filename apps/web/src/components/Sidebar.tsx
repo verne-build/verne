@@ -42,6 +42,7 @@ import {
   FolderIcon,
   FolderPlusIcon,
   GitBranchIcon,
+  Globe2Icon,
   MessageSquareIcon,
   PinIcon,
   PlusIcon,
@@ -105,6 +106,7 @@ import { useClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
+import { useThreadDiscoveredPorts } from "../portDiscoveryState";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { useProjects, useThreadShells } from "../state/entities";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
@@ -120,6 +122,7 @@ import {
 import { formatRelativeTimeLabel, parseTimestampDate } from "../timestampFormat";
 import type { SidebarThreadSummary } from "../types";
 import { cn } from "~/lib/utils";
+import { openThreadPorts } from "./openThreadPorts";
 import { buildThreadActionMenuItems } from "./threadActionMenu.logic";
 import {
   animatePinnedLayoutChanges,
@@ -808,6 +811,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     environmentId: thread.environmentId,
     threadId: thread.id,
   });
+  const discoveredPorts = useThreadDiscoveredPorts({
+    environmentId: thread.environmentId,
+    threadId: thread.id,
+  });
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
   const terminalProcessCount = runningTerminalIds.length;
 
@@ -1080,6 +1087,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     },
     [onUnsnooze, threadRef],
   );
+  const handleOpenThreadPortsClick = useCallback(
+    (event: ReactMouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openThreadPorts(threadRef, onThreadActivate);
+    },
+    [onThreadActivate, threadRef],
+  );
   const handleUnpinClick = useCallback(
     (event: ReactMouseEvent) => {
       event.preventDefault();
@@ -1225,6 +1240,27 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       <TerminalIcon className={cn("size-3.5", terminalStatus.pulse && "animate-status-pulse")} />
     </span>
   ) : null;
+  const portsButton =
+    discoveredPorts.length > 0 ? (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              aria-label={`Open Ports for localhost:${discoveredPorts[0]?.port ?? ""}`}
+              onClick={handleOpenThreadPortsClick}
+              className="inline-flex cursor-pointer items-center justify-center rounded-sm text-emerald-600 outline-none transition-colors hover:text-emerald-700 focus-visible:ring-2 focus-visible:ring-ring dark:text-emerald-400 dark:hover:text-emerald-300"
+            />
+          }
+        >
+          <Globe2Icon aria-hidden className="size-3.5" />
+        </TooltipTrigger>
+        <TooltipPopup side="top">
+          Open Ports for localhost:{discoveredPorts[0]?.port}
+          {discoveredPorts.length > 1 ? ` (+${discoveredPorts.length - 1})` : ""}
+        </TooltipPopup>
+      </Tooltip>
+    ) : null;
   const pinIndicator = props.isPinned ? (
     props.pinningSupported ? (
       <Tooltip>
@@ -1292,6 +1328,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             </span>
             {title}
             {pinIndicator}
+            {portsButton}
             {terminalStatusIcon}
             {isRegeneratingTitle ? (
               <span role="status" className="sr-only">
@@ -1588,6 +1625,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               ) : (
                 <span className="flex-1" />
               )}
+              {portsButton}
               {terminalStatusIcon}
               {prBadge}
               {diff ? (

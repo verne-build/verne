@@ -89,9 +89,8 @@ import {
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { useThreadDiscoveredPorts } from "../portDiscoveryState";
-import { openDiscoveredPort } from "./preview/openDiscoveredPort";
+import { openThreadPorts } from "./openThreadPorts";
 import { useAtomCommand } from "../state/use-atom-command";
-import { previewEnvironment } from "../state/preview";
 import {
   legacyProjectCwdPreferenceKey,
   resolveProjectExpanded,
@@ -387,9 +386,6 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     environmentId: thread.environmentId,
     threadId: thread.id,
   });
-  const openPreview = useAtomCommand(previewEnvironment.open, {
-    reportFailure: false,
-  });
   const environment = useEnvironment(thread.environmentId);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const isRemoteThread =
@@ -427,28 +423,11 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
   const isHighlighted = isActive || isSelected;
   const handleOpenDiscoveredPort = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
-      const port = discoveredPorts[0];
-      if (!port) return;
       event.preventDefault();
       event.stopPropagation();
-      navigateToThread(threadRef);
-      void (async () => {
-        const result = await openDiscoveredPort({ threadRef, port, openPreview });
-        if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
-          return;
-        }
-        const error = squashAtomCommandFailure(result);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Unable to open preview",
-            description:
-              error instanceof Error ? error.message : "The preview could not be opened.",
-          }),
-        );
-      })();
+      openThreadPorts(threadRef, navigateToThread);
     },
-    [discoveredPorts, navigateToThread, openPreview, threadRef],
+    [navigateToThread, threadRef],
   );
   const isThreadRunning =
     thread.session?.status === "running" && thread.session.activeTurnId != null;
@@ -760,7 +739,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                 render={
                   <button
                     type="button"
-                    aria-label={`Open localhost:${discoveredPorts[0]?.port ?? ""}`}
+                    aria-label={`Open Ports for localhost:${discoveredPorts[0]?.port ?? ""}`}
                     className="inline-flex cursor-pointer items-center justify-center text-emerald-600 outline-hidden focus-visible:ring-1 focus-visible:ring-ring dark:text-emerald-400"
                     onClick={handleOpenDiscoveredPort}
                   />
@@ -769,7 +748,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                 <Globe2Icon className="size-3" />
               </TooltipTrigger>
               <TooltipPopup side="top">
-                Open localhost:{discoveredPorts[0]?.port}
+                Open Ports for localhost:{discoveredPorts[0]?.port}
                 {discoveredPorts.length > 1 ? ` (+${discoveredPorts.length - 1})` : ""}
               </TooltipPopup>
             </Tooltip>
