@@ -565,6 +565,16 @@ export const make = Effect.fn("TailnetPreviewPublisher.make")(function* (
         readiness: "gateway-failed",
       });
     }
+    const target = { host: server.connectHost!, port: input.port, protocol };
+    const currentPublication = publications.get(input.port);
+    if (
+      currentPublication !== undefined &&
+      (currentPublication.gateway.target.host !== target.host ||
+        currentPublication.gateway.target.port !== target.port ||
+        currentPublication.gateway.target.protocol !== target.protocol)
+    ) {
+      yield* teardownPublication(currentPublication);
+    }
 
     const now = yield* Clock.currentTimeMillis;
     const existingLease = requiredLease ?? findLease(input);
@@ -605,11 +615,7 @@ export const make = Effect.fn("TailnetPreviewPublisher.make")(function* (
         gatewayFactory.start({
           auth,
           environmentId: options.environmentId,
-          target: {
-            host: server.connectHost!,
-            port: input.port,
-            protocol,
-          },
+          target,
         }),
         (running) => running.close,
       ).pipe(

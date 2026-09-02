@@ -697,6 +697,46 @@ effectIt.effect("revokes cookies from the replaced process generation", () =>
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
+effectIt.effect("rotates auth and gateway when the discovered target protocol changes", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness();
+    const lease = yield* harness.publisher.acquire({
+      sessionId: "session-a",
+      threadId: "thread-a",
+      port: 5173,
+    });
+    const session = yield* harness.auth.exchangeLaunch({
+      environmentId: "environment-a",
+      port: 5173,
+      leaseId: lease.leaseId,
+      launchSecret: launchSecretFromUrl(lease.launchUrl),
+    });
+
+    yield* harness.pushDiscovery([server(5173, { url: "https://localhost:5173/" })]);
+    const replacement = yield* harness.publisher.acquire({
+      sessionId: "session-a",
+      threadId: "thread-a",
+      port: 5173,
+    });
+
+    expect(replacement.leaseId).not.toBe(lease.leaseId);
+    expect(
+      yield* Effect.flip(
+        harness.auth.validateSession({
+          environmentId: "environment-a",
+          port: 5173,
+          leaseId: lease.leaseId,
+          sessionSecret: session.sessionSecret,
+        }),
+      ),
+    ).toMatchObject({ _tag: "TailnetPreviewSessionInvalidError", reason: "revoked" });
+    expect(yield* Ref.get(harness.startsRef)).toEqual([
+      { host: "127.0.0.1", port: 5173, protocol: "http:" },
+      { host: "127.0.0.1", port: 5173, protocol: "https:" },
+    ]);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
 effectIt.effect("serializes concurrent acquire and release without duplicate publications", () =>
   Effect.gen(function* () {
     const harness = yield* makeHarness();
