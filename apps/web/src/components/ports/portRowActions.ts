@@ -244,6 +244,10 @@ export type PortRowActionOutcome =
 interface PortRowActionExecutorDependencies {
   readonly controller: Pick<PreviewAccessController, "prepare" | "setPortEnabled">;
   readonly setPortEnabled?: PreviewAccessController["setPortEnabled"];
+  readonly reserveExternal?: () => {
+    readonly navigate: (url: string) => Promise<void>;
+    readonly close: () => void;
+  };
   readonly openPreview: (url: string) => Promise<void>;
   readonly openExternal: (url: string) => Promise<void>;
   readonly copyText: (text: string) => Promise<void>;
@@ -271,6 +275,8 @@ export function createPortRowActionExecutor(
       const key = actionKey(input);
       if (pending.has(key)) return { status: "skipped" };
       pending.add(key);
+      let reservedExternal: ReturnType<NonNullable<typeof dependencies.reserveExternal>> | null =
+        null;
       try {
         if (input.action.kind === "set-enabled") {
           await (dependencies.setPortEnabled ?? dependencies.controller.setPortEnabled)({
@@ -290,12 +296,18 @@ export function createPortRowActionExecutor(
             : { status: "unavailable", cleanUrl: resolution.cleanUrl, resolution };
         }
 
+        if (input.action.destination === "external" && dependencies.reserveExternal) {
+          reservedExternal = dependencies.reserveExternal();
+        }
+
         const resolution = await dependencies.controller.prepare({
           environmentId: input.environmentId,
           threadId: input.threadId,
           target: input.target,
         });
         if (resolution.state !== "ready") {
+          reservedExternal?.close();
+          reservedExternal = null;
           return { status: "unavailable", cleanUrl: resolution.cleanUrl, resolution };
         }
         switch (input.action.destination) {
@@ -303,13 +315,21 @@ export function createPortRowActionExecutor(
             await dependencies.openPreview(resolution.launchUrl);
             break;
           case "external":
-            await dependencies.openExternal(resolution.launchUrl);
+            if (reservedExternal) {
+              await reservedExternal.navigate(resolution.launchUrl);
+              reservedExternal = null;
+            } else {
+              await dependencies.openExternal(resolution.launchUrl);
+            }
             break;
           case "copy":
             await dependencies.copyText(resolution.launchUrl);
             break;
         }
         return { status: "completed", cleanUrl: resolution.cleanUrl };
+      } catch (error) {
+        reservedExternal?.close();
+        throw error;
       } finally {
         pending.delete(key);
       }

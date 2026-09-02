@@ -205,6 +205,25 @@ function ThreadPortRow({
     () =>
       createPortRowActionExecutor({
         controller,
+        ...(surface === "web"
+          ? {
+              reserveExternal: () => {
+                const reservedTab = window.open("about:blank", "_blank");
+                if (!reservedTab) {
+                  throw new Error("The browser blocked the new preview tab.");
+                }
+                reservedTab.opener = null;
+                return {
+                  navigate: async (url) => {
+                    reservedTab.location.replace(url);
+                  },
+                  close: () => {
+                    reservedTab.close();
+                  },
+                };
+              },
+            }
+          : {}),
         setPortEnabled: async (input) => {
           if (surface === "web") {
             await controller.setPortEnabled(input);

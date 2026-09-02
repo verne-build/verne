@@ -154,6 +154,123 @@ describe("resolvePortRowAction", () => {
 });
 
 describe("createPortRowActionExecutor", () => {
+  it("reserves a web browser tab before waiting for the launch URL", async () => {
+    let resolvePrepare!: (resolution: PreviewAccessResolution) => void;
+    const events: string[] = [];
+    const dependencies = {
+      controller: {
+        prepare: () =>
+          new Promise<PreviewAccessResolution>((resolve) => {
+            resolvePrepare = resolve;
+          }),
+        setPortEnabled: vi.fn(),
+      },
+      reserveExternal: () => {
+        events.push("reserve");
+        return {
+          navigate: async (url: string) => {
+            events.push(`navigate:${url}`);
+          },
+          close: () => {
+            events.push("close");
+          },
+        };
+      },
+      openPreview: async () => undefined,
+      openExternal: async () => {
+        events.push("open-external");
+      },
+      copyText: async () => undefined,
+    };
+    const executor = createPortRowActionExecutor(dependencies);
+
+    const execution = executor.execute({
+      ...request,
+      action: { kind: "prepare", destination: "external" },
+    });
+
+    expect(events).toEqual(["reserve"]);
+
+    resolvePrepare(ready(1));
+    await execution;
+
+    expect(events).toEqual([
+      "reserve",
+      "navigate:https://machine.tailnet.ts.net:5173/.well-known/verne-preview/auth#launch-1",
+    ]);
+  });
+
+  it("closes a reserved web browser tab when preparing its launch URL fails", async () => {
+    const events: string[] = [];
+    const failure = new Error("preview publication failed");
+    const dependencies = {
+      controller: {
+        prepare: async () => Promise.reject(failure),
+        setPortEnabled: vi.fn(),
+      },
+      reserveExternal: () => ({
+        navigate: async () => {
+          events.push("navigate");
+        },
+        close: () => {
+          events.push("close");
+        },
+      }),
+      openPreview: async () => undefined,
+      openExternal: async () => {
+        events.push("open-external");
+      },
+      copyText: async () => undefined,
+    };
+    const executor = createPortRowActionExecutor(dependencies);
+
+    await expect(
+      executor.execute({
+        ...request,
+        action: { kind: "prepare", destination: "external" },
+      }),
+    ).rejects.toBe(failure);
+
+    expect(events).toEqual(["close"]);
+  });
+
+  it("closes a reserved web browser tab when the launch URL is unavailable", async () => {
+    const events: string[] = [];
+    const dependencies = {
+      controller: {
+        prepare: async (): Promise<PreviewAccessResolution> => ({
+          state: "unavailable",
+          requestedUrl: "http://localhost:5173/",
+          cleanUrl: "https://machine.tailnet.ts.net:5173/",
+          readiness: "gateway-failed",
+        }),
+        setPortEnabled: vi.fn(),
+      },
+      reserveExternal: () => ({
+        navigate: async () => {
+          events.push("navigate");
+        },
+        close: () => {
+          events.push("close");
+        },
+      }),
+      openPreview: async () => undefined,
+      openExternal: async () => {
+        events.push("open-external");
+      },
+      copyText: async () => undefined,
+    };
+    const executor = createPortRowActionExecutor(dependencies);
+
+    const outcome = await executor.execute({
+      ...request,
+      action: { kind: "prepare", destination: "external" },
+    });
+
+    expect(outcome.status).toBe("unavailable");
+    expect(events).toEqual(["close"]);
+  });
+
   it("opens each web action with a newly acquired fragment-bearing launch URL", async () => {
     let generation = 0;
     const prepare = vi.fn(async () => ready(++generation));
