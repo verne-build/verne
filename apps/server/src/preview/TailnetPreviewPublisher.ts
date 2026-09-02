@@ -50,6 +50,7 @@ import {
   type RunningTailnetPreviewGateway,
   type TailnetPreviewGatewayOptions,
   type TailnetPreviewGatewayStartError,
+  type TailnetPreviewTarget,
 } from "./TailnetPreviewGateway.ts";
 
 const LEASE_TTL = Duration.minutes(1);
@@ -565,7 +566,11 @@ export const make = Effect.fn("TailnetPreviewPublisher.make")(function* (
         readiness: "gateway-failed",
       });
     }
-    const target = { host: server.connectHost!, port: input.port, protocol };
+    const target: TailnetPreviewTarget = {
+      host: server.connectHost!,
+      port: input.port,
+      protocol,
+    };
     const currentPublication = publications.get(input.port);
     if (
       currentPublication !== undefined &&
