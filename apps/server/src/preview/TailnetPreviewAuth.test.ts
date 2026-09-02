@@ -234,6 +234,49 @@ effectIt.effect(
     }),
 );
 
+effectIt.effect("validates gateway auth for any lease bound to its environment and port", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness();
+    const capability = yield* harness.auth.mintLaunch({
+      environmentId: "env-1",
+      port: 3000,
+      leaseId: "client-lease",
+      target: "/",
+    });
+    const session = yield* harness.auth.exchangeLaunch({
+      environmentId: "env-1",
+      port: 3000,
+      launchSecret: capability.launchSecret,
+    });
+
+    expect(
+      yield* harness.auth.validateSession({
+        environmentId: "env-1",
+        port: 3000,
+        sessionSecret: session.sessionSecret,
+      }),
+    ).toMatchObject({ leaseId: "client-lease" });
+    expect(
+      yield* Effect.flip(
+        harness.auth.validateSession({
+          environmentId: "env-2",
+          port: 3000,
+          sessionSecret: session.sessionSecret,
+        }),
+      ),
+    ).toMatchObject({ _tag: "TailnetPreviewSessionInvalidError", reason: "binding-mismatch" });
+    expect(
+      yield* Effect.flip(
+        harness.auth.validateSession({
+          environmentId: "env-1",
+          port: 5173,
+          sessionSecret: session.sessionSecret,
+        }),
+      ),
+    ).toMatchObject({ _tag: "TailnetPreviewSessionInvalidError", reason: "binding-mismatch" });
+  }),
+);
+
 effectIt.effect("revokes unconsumed launches and established sessions by lease", () =>
   Effect.gen(function* () {
     const harness = yield* makeHarness();

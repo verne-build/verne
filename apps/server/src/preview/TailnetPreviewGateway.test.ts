@@ -194,7 +194,6 @@ const startGateway = async (
     startTailnetPreviewGateway({
       auth,
       environmentId,
-      leaseId,
       target: {
         host: target.host ?? "127.0.0.1",
         port: targetPort,
@@ -211,9 +210,10 @@ const authenticate = async (
   gatewayPort: number,
   targetPort: number,
   target = "/app?view=preview",
+  clientLeaseId = leaseId,
 ) => {
   const capability = await runEffect(
-    auth.mintLaunch({ environmentId, port: targetPort, leaseId, target }),
+    auth.mintLaunch({ environmentId, port: targetPort, leaseId: clientLeaseId, target }),
   );
   const response = await request(gatewayPort, AUTH_PATH, {
     method: "POST",
@@ -346,6 +346,42 @@ describe("TailnetPreviewGateway", () => {
     });
     expect(unsafe.status).toBe(400);
     expect(unsafe.headers.location).toBeUndefined();
+  });
+
+  it("accepts independent client leases and rejects only the revoked lease cookie", async () => {
+    const target = await startTarget((_request, response) => response.end("ok"));
+    const auth = await makeAuth();
+    const gateway = await startGateway(auth, target.port);
+    const firstCookie = await authenticate(
+      auth,
+      gateway.gatewayPort,
+      target.port,
+      "/first",
+      "client-lease-a",
+    );
+    const secondCookie = await authenticate(
+      auth,
+      gateway.gatewayPort,
+      target.port,
+      "/second",
+      "client-lease-b",
+    );
+
+    expect(
+      (await request(gateway.gatewayPort, "/", { headers: { cookie: firstCookie } })).status,
+    ).toBe(200);
+    expect(
+      (await request(gateway.gatewayPort, "/", { headers: { cookie: secondCookie } })).status,
+    ).toBe(200);
+
+    await runEffect(auth.revokeLease("client-lease-a"));
+
+    expect(
+      (await request(gateway.gatewayPort, "/", { headers: { cookie: firstCookie } })).status,
+    ).toBe(401);
+    expect(
+      (await request(gateway.gatewayPort, "/", { headers: { cookie: secondCookie } })).status,
+    ).toBe(200);
   });
 
   it("streams authenticated HTTP traffic with normalized and sanitized headers", async () => {

@@ -30,7 +30,7 @@ export interface TailnetPreviewLaunchCapability {
 export interface TailnetPreviewLaunchExchange {
   readonly environmentId: string;
   readonly port: number;
-  readonly leaseId: string;
+  readonly leaseId?: string;
   readonly launchSecret: string;
 }
 
@@ -43,7 +43,7 @@ export interface TailnetPreviewGatewaySession {
 export interface TailnetPreviewSessionValidation {
   readonly environmentId: string;
   readonly port: number;
-  readonly leaseId: string;
+  readonly leaseId?: string;
   readonly sessionSecret: string;
 }
 
@@ -277,7 +277,7 @@ const bindingMatches = (
 ) =>
   record.environmentId === input.environmentId &&
   record.port === input.port &&
-  record.leaseId === input.leaseId;
+  (input.leaseId === undefined || record.leaseId === input.leaseId);
 
 const sortedValues = <T extends { readonly leaseId: string; readonly port: number }>(
   source: ReadonlyMap<string, T>,

@@ -95,8 +95,7 @@ interface Suppression {
 
 interface Publication {
   readonly port: number;
-  readonly authLeaseId: string;
-  processGenerationKey: string;
+  readonly processGenerationKey: string;
   readonly scope: Scope.Closeable;
   readonly gateway: RunningTailnetPreviewGateway;
   readonly ownership: OwnedMapping;
@@ -317,9 +316,10 @@ export const make = Effect.fn("TailnetPreviewPublisher.make")(function* (
   ) {
     publications.delete(publication.port);
     for (const [leaseId, lease] of leases) {
-      if (lease.port === publication.port) leases.delete(leaseId);
+      if (lease.port !== publication.port) continue;
+      leases.delete(leaseId);
+      yield* auth.revokeLease(leaseId);
     }
-    yield* auth.revokeLease(publication.authLeaseId);
     const removed = yield* Effect.result(
       tailscale.disableOwned(mappingInput(publication.ownership)),
     );
@@ -349,6 +349,7 @@ export const make = Effect.fn("TailnetPreviewPublisher.make")(function* (
               return;
             }
             leases.delete(lease.leaseId);
+            yield* auth.revokeLease(lease.leaseId);
             const publication = publications.get(lease.port);
             if (
               publication !== undefined &&
@@ -393,7 +394,10 @@ export const make = Effect.fn("TailnetPreviewPublisher.make")(function* (
       );
       if (present !== undefined) {
         const generation = yield* discovery.processGeneration(present);
-        if (generation !== undefined) publication.processGenerationKey = generation;
+        if (generation !== undefined && generation !== publication.processGenerationKey) {
+          yield* teardownPublication(publication);
+          continue;
+        }
         publication.missingSinceMillis = undefined;
         continue;
       }
@@ -494,7 +498,6 @@ export const make = Effect.fn("TailnetPreviewPublisher.make")(function* (
 
   const makeResult = Effect.fn("TailnetPreviewPublisher.makeResult")(function* (
     lease: Lease,
-    publication: Publication,
     server: DiscoveredLocalServer,
     magicDnsName: string,
   ) {
@@ -503,7 +506,7 @@ export const make = Effect.fn("TailnetPreviewPublisher.make")(function* (
       .mintLaunch({
         environmentId: options.environmentId,
         port: lease.port,
-        leaseId: publication.authLeaseId,
+        leaseId: lease.leaseId,
         target,
       })
       .pipe(
@@ -568,7 +571,7 @@ export const make = Effect.fn("TailnetPreviewPublisher.make")(function* (
     const existingPublication = publications.get(input.port);
     if (existingLease !== undefined && existingPublication !== undefined) {
       const renewed = { ...existingLease, expiresAtMillis: now + leaseTtlMs };
-      const result = yield* makeResult(renewed, existingPublication, server, magicDnsName);
+      const result = yield* makeResult(renewed, server, magicDnsName);
       leases.set(renewed.leaseId, renewed);
       yield* scheduleLeaseExpiry(renewed);
       return result;
@@ -582,6 +585,14 @@ export const make = Effect.fn("TailnetPreviewPublisher.make")(function* (
 
     let publication = existingPublication;
     let createdPublication = false;
+    const leaseId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+    const lease: Lease = {
+      leaseId,
+      sessionId: input.sessionId,
+      threadId: input.threadId,
+      port: input.port,
+      expiresAtMillis: now + leaseTtlMs,
+    };
     if (publication === undefined) {
       if (publications.size >= maxPublications) {
         return yield* new PreviewTailnetUnavailableError({
@@ -590,12 +601,10 @@ export const make = Effect.fn("TailnetPreviewPublisher.make")(function* (
         });
       }
       const publicationScope = yield* Scope.make();
-      const authLeaseId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
       const gateway = yield* Effect.acquireRelease(
         gatewayFactory.start({
           auth,
           environmentId: options.environmentId,
-          leaseId: authLeaseId,
           target: {
             host: server.connectHost!,
             port: input.port,
@@ -621,7 +630,6 @@ export const make = Effect.fn("TailnetPreviewPublisher.make")(function* (
       };
       const mapping = yield* Effect.result(tailscale.ensureOwned(mappingInput(owned)));
       if (Result.isFailure(mapping)) {
-        yield* auth.revokeLease(authLeaseId);
         yield* Scope.close(publicationScope, Exit.void).pipe(Effect.ignore);
         return yield* new PreviewTailnetUnavailableError({
           port: input.port,
@@ -644,7 +652,6 @@ export const make = Effect.fn("TailnetPreviewPublisher.make")(function* (
             },
           );
         }
-        yield* auth.revokeLease(authLeaseId);
         yield* Scope.close(publicationScope, Exit.void).pipe(Effect.ignore);
         return yield* new PreviewTailnetUnavailableError({
           port: input.port,
@@ -653,7 +660,6 @@ export const make = Effect.fn("TailnetPreviewPublisher.make")(function* (
       }
       publication = {
         port: input.port,
-        authLeaseId,
         processGenerationKey: generation,
         scope: publicationScope,
         gateway,
@@ -664,20 +670,17 @@ export const make = Effect.fn("TailnetPreviewPublisher.make")(function* (
       createdPublication = true;
     }
 
-    const leaseId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
-    const lease: Lease = {
-      leaseId,
-      sessionId: input.sessionId,
-      threadId: input.threadId,
-      port: input.port,
-      expiresAtMillis: now + leaseTtlMs,
-    };
-    const result = yield* Effect.result(makeResult(lease, publication, server, magicDnsName));
+    leases.set(leaseId, lease);
+    const result = yield* Effect.result(makeResult(lease, server, magicDnsName));
     if (Result.isFailure(result)) {
-      if (createdPublication) yield* teardownPublication(publication);
+      if (createdPublication) {
+        yield* teardownPublication(publication);
+      } else {
+        leases.delete(leaseId);
+        yield* auth.revokeLease(leaseId);
+      }
       return yield* result.failure;
     }
-    leases.set(leaseId, lease);
     yield* scheduleLeaseExpiry(lease);
     return result.success;
   });
@@ -721,6 +724,7 @@ export const make = Effect.fn("TailnetPreviewPublisher.make")(function* (
           return yield* new PreviewTailnetLeaseNotFoundError({ leaseId: input.leaseId });
         }
         leases.delete(input.leaseId);
+        yield* auth.revokeLease(input.leaseId);
         const publication = publications.get(lease.port);
         if (
           publication !== undefined &&
@@ -742,6 +746,7 @@ export const make = Effect.fn("TailnetPreviewPublisher.make")(function* (
           if (lease.sessionId !== sessionId) continue;
           affectedPorts.add(lease.port);
           leases.delete(leaseId);
+          yield* auth.revokeLease(leaseId);
         }
         for (const port of affectedPorts) {
           const publication = publications.get(port);

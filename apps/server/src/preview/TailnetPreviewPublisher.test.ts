@@ -46,6 +46,12 @@ const TestOwnedMappingRegistry = Schema.Struct({
 const decodeRegistry = Schema.decodeUnknownEffect(Schema.fromJsonString(TestOwnedMappingRegistry));
 const encodeRegistry = Schema.encodeEffect(Schema.fromJsonString(TestOwnedMappingRegistry));
 
+const launchSecretFromUrl = (launchUrl: string) => {
+  const fragment = new URL(launchUrl).hash.slice(1);
+  const parsed = JSON.parse(decodeURIComponent(fragment)) as { readonly launchSecret: string };
+  return parsed.launchSecret;
+};
+
 const server = (
   port: number,
   overrides: Partial<DiscoveredLocalServer> = {},
@@ -330,6 +336,7 @@ const makeHarness = Effect.fn("TailnetPreviewPublisherTest.makeHarness")(functio
 
   return {
     publisher,
+    auth,
     closePublisher: Scope.close(publisherScope, Exit.void),
     settings,
     pushDiscovery,
@@ -517,6 +524,179 @@ effectIt.effect("shares one publication while leases stay session-idempotent", (
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
+effectIt.effect("revokes only the released client lease while a shared publication remains", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness();
+    const first = yield* harness.publisher.acquire({
+      sessionId: "session-a",
+      threadId: "thread-a",
+      port: 5173,
+    });
+    const second = yield* harness.publisher.acquire({
+      sessionId: "session-b",
+      threadId: "thread-a",
+      port: 5173,
+    });
+    const firstSession = yield* harness.auth.exchangeLaunch({
+      environmentId: "environment-a",
+      port: 5173,
+      leaseId: first.leaseId,
+      launchSecret: launchSecretFromUrl(first.launchUrl),
+    });
+    const secondSession = yield* harness.auth.exchangeLaunch({
+      environmentId: "environment-a",
+      port: 5173,
+      leaseId: second.leaseId,
+      launchSecret: launchSecretFromUrl(second.launchUrl),
+    });
+
+    yield* harness.publisher.release({ sessionId: "session-a", leaseId: first.leaseId });
+
+    expect(
+      yield* Effect.flip(
+        harness.auth.validateSession({
+          environmentId: "environment-a",
+          port: 5173,
+          leaseId: first.leaseId,
+          sessionSecret: firstSession.sessionSecret,
+        }),
+      ),
+    ).toMatchObject({ _tag: "TailnetPreviewSessionInvalidError", reason: "revoked" });
+    expect(
+      yield* harness.auth.validateSession({
+        environmentId: "environment-a",
+        port: 5173,
+        leaseId: second.leaseId,
+        sessionSecret: secondSession.sessionSecret,
+      }),
+    ).toMatchObject({ leaseId: second.leaseId });
+    expect(yield* Ref.get(harness.closesRef)).toEqual([]);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+effectIt.effect("revokes a disconnected client's auth while another client keeps the port", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness();
+    const first = yield* harness.publisher.acquire({
+      sessionId: "session-a",
+      threadId: "thread-a",
+      port: 5173,
+    });
+    yield* harness.publisher.acquire({
+      sessionId: "session-b",
+      threadId: "thread-a",
+      port: 5173,
+    });
+    const firstSession = yield* harness.auth.exchangeLaunch({
+      environmentId: "environment-a",
+      port: 5173,
+      leaseId: first.leaseId,
+      launchSecret: launchSecretFromUrl(first.launchUrl),
+    });
+
+    yield* harness.publisher.releaseSession("session-a");
+
+    expect(
+      yield* Effect.flip(
+        harness.auth.validateSession({
+          environmentId: "environment-a",
+          port: 5173,
+          leaseId: first.leaseId,
+          sessionSecret: firstSession.sessionSecret,
+        }),
+      ),
+    ).toMatchObject({ _tag: "TailnetPreviewSessionInvalidError", reason: "revoked" });
+    expect(yield* Ref.get(harness.closesRef)).toEqual([]);
+    expect(yield* Ref.get(harness.mappingsRef)).toHaveLength(1);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+effectIt.effect("revokes expired client auth while a renewed client keeps the port", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness({ leaseTtl: Duration.seconds(5) });
+    const first = yield* harness.publisher.acquire({
+      sessionId: "session-a",
+      threadId: "thread-a",
+      port: 5173,
+    });
+    yield* harness.publisher.acquire({
+      sessionId: "session-b",
+      threadId: "thread-a",
+      port: 5173,
+    });
+    const firstSession = yield* harness.auth.exchangeLaunch({
+      environmentId: "environment-a",
+      port: 5173,
+      leaseId: first.leaseId,
+      launchSecret: launchSecretFromUrl(first.launchUrl),
+    });
+    yield* TestClock.adjust(Duration.seconds(1));
+    yield* harness.publisher.renew({
+      sessionId: "session-b",
+      threadId: "thread-a",
+      port: 5173,
+    });
+
+    yield* TestClock.adjust(Duration.seconds(4));
+
+    expect(
+      yield* Effect.flip(
+        harness.auth.validateSession({
+          environmentId: "environment-a",
+          port: 5173,
+          leaseId: first.leaseId,
+          sessionSecret: firstSession.sessionSecret,
+        }),
+      ),
+    ).toMatchObject({ _tag: "TailnetPreviewSessionInvalidError", reason: "revoked" });
+    expect(yield* Ref.get(harness.closesRef)).toEqual([]);
+    expect(yield* Ref.get(harness.mappingsRef)).toHaveLength(1);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+effectIt.effect("revokes cookies from the replaced process generation", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeHarness();
+    const lease = yield* harness.publisher.acquire({
+      sessionId: "session-a",
+      threadId: "thread-a",
+      port: 5173,
+    });
+    const session = yield* harness.auth.exchangeLaunch({
+      environmentId: "environment-a",
+      port: 5173,
+      leaseId: lease.leaseId,
+      launchSecret: launchSecretFromUrl(lease.launchUrl),
+    });
+
+    yield* harness.pushDiscovery([server(5173, { connectHost: "::1", pid: 99_999 })]);
+
+    expect(
+      yield* Effect.flip(
+        harness.auth.validateSession({
+          environmentId: "environment-a",
+          port: 5173,
+          leaseId: lease.leaseId,
+          sessionSecret: session.sessionSecret,
+        }),
+      ),
+    ).toMatchObject({ _tag: "TailnetPreviewSessionInvalidError", reason: "revoked" });
+    expect(yield* Ref.get(harness.closesRef)).toEqual([43_000]);
+    expect(yield* Ref.get(harness.mappingsRef)).toHaveLength(0);
+
+    yield* harness.publisher.acquire({
+      sessionId: "session-a",
+      threadId: "thread-a",
+      port: 5173,
+    });
+    expect(yield* Ref.get(harness.startsRef)).toEqual([
+      { host: "127.0.0.1", port: 5173, protocol: "http:" },
+      { host: "::1", port: 5173, protocol: "http:" },
+    ]);
+    expect(yield* Ref.get(harness.mappingsRef)).toHaveLength(1);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
 effectIt.effect("serializes concurrent acquire and release without duplicate publications", () =>
   Effect.gen(function* () {
     const harness = yield* makeHarness();
@@ -667,7 +847,7 @@ effectIt.effect("cleans live publications before the publisher service scope clo
 );
 
 effectIt.effect(
-  "keeps a vanished publication for fifteen seconds and cancels cleanup on rediscovery",
+  "keeps a vanished publication during grace but tears it down when a replacement appears",
   () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
@@ -680,13 +860,9 @@ effectIt.effect(
       yield* Effect.yieldNow;
       yield* TestClock.adjust(Duration.seconds(14));
       expect(yield* Ref.get(harness.closesRef)).toEqual([]);
-      yield* harness.pushDiscovery([server(5173, { pid: 99_999 })]);
+      yield* harness.pushDiscovery([server(5173)]);
       yield* Effect.yieldNow;
       yield* TestClock.adjust(Duration.seconds(2));
-      expect(yield* Ref.get(harness.closesRef)).toEqual([]);
-      yield* harness.pushDiscovery([]);
-      yield* Effect.yieldNow;
-      yield* TestClock.adjust(Duration.seconds(16));
       yield* Deferred.await(harness.closeSignal);
       expect(yield* Ref.get(harness.closesRef)).toEqual([43_000]);
     }).pipe(Effect.scoped, Effect.provide(layer)),

@@ -21,7 +21,6 @@ export interface TailnetPreviewTarget {
 export interface TailnetPreviewGatewayOptions {
   readonly auth: TailnetPreviewAuth["Service"];
   readonly environmentId: string;
-  readonly leaseId: string;
   readonly target: TailnetPreviewTarget;
 }
 
@@ -291,7 +290,6 @@ export const startTailnetPreviewGateway = (options: TailnetPreviewGatewayOptions
             options.auth.validateSession({
               environmentId: options.environmentId,
               port: options.target.port,
-              leaseId: options.leaseId,
               sessionSecret,
             }),
           );
@@ -348,7 +346,6 @@ export const startTailnetPreviewGateway = (options: TailnetPreviewGatewayOptions
                   options.auth.exchangeLaunch({
                     environmentId: options.environmentId,
                     port: options.target.port,
-                    leaseId: options.leaseId,
                     launchSecret,
                   }),
                 );
@@ -356,7 +353,6 @@ export const startTailnetPreviewGateway = (options: TailnetPreviewGatewayOptions
                   options.auth.validateSession({
                     environmentId: options.environmentId,
                     port: options.target.port,
-                    leaseId: options.leaseId,
                     sessionSecret: session.sessionSecret,
                   }),
                 );
