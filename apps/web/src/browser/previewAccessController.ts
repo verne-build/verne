@@ -149,6 +149,11 @@ interface OwnedLease {
   readonly expiresAt: string;
 }
 
+interface PendingLeaseOperation {
+  readonly intentEpoch: number;
+  readonly promise: Promise<PreviewTailnetAcquireResult>;
+}
+
 const keyFor = (input: TailnetOperationInput) =>
   JSON.stringify([input.environmentId, input.threadId, input.port]);
 
@@ -193,7 +198,7 @@ export function createPreviewAccessController(
 ): PreviewAccessController {
   const leases = new Map<string, OwnedLease>();
   const states = new Map<string, PreviewAccessPortState>();
-  const pending = new Map<string, Promise<PreviewTailnetAcquireResult>>();
+  const pending = new Map<string, PendingLeaseOperation>();
   const disappearanceTimers = new Map<string, unknown>();
   const disappearanceDeadlines = new Map<string, number>();
   const renewalTimers = new Map<string, unknown>();
@@ -311,37 +316,65 @@ export function createPreviewAccessController(
     if (state === "active") scheduleRenewal(input, result.expiresAt);
   };
 
-  const singleFlight = (
+  const singleFlight = async (
     input: TailnetOperationInput,
     operation: () => Promise<PreviewTailnetAcquireResult>,
+    startedAtIntent: number,
   ): Promise<PreviewTailnetAcquireResult> => {
     const key = keyFor(input);
-    const active = pending.get(key);
-    if (active !== undefined) return active;
-    const current = operation();
-    pending.set(key, current);
-    void current.then(
-      () => {
-        if (pending.get(key) === current) pending.delete(key);
-      },
-      () => {
-        if (pending.get(key) === current) pending.delete(key);
-      },
-    );
-    return current;
+    while (true) {
+      const active = pending.get(key);
+      if (active !== undefined) {
+        if (active.intentEpoch === startedAtIntent) return active.promise;
+        await active.promise.catch(() => undefined);
+        if (pending.get(key) === active) pending.delete(key);
+        continue;
+      }
+      if (disposed || isSuppressed(key) || intentEpoch(key) !== startedAtIntent) {
+        throw new PreviewAccessIntentCancelledError();
+      }
+
+      const promise = (async () => {
+        let result: PreviewTailnetAcquireResult;
+        try {
+          result = await operation();
+        } catch (error) {
+          if (disposed || isSuppressed(key) || intentEpoch(key) !== startedAtIntent) {
+            throw new PreviewAccessIntentCancelledError();
+          }
+          throw error;
+        }
+        if (disposed || isSuppressed(key) || intentEpoch(key) !== startedAtIntent) {
+          await dependencies.tailnet
+            .release({ environmentId: input.environmentId, leaseId: result.leaseId })
+            .catch(() => undefined);
+          throw new PreviewAccessIntentCancelledError();
+        }
+        return result;
+      })();
+      const current = { intentEpoch: startedAtIntent, promise };
+      pending.set(key, current);
+      void promise.then(
+        () => {
+          if (pending.get(key) === current) pending.delete(key);
+        },
+        () => {
+          if (pending.get(key) === current) pending.delete(key);
+        },
+      );
+      return promise;
+    }
   };
 
   const acquireFresh = async (input: TailnetOperationInput) => {
     if (disposed) throw new Error("This preview access controller has been disposed.");
     const key = keyFor(input);
     const startedAtIntent = intentEpoch(key);
-    const result = await singleFlight(input, () => dependencies.tailnet.acquire(input));
-    if (disposed || isSuppressed(key) || intentEpoch(key) !== startedAtIntent) {
-      await dependencies.tailnet
-        .release({ environmentId: input.environmentId, leaseId: result.leaseId })
-        .catch(() => undefined);
-      throw new PreviewAccessIntentCancelledError();
-    }
+    const result = await singleFlight(
+      input,
+      () => dependencies.tailnet.acquire(input),
+      startedAtIntent,
+    );
     remember(input, result);
     return result;
   };
@@ -351,18 +384,12 @@ export function createPreviewAccessController(
     if (disposed || isSuppressed(key)) return;
     const startedAtIntent = intentEpoch(key);
     try {
-      const result = await singleFlight(input, () =>
-        leases.has(key) ? dependencies.tailnet.renew(input) : dependencies.tailnet.acquire(input),
+      const result = await singleFlight(
+        input,
+        () =>
+          leases.has(key) ? dependencies.tailnet.renew(input) : dependencies.tailnet.acquire(input),
+        startedAtIntent,
       );
-      if (disposed || isSuppressed(key) || intentEpoch(key) !== startedAtIntent) {
-        await dependencies.tailnet
-          .release({
-            environmentId: input.environmentId,
-            leaseId: result.leaseId,
-          })
-          .catch(() => undefined);
-        return;
-      }
       if (!desiredKeys.has(key)) {
         const deadline = disappearanceDeadlines.get(key);
         if (deadline === undefined || deadline <= dependencies.now()) {
@@ -378,6 +405,7 @@ export function createPreviewAccessController(
       }
       remember(input, result);
     } catch (error) {
+      if (error instanceof PreviewAccessIntentCancelledError) return;
       clearRenewalTimer(key);
       const staleLease = leases.get(key);
       leases.delete(key);
@@ -711,7 +739,7 @@ export function createPreviewAccessController(
     for (const key of renewalTimers.keys()) clearRenewalTimer(key);
     for (const key of retryTimers.keys()) clearRetryTimer(key);
     cleanupPromise = (async () => {
-      await Promise.allSettled([...pending.values()]);
+      await Promise.allSettled([...pending.values()].map(({ promise }) => promise));
       await Promise.allSettled([...leases.keys()].map(releaseKey));
     })();
     return cleanupPromise;

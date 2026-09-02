@@ -823,6 +823,71 @@ describe("preview access controller", () => {
     });
   });
 
+  it("waits out an invalidated acquisition before recovery starts a fresh generation", async () => {
+    const timers = manualTimers();
+    let resolveAcquireA!: (result: PreviewTailnetAcquireResult) => void;
+    let resolveAcquireB!: (result: PreviewTailnetAcquireResult) => void;
+    const acquireA = new Promise<PreviewTailnetAcquireResult>(
+      (resolve) => (resolveAcquireA = resolve),
+    );
+    const acquireB = new Promise<PreviewTailnetAcquireResult>(
+      (resolve) => (resolveAcquireB = resolve),
+    );
+    const acquire = vi
+      .fn<PreviewAccessControllerDependencies["tailnet"]["acquire"]>()
+      .mockImplementationOnce(() => acquireA)
+      .mockImplementationOnce(() => acquireB);
+    const release = vi.fn(async () => undefined);
+    const deps = dependencies({ acquire, release, timers: timers.api, now: timers.now });
+    const controller = createPreviewAccessController(deps);
+    const servers = [server(5173)];
+
+    const first = controller.reconcile({
+      environmentId,
+      threadId,
+      servers,
+      status: { enabled: true, readiness: "ready" },
+    });
+    await controller.reconcile({
+      environmentId,
+      threadId,
+      servers,
+      status: { state: "error", readiness: "gateway-failed" },
+    });
+    const recovered = controller.reconcile({
+      environmentId,
+      threadId,
+      servers,
+      status: { enabled: true, readiness: "ready" },
+    });
+    expect(acquire).toHaveBeenCalledOnce();
+
+    resolveAcquireA({
+      ...tailnetResult(5173),
+      leaseId: "lease-a",
+      cleanUrl: "https://machine.tailnet.ts.net:5173/from-a",
+    });
+    await first;
+    await Promise.resolve();
+    expect(release).toHaveBeenCalledWith({ environmentId, leaseId: "lease-a" });
+    expect(acquire).toHaveBeenCalledTimes(2);
+
+    resolveAcquireB({
+      ...tailnetResult(5173),
+      leaseId: "lease-b",
+      cleanUrl: "https://machine.tailnet.ts.net:5173/from-b",
+    });
+    await recovered;
+    expect(controller.getPortState({ environmentId, threadId, port: 5173 })).toMatchObject({
+      state: "active",
+      cleanUrl: "https://machine.tailnet.ts.net:5173/from-b",
+    });
+    expect(release).not.toHaveBeenCalledWith({ environmentId, leaseId: "lease-b" });
+
+    await timers.fireAll();
+    expect(deps.tailnet.renew).toHaveBeenCalledOnce();
+  });
+
   it.each([
     ["status failure", { state: "error", readiness: "gateway-failed" }],
     ["unready status", { enabled: true, readiness: "tailscale-unavailable" }],
