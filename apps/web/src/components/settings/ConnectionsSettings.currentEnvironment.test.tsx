@@ -1,7 +1,10 @@
 import type { ReactElement } from "react";
 import {
   AuthAccessWriteScope,
+  AuthAdministrativeScopes,
+  AuthOrchestrationOperateScope,
   AuthPreviewAccessScope,
+  AuthStandardClientScopes,
   EnvironmentId,
   type PreviewTailnetStatusResult,
 } from "@t3tools/contracts";
@@ -12,6 +15,7 @@ import { reactHookHarness as hooks } from "../../test/reactHookHarness";
 
 const testState = vi.hoisted(() => ({
   primaryEnvironment: null as unknown,
+  sessionScopes: [] as Array<string>,
   tailnetStatus: {
     data: null,
     error: null,
@@ -75,7 +79,7 @@ vi.mock("~/environments/primary", () => ({
   usePrimarySessionState: () => ({
     data: {
       authenticated: true,
-      scopes: [AuthAccessWriteScope, AuthPreviewAccessScope],
+      scopes: testState.sessionScopes,
       auth: { policy: "remote-reachable" },
     },
     error: null,
@@ -226,6 +230,7 @@ describe("ConnectionsSettings current environment Tailnet previews", () => {
     hooks.reset();
     vi.stubGlobal("window", { desktopBridge: undefined });
     testState.primaryEnvironment = primaryEnvironment();
+    testState.sessionScopes = [...AuthAdministrativeScopes];
     testState.tailnetStatus = {
       data: { enabled: false, readiness: "disabled" },
       error: null,
@@ -239,7 +244,9 @@ describe("ConnectionsSettings current environment Tailnet previews", () => {
     notifications.add.mockReset();
   });
 
-  it("enables Tailnet previews for the authenticated current environment", async () => {
+  it("lets a standard paired session enable Tailnet previews for its current environment", async () => {
+    testState.sessionScopes = [...AuthStandardClientScopes];
+    expect(testState.sessionScopes).not.toContain(AuthAccessWriteScope);
     let resolveUpdate: (result: {
       readonly _tag: "Success";
       readonly value: undefined;
@@ -255,6 +262,12 @@ describe("ConnectionsSettings current environment Tailnet previews", () => {
 
     expect(row).not.toBeNull();
     expect(toggle).not.toBeNull();
+    expect(
+      visitElements(settings, (element) => element.props.title === "Administrative access"),
+    ).not.toBeNull();
+    expect(
+      visitElements(settings, (element) => element.props.title === "Network access"),
+    ).toBeNull();
     (toggle?.props.onCheckedChange as ((checked: boolean) => void) | undefined)?.(true);
     await Promise.resolve();
 
@@ -326,6 +339,24 @@ describe("ConnectionsSettings current environment Tailnet previews", () => {
 
   it("hides the current-environment control from older servers", () => {
     testState.primaryEnvironment = primaryEnvironment({ supportsTailnet: false });
+    const settings = renderSettings();
+
+    expect(findTailnetRow(settings)).toBeNull();
+    expect(findTailnetSwitch(settings)).toBeNull();
+    expect(testState.tailnetQueries).toEqual([]);
+  });
+
+  it.each([
+    [
+      AuthPreviewAccessScope,
+      AuthStandardClientScopes.filter((scope) => scope !== AuthPreviewAccessScope),
+    ],
+    [
+      AuthOrchestrationOperateScope,
+      AuthStandardClientScopes.filter((scope) => scope !== AuthOrchestrationOperateScope),
+    ],
+  ])("hides the current-environment control without %s", (_missingScope, sessionScopes) => {
+    testState.sessionScopes = [...sessionScopes];
     const settings = renderSettings();
 
     expect(findTailnetRow(settings)).toBeNull();

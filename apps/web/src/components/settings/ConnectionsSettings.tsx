@@ -21,6 +21,7 @@ import {
   AuthAdministrativeScopes,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthPreviewAccessScope,
   AuthRelayReadScope,
   AuthRelayWriteScope,
   AuthReviewWriteScope,
@@ -1378,6 +1379,7 @@ type SavedBackendListRowProps = {
 interface TailnetPreviewSettingInput {
   readonly environmentId: EnvironmentId | null;
   readonly isConnected: boolean;
+  readonly authorized: boolean;
   readonly capability:
     | { readonly protocolVersion: 1; readonly requiredScope: "preview:access" }
     | undefined;
@@ -1386,7 +1388,9 @@ interface TailnetPreviewSettingInput {
 
 function useTailnetPreviewSetting(input: TailnetPreviewSettingInput) {
   const supported =
-    input.environmentId !== null && supportsTailscalePreviewSettings(input.capability);
+    input.authorized &&
+    input.environmentId !== null &&
+    supportsTailscalePreviewSettings(input.capability);
   const updateEnvironmentSettings = useAtomCommand(serverEnvironment.updateSettings, {
     reportFailure: false,
   });
@@ -1531,6 +1535,7 @@ function SavedBackendListRow({
   const tailnetPreviewSetting = useTailnetPreviewSetting({
     environmentId,
     isConnected,
+    authorized: true,
     capability: environment.serverConfig?.environment.capabilities.tailnetPreviewPublishing,
     persistedEnabled: environment.serverConfig?.settings.tailscalePreviewsEnabled === true,
   });
@@ -1951,6 +1956,9 @@ export function ConnectionsSettings() {
       ? (primarySessionState.data.scopes ?? null)
       : null;
   const currentAuthPolicy = desktopBridge ? null : (primarySessionState.data?.auth.policy ?? null);
+  const canManagePrimaryTailnetPreviews =
+    (currentSessionScopes?.includes(AuthPreviewAccessScope) ?? false) &&
+    (currentSessionScopes?.includes(AuthOrchestrationOperateScope) ?? false);
   const savedEnvironments = useMemo(
     () =>
       environments
@@ -2064,6 +2072,7 @@ export function ConnectionsSettings() {
   const primaryTailnetPreviewSetting = useTailnetPreviewSetting({
     environmentId: primaryEnvironmentId,
     isConnected: primaryEnvironment?.connection.phase === "connected",
+    authorized: canManagePrimaryTailnetPreviews,
     capability: primaryServerConfig?.environment.capabilities.tailnetPreviewPublishing,
     persistedEnabled: primaryServerConfig?.settings.tailscalePreviewsEnabled === true,
   });
@@ -3212,6 +3221,17 @@ export function ConnectionsSettings() {
       }
     />
   );
+  const renderPrimaryTailnetPreviewRow = () =>
+    primaryTailnetPreviewSetting.view ? (
+      <SettingsRow
+        title="Tailnet previews"
+        description={<TailnetPreviewSettingDescription setting={primaryTailnetPreviewSetting} />}
+        control={renderTailnetPreviewSettingSwitch(
+          primaryTailnetPreviewSetting,
+          primaryEnvironment?.connection.phase !== "connected",
+        )}
+      />
+    ) : null;
 
   return (
     <SettingsPageContainer>
@@ -3261,18 +3281,7 @@ export function ConnectionsSettings() {
                 }
               />
             ) : null}
-            {primaryTailnetPreviewSetting.view ? (
-              <SettingsRow
-                title="Tailnet previews"
-                description={
-                  <TailnetPreviewSettingDescription setting={primaryTailnetPreviewSetting} />
-                }
-                control={renderTailnetPreviewSettingSwitch(
-                  primaryTailnetPreviewSetting,
-                  primaryEnvironment?.connection.phase !== "connected",
-                )}
-              />
-            ) : null}
+            {renderPrimaryTailnetPreviewRow()}
             {desktopBridge ? (
               <>
                 {renderNetworkAccessRow()}
@@ -3589,6 +3598,7 @@ export function ConnectionsSettings() {
             title="Administrative access"
             description="Pairing links and client-session management require the access:write scope for this backend."
           />
+          {renderPrimaryTailnetPreviewRow()}
           <CloudLinkRow canManageRelay={canManageRelay} />
         </SettingsSection>
       )}
