@@ -114,8 +114,13 @@ interface WebProbeCacheEntry {
 
 interface WebProbeGroup {
   readonly server: DiscoveredLocalServer;
-  readonly urls: ReadonlyArray<string>;
+  readonly targets: ReadonlyArray<WebProbeTarget>;
   readonly configuredKey: string | null;
+}
+
+interface WebProbeTarget {
+  readonly url: string;
+  readonly connectHost?: LocalServerConnectHost;
 }
 
 interface WebProbeSnapshot {
@@ -160,17 +165,29 @@ const connectHostFromListenerHost = (host: string): LocalServerConnectHost | nul
   switch (host.toLowerCase()) {
     case "::1":
     case "[::1]":
-    case "::":
-    case "[::]":
       return "::1";
     case "127.0.0.1":
-    case "localhost":
-    case "0.0.0.0":
-    case "*":
       return "127.0.0.1";
     default:
       return null;
   }
+};
+
+const listenerConnectHosts = (
+  server: DiscoveredLocalServer,
+): ReadonlyArray<LocalServerConnectHost> =>
+  server.connectHost === undefined ? ["127.0.0.1", "::1"] : [server.connectHost];
+
+export const loopbackProbeUrl = (
+  protocol: "http:" | "https:",
+  connectHost: LocalServerConnectHost,
+  port: number,
+): string => `${protocol}//${connectHost === "::1" ? "[::1]" : connectHost}:${port}/`;
+
+const loopbackResourceProbeUrl = (raw: string, connectHost: LocalServerConnectHost): string => {
+  const url = new URL(raw);
+  url.hostname = connectHost === "::1" ? "[::1]" : connectHost;
+  return url.href;
 };
 
 const normalizeConfiguredUrls = (urls: ReadonlyArray<string>): ReadonlyArray<string> => [
@@ -238,7 +255,7 @@ const parseLsofOutput = (
       if (seen.has(key)) continue;
       seen.set(key, {
         host: "localhost",
-        connectHost: endpoint.connectHost,
+        ...(endpoint.connectHost === undefined ? {} : { connectHost: endpoint.connectHost }),
         port: endpoint.port,
         url,
         processName,
@@ -253,7 +270,7 @@ const parseLsofOutput = (
 
 const parseEndpointFromLsofName = (
   name: string,
-): { readonly port: number; readonly connectHost: LocalServerConnectHost } | null => {
+): { readonly port: number; readonly connectHost?: LocalServerConnectHost } | null => {
   // Examples: "*:5173", "127.0.0.1:5173", "[::1]:5173", "localhost:5173",
   //           "192.168.1.10:5173 (LISTEN)" — we only care if the host part is local.
   const trimmed = name.split(" ", 1)[0]?.trim() ?? "";
@@ -263,11 +280,10 @@ const parseEndpointFromLsofName = (
   const hostPart = trimmed.slice(0, lastColon);
   const portPart = trimmed.slice(lastColon + 1);
   if (!LSOF_LOCAL_HOST_TOKENS.has(hostPart)) return null;
-  const connectHost = connectHostFromListenerHost(hostPart);
-  if (connectHost === null) return null;
   const port = Number.parseInt(portPart, 10);
   if (!Number.isFinite(port) || port <= 0 || port >= 65536) return null;
-  return { port, connectHost };
+  const connectHost = connectHostFromListenerHost(hostPart);
+  return connectHost === null ? { port } : { port, connectHost };
 };
 
 const parseWindowsListenerOutput = (
@@ -285,10 +301,9 @@ const parseWindowsListenerOutput = (
     const normalizedPid = Number.isInteger(pid) && pid > 0 ? pid : null;
     if (seen.has(port)) continue;
     const connectHost = connectHostFromListenerHost(host);
-    if (connectHost === null) continue;
     seen.set(port, {
       host: "localhost",
-      connectHost,
+      ...(connectHost === null ? {} : { connectHost }),
       port,
       url: `http://localhost:${port}`,
       processName: processNameRaw?.trim() || null,
@@ -420,7 +435,17 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       };
       groups.push({
         server,
-        urls: [raw],
+        targets: serversByKey.has(key)
+          ? listenerConnectHosts(server).map((connectHost) => ({
+              url: loopbackResourceProbeUrl(raw, connectHost),
+              connectHost,
+            }))
+          : [
+              {
+                url: raw,
+                ...(configuredConnectHost === null ? {} : { connectHost: configuredConnectHost }),
+              },
+            ],
         configuredKey: resourceKey,
       });
     }
@@ -428,7 +453,10 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     for (const server of servers) {
       groups.push({
         server,
-        urls: [`http://${server.host}:${server.port}`, `https://${server.host}:${server.port}`],
+        targets: listenerConnectHosts(server).flatMap((connectHost) => [
+          { url: loopbackProbeUrl("http:", connectHost, server.port), connectHost },
+          { url: loopbackProbeUrl("https:", connectHost, server.port), connectHost },
+        ]),
         configuredKey: null,
       });
     }
@@ -480,17 +508,18 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       (group) =>
         Effect.gen(function* () {
           const probes: Array<readonly [string, WebProbeCacheEntry, boolean]> = [];
-          let visibleUrl: string | null = null;
-          for (const url of group.urls) {
+          let visibleTarget: WebProbeTarget | null = null;
+          for (const target of group.targets) {
+            const { url } = target;
             const key = webProbeCacheKey(url);
             const { probe, fresh } = yield* getProbe(url, group.server.pid);
             probes.push([key, probe, fresh]);
             if (probe.isWeb) {
-              visibleUrl = url;
+              visibleTarget = target;
               break;
             }
           }
-          return { group, probes, visibleUrl };
+          return { group, probes, visibleTarget };
         }),
       { concurrency: WEB_PROBE_CONCURRENCY },
     );
@@ -500,15 +529,25 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     );
     const discovered: DiscoveredLocalServer[] = [];
     const configured = new Map<string, DiscoveredLocalServer>();
-    for (const { group, probes, visibleUrl } of probed) {
+    for (const { group, probes, visibleTarget } of probed) {
       for (const [key, probe, fresh] of probes) {
         nextCache.set(
           key,
           fresh ? { ...probe, expiresAtMillis: completedAtMillis + WEB_PROBE_CACHE_TTL_MS } : probe,
         );
       }
-      if (visibleUrl === null) continue;
-      const server = { ...group.server, url: visibleUrl };
+      if (visibleTarget === null) continue;
+      const publishedUrl =
+        group.configuredKey === null
+          ? `${new URL(visibleTarget.url).protocol}//${group.server.host}:${group.server.port}`
+          : group.server.url;
+      const server = {
+        ...group.server,
+        url: publishedUrl,
+        ...(visibleTarget.connectHost === undefined
+          ? {}
+          : { connectHost: visibleTarget.connectHost }),
+      };
       if (group.configuredKey === null) discovered.push(server);
       else configured.set(group.configuredKey, server);
     }

@@ -180,6 +180,72 @@ describe("DesktopPortForwarding", () => {
     }),
   );
 
+  effectIt.effect("accepts only secure remote or loopback HTTP tunnel endpoints", () =>
+    Effect.gen(function* () {
+      vi.stubGlobal("WebSocket", MockWebSocket);
+      const remotePort = yield* Effect.promise(reservePort);
+      const owner = new TestOwner(1);
+      const PortForwarding = yield* Effect.promise(() => import("./PortForwarding.ts"));
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const forwarding = yield* PortForwarding.make;
+          const accepted = [
+            {
+              httpBaseUrl: "https://relay.example.test/control?ignored=1",
+              expected: "wss://relay.example.test/preview/tunnel?forwardTicket=ticket-lease-1",
+            },
+            {
+              httpBaseUrl: "https://192.168.1.25:3773/base",
+              expected: "wss://192.168.1.25:3773/preview/tunnel?forwardTicket=ticket-lease-2",
+            },
+            {
+              httpBaseUrl: "https://100.65.180.100:3773/base",
+              expected: "wss://100.65.180.100:3773/preview/tunnel?forwardTicket=ticket-lease-3",
+            },
+            {
+              httpBaseUrl: "http://127.0.0.1:43881/base?ignored=1",
+              expected: "ws://127.0.0.1:43881/preview/tunnel?forwardTicket=ticket-lease-4",
+            },
+          ] as const;
+          for (const [index, endpoint] of accepted.entries()) {
+            yield* forwarding.ensure(
+              {
+                ...input(remotePort, `lease-${index + 1}`),
+                httpBaseUrl: endpoint.httpBaseUrl,
+              },
+              owner,
+            );
+            expect(instances[index]?.url).toBe(endpoint.expected);
+          }
+
+          for (const [index, httpBaseUrl] of [
+            "http://192.168.1.25:3773",
+            "http://100.65.180.100:3773",
+            "http://relay.example.test:3773",
+            "ftp://relay.example.test/resource",
+            "file:///tmp/server",
+            "https://user:password@relay.example.test",
+            "https://relay.example.test/#secret",
+          ].entries()) {
+            const before = instances.length;
+            const exit = yield* forwarding
+              .ensure(
+                {
+                  ...input(remotePort, `rejected-${index}`),
+                  httpBaseUrl,
+                },
+                owner,
+              )
+              .pipe(Effect.exit);
+            expect(exit._tag).toBe("Failure");
+            expect(instances).toHaveLength(before);
+          }
+        }),
+      );
+    }),
+  );
+
   effectIt.effect("cancels a pending listener when the same environment port is replaced", () =>
     Effect.gen(function* () {
       MockWebSocket.autoOpen = false;

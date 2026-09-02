@@ -394,32 +394,39 @@ export const DesktopSshPasswordPromptResolutionInputSchema = Schema.Struct({
 const DesktopPortForwardPortSchema = Schema.Int.check(Schema.isGreaterThan(0)).check(
   Schema.isLessThan(65_536),
 );
+const DesktopPortForwardOpaqueValueSchema = Schema.String.check(
+  Schema.isNonEmpty(),
+  Schema.isMaxLength(256),
+);
+const DesktopPortForwardUrlSchema = Schema.String.check(
+  Schema.isNonEmpty(),
+  Schema.isMaxLength(2_048),
+);
 
 export const DesktopPortForwardEnsureInputSchema = Schema.Struct({
   environmentId: EnvironmentId,
-  leaseId: Schema.String,
-  httpBaseUrl: Schema.String,
-  forwardTicket: Schema.String,
+  leaseId: DesktopPortForwardOpaqueValueSchema,
+  httpBaseUrl: DesktopPortForwardUrlSchema,
+  forwardTicket: DesktopPortForwardOpaqueValueSchema,
   remotePort: DesktopPortForwardPortSchema,
 });
 export type DesktopPortForwardEnsureInput = typeof DesktopPortForwardEnsureInputSchema.Type;
 
 export const DesktopPortForwardEnsureResultSchema = Schema.Struct({
   localPort: DesktopPortForwardPortSchema,
-  localUrl: Schema.String,
+  localUrl: DesktopPortForwardUrlSchema,
 });
 export type DesktopPortForwardEnsureResult = typeof DesktopPortForwardEnsureResultSchema.Type;
 
 export const DesktopPortForwardReleaseInputSchema = Schema.Struct({
   environmentId: EnvironmentId,
-  leaseId: Schema.String,
+  leaseId: DesktopPortForwardOpaqueValueSchema,
   remotePort: DesktopPortForwardPortSchema,
 });
 export type DesktopPortForwardReleaseInput = typeof DesktopPortForwardReleaseInputSchema.Type;
 
 export const DesktopPortForwardClosedEventSchema = Schema.Struct({
   ...DesktopPortForwardReleaseInputSchema.fields,
-  leaseId: Schema.String,
   localPort: DesktopPortForwardPortSchema,
 });
 export type DesktopPortForwardClosedEvent = typeof DesktopPortForwardClosedEventSchema.Type;

@@ -85,11 +85,17 @@ const TestPortDiscoveryLive = PortScanner.layer.pipe(
 );
 
 const LSOF_TEST_PORT = 43_123;
+const ipv4ProbeUrl = (raw: string) => {
+  const url = new URL(raw);
+  url.hostname = "127.0.0.1";
+  return url.href;
+};
 
 const makeLsofScannerLayer = (input: {
   readonly pid: () => number | null;
   readonly fetch: typeof globalThis.fetch;
   readonly listenerName?: string;
+  readonly port?: number;
   readonly listening?: () => boolean;
   readonly processName?: () => string;
 }) =>
@@ -102,7 +108,7 @@ const makeLsofScannerLayer = (input: {
               stdout:
                 input.listening?.() === false
                   ? ""
-                  : `p${input.pid()}\nc${input.processName?.() ?? "node"}\nn${input.listenerName ?? "*"}:${LSOF_TEST_PORT}\n`,
+                  : `p${input.pid()}\nc${input.processName?.() ?? "node"}\nn${input.listenerName ?? "*"}:${input.port ?? LSOF_TEST_PORT}\n`,
               stderr: "",
               code: null,
               timedOut: false,
@@ -148,6 +154,28 @@ const closeServer = (server: NodeNet.Server): Effect.Effect<void> =>
   Effect.callback((resume) => {
     server.close(() => resume(Effect.void));
   });
+
+const realHttpServer = (host: "127.0.0.1" | "::1" | "::", ipv6Only = false) =>
+  Effect.acquireRelease(
+    Effect.callback<{ readonly port: number; readonly server: NodeNet.Server }>((resume) => {
+      const server = NodeNet.createServer((socket) => {
+        socket.once("data", () => {
+          socket.end("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 2\r\n\r\nok");
+        });
+      });
+      server.once("error", (error) => resume(Effect.die(error)));
+      server.listen({ port: 0, host, ipv6Only }, () => {
+        const address = server.address();
+        if (address === null || typeof address === "string") {
+          resume(Effect.die("TCP server did not publish a numeric listening port"));
+          return;
+        }
+        resume(Effect.succeed({ port: address.port, server }));
+      });
+      return Effect.sync(() => server.close());
+    }),
+    ({ server }) => closeServer(server),
+  );
 
 const openCommonDevServer = Effect.fn("PortScannerTest.openCommonDevServer")(function* (
   ports: ReadonlyArray<number>,
@@ -265,15 +293,17 @@ effectIt.effect("revalidates a successful HTML probe after its cache entry expir
     const scanner = yield* PortScanner.PortDiscovery;
     expect(yield* scanner.scan()).toHaveLength(1);
     expect(yield* scanner.scan()).toHaveLength(1);
-    expect(requests).toEqual([`http://localhost:${LSOF_TEST_PORT}/`]);
+    expect(requests).toEqual([`http://127.0.0.1:${LSOF_TEST_PORT}/`]);
 
     responds = false;
     yield* TestClock.adjust(Duration.seconds(15));
     expect(yield* scanner.scan()).toHaveLength(0);
     expect(requests).toEqual([
-      `http://localhost:${LSOF_TEST_PORT}/`,
-      `http://localhost:${LSOF_TEST_PORT}/`,
-      `https://localhost:${LSOF_TEST_PORT}/`,
+      `http://127.0.0.1:${LSOF_TEST_PORT}/`,
+      `http://127.0.0.1:${LSOF_TEST_PORT}/`,
+      `https://127.0.0.1:${LSOF_TEST_PORT}/`,
+      `http://[::1]:${LSOF_TEST_PORT}/`,
+      `https://[::1]:${LSOF_TEST_PORT}/`,
     ]);
   }).pipe(Effect.provide(layer));
 });
@@ -321,10 +351,10 @@ effectIt.effect("normalizes localhost and wildcard listeners to dialable loopbac
       { listenerName: "[::]", expected: "::1" },
     ] as const,
     ({ listenerName, expected }) => {
-      const fetchFn = (() =>
-        Promise.resolve(
-          new Response("app", { headers: { "content-type": "text/html" } }),
-        )) as unknown as typeof globalThis.fetch;
+      const fetchFn = ((input: Parameters<typeof globalThis.fetch>[0]) =>
+        String(input).includes(expected === "::1" ? "[::1]" : expected)
+          ? Promise.resolve(new Response("app", { headers: { "content-type": "text/html" } }))
+          : Promise.reject(new TypeError("wrong loopback family"))) as typeof globalThis.fetch;
       return Effect.gen(function* () {
         const scanner = yield* PortScanner.PortDiscovery;
         expect((yield* scanner.scan())[0]?.connectHost).toBe(expected);
@@ -332,6 +362,48 @@ effectIt.effect("normalizes localhost and wildcard listeners to dialable loopbac
         Effect.provide(makeLsofScannerLayer({ pid: () => 1234, fetch: fetchFn, listenerName })),
       );
     },
+    { discard: true },
+  ),
+);
+
+effectIt.effect("constructs literal IPv4 and bracketed IPv6 probe URLs", () =>
+  Effect.sync(() => {
+    expect(PortScanner.loopbackProbeUrl("http:", "127.0.0.1", 5173)).toBe("http://127.0.0.1:5173/");
+    expect(PortScanner.loopbackProbeUrl("https:", "::1", 4173)).toBe("https://[::1]:4173/");
+  }),
+);
+
+effectIt.effect("probes and publishes the scanner-derived loopback address family", () =>
+  Effect.forEach(
+    [
+      {
+        bindHost: "127.0.0.1",
+        listenerName: "127.0.0.1",
+        expected: "127.0.0.1",
+        ipv6Only: false,
+      },
+      { bindHost: "::1", listenerName: "[::1]", expected: "::1", ipv6Only: false },
+      { bindHost: "::1", listenerName: "localhost", expected: "::1", ipv6Only: false },
+      { bindHost: "::", listenerName: "[::]", expected: "::1", ipv6Only: true },
+    ] as const,
+    ({ bindHost, listenerName, expected, ipv6Only }) =>
+      Effect.gen(function* () {
+        const { port } = yield* realHttpServer(bindHost, ipv6Only);
+        const found = yield* Effect.gen(function* () {
+          const scanner = yield* PortScanner.PortDiscovery;
+          return (yield* scanner.scan()).find((server) => server.port === port);
+        }).pipe(
+          Effect.provide(
+            makeLsofScannerLayer({
+              pid: () => 1234,
+              fetch: globalThis.fetch,
+              listenerName,
+              port,
+            }),
+          ),
+        );
+        expect(found?.connectHost).toBe(expected);
+      }),
     { discard: true },
   ),
 );
@@ -450,7 +522,7 @@ effectIt.effect("keeps a full configured URL when the discovered server root fai
     const url = String(input);
     requests.push(url);
     return Promise.resolve(
-      url === configuredUrl
+      url === ipv4ProbeUrl(configuredUrl)
         ? new Response("docs", { headers: { "content-type": "text/html" } })
         : new Response("not found", {
             status: 404,
@@ -465,7 +537,7 @@ effectIt.effect("keeps a full configured URL when the discovered server root fai
     const servers = yield* scanner.scan([configuredUrl]);
     expect(servers).toHaveLength(1);
     expect(servers[0]?.url).toBe(configuredUrl);
-    expect(requests).toContain(configuredUrl);
+    expect(requests).toContain(ipv4ProbeUrl(configuredUrl));
   }).pipe(Effect.provide(layer));
 });
 
@@ -519,7 +591,7 @@ effectIt.effect("projects configured paths independently for simultaneous subscr
   const fetchFn = ((input: Parameters<typeof globalThis.fetch>[0]) => {
     const url = String(input);
     return Promise.resolve(
-      url === docsUrl || url === adminUrl
+      url === ipv4ProbeUrl(docsUrl) || url === ipv4ProbeUrl(adminUrl)
         ? new Response("app", { headers: { "content-type": "text/html" } })
         : new Response("not found", { status: 404 }),
     );
@@ -553,7 +625,7 @@ effectIt.effect(
     const secondSubscriberUrl = `http://localhost:${LSOF_TEST_PORT}/app-${CONFIGURED_LOCAL_SERVER_URLS_MAX_ITEMS}`;
     const fetchFn = ((input: Parameters<typeof globalThis.fetch>[0]) =>
       Promise.resolve(
-        String(input) === secondSubscriberUrl
+        String(input) === ipv4ProbeUrl(secondSubscriberUrl)
           ? new Response("app", { headers: { "content-type": "text/html" } })
           : new Response("not found", { status: 404 }),
       )) as typeof globalThis.fetch;
@@ -585,7 +657,7 @@ effectIt.effect("stops probing a subscriber's configured paths after its scope c
     const url = String(input);
     requests.push(url);
     return Promise.resolve(
-      url === docsUrl || url === adminUrl
+      url === ipv4ProbeUrl(docsUrl) || url === ipv4ProbeUrl(adminUrl)
         ? new Response("app", { headers: { "content-type": "text/html" } })
         : new Response("not found", { status: 404 }),
     );
@@ -607,8 +679,8 @@ effectIt.effect("stops probing a subscriber's configured paths after its scope c
 
     requests.length = 0;
     yield* TestClock.adjust(Duration.seconds(15));
-    expect(requests).toContain(adminUrl);
-    expect(requests).not.toContain(docsUrl);
+    expect(requests).toContain(ipv4ProbeUrl(adminUrl));
+    expect(requests).not.toContain(ipv4ProbeUrl(docsUrl));
   }).pipe(Effect.scoped, Effect.provide(layer));
 });
 
@@ -643,11 +715,11 @@ effectIt.effect("shares a configured root probe with discovered-root classificat
   return Effect.gen(function* () {
     const scanner = yield* PortScanner.PortDiscovery;
     expect(yield* scanner.scan([rootUrl])).toHaveLength(1);
-    expect(requests).toEqual([rootUrl]);
+    expect(requests).toEqual([ipv4ProbeUrl(rootUrl)]);
 
     yield* TestClock.adjust(Duration.seconds(15));
     expect(yield* scanner.scan([rootUrl])).toHaveLength(1);
-    expect(requests).toEqual([rootUrl, rootUrl]);
+    expect(requests).toEqual([ipv4ProbeUrl(rootUrl), ipv4ProbeUrl(rootUrl)]);
   }).pipe(Effect.provide(layer));
 });
 
@@ -693,12 +765,12 @@ effectIt.effect("caches a failed web probe until its bounded cache entry expires
     const scanner = yield* PortScanner.PortDiscovery;
     expect(yield* scanner.scan()).toHaveLength(0);
     expect(yield* scanner.scan()).toHaveLength(0);
-    expect(requests).toHaveLength(2);
+    expect(requests).toHaveLength(4);
 
     responds = true;
     yield* TestClock.adjust(Duration.seconds(15));
     expect(yield* scanner.scan()).toHaveLength(1);
-    expect(requests).toHaveLength(3);
+    expect(requests).toHaveLength(5);
   }).pipe(Effect.provide(layer));
 });
 
@@ -794,11 +866,16 @@ effectIt.effect("aborts HTTP and HTTPS probes when they time out", () => {
   return Effect.gen(function* () {
     const scanner = yield* PortScanner.PortDiscovery;
     const scanFiber = yield* Effect.forkChild(scanner.scan());
-    yield* TestClock.adjust(Duration.seconds(2));
+    for (let probe = 0; probe < 4; probe += 1) {
+      yield* TestClock.adjust(Duration.seconds(1));
+      yield* Effect.yieldNow;
+    }
     expect(yield* Fiber.join(scanFiber)).toHaveLength(0);
     expect(aborted).toEqual([
-      `http://localhost:${LSOF_TEST_PORT}/`,
-      `https://localhost:${LSOF_TEST_PORT}/`,
+      `http://127.0.0.1:${LSOF_TEST_PORT}/`,
+      `https://127.0.0.1:${LSOF_TEST_PORT}/`,
+      `http://[::1]:${LSOF_TEST_PORT}/`,
+      `https://[::1]:${LSOF_TEST_PORT}/`,
     ]);
   }).pipe(Effect.provide(layer));
 });

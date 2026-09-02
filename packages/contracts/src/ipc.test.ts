@@ -43,6 +43,32 @@ describe("DesktopPortForward", () => {
       }),
     ).toEqual({ environmentId: "environment-1", leaseId: "lease-1", remotePort: 5173 });
   });
+
+  it("rejects unbounded tunnel endpoint and opaque credential fields", () => {
+    const base = {
+      environmentId: "environment-1",
+      leaseId: "lease-1",
+      httpBaseUrl: "https://vps.example.com/",
+      forwardTicket: "ticket",
+      remotePort: 5173,
+    };
+    expect(() =>
+      decodeDesktopPortForwardEnsureInput({ ...base, httpBaseUrl: `https://${"a".repeat(2_048)}` }),
+    ).toThrow();
+    expect(() =>
+      decodeDesktopPortForwardEnsureInput({ ...base, leaseId: "a".repeat(257) }),
+    ).toThrow();
+    expect(() =>
+      decodeDesktopPortForwardEnsureInput({ ...base, forwardTicket: "a".repeat(257) }),
+    ).toThrow();
+    expect(() =>
+      decodeDesktopPortForwardReleaseInput({
+        environmentId: "environment-1",
+        leaseId: "a".repeat(257),
+        remotePort: 5173,
+      }),
+    ).toThrow();
+  });
 });
 
 describe("DesktopEnvironmentBootstrapSchema", () => {

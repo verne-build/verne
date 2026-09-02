@@ -1,20 +1,25 @@
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import type {
   BrowserNavigationTarget,
+  DesktopPortForwardEnsureResult,
   EnvironmentId,
-  PreviewUrlResolution,
 } from "@t3tools/contracts";
-import { isLoopbackHost } from "@t3tools/shared/preview";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { previewEnvironment } from "~/state/preview";
 import { prepareBrowserNavigationTargetWith } from "./browserTargetResolver";
 
 interface ActiveForward {
+  readonly generation: number;
   readonly leaseId: string;
   readonly remotePort: number;
   readonly localPort: number;
   readonly localUrl: string;
+}
+
+interface PendingForwardEstablishment {
+  readonly generation: number;
+  readonly promise: Promise<DesktopPortForwardEnsureResult>;
 }
 
 export type PortForwardState =
@@ -27,12 +32,23 @@ export type PortForwardState =
     };
 
 const activeForwards = new Map<string, ActiveForward>();
-const pendingForwards = new Map<string, Promise<PreviewUrlResolution>>();
+const pendingForwardEstablishments = new Map<string, PendingForwardEstablishment>();
+const intentGenerations = new Map<string, number>();
 const autoSuppressed = new Set<string>();
 const disappearanceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const listeners = new Set<() => void>();
 let forwardRevision = 0;
 const keyFor = (environmentId: EnvironmentId, port: number) => `${environmentId}\u0000${port}`;
+const intentGeneration = (key: string) => intentGenerations.get(key) ?? 0;
+const advanceIntentGeneration = (key: string) => {
+  const generation = intentGeneration(key) + 1;
+  intentGenerations.set(key, generation);
+  return generation;
+};
+const currentActiveForward = (key: string) => {
+  const active = activeForwards.get(key);
+  return active?.generation === intentGeneration(key) ? active : undefined;
+};
 const autoForwardStorageKey = (environmentId: EnvironmentId) =>
   `verne.preview.auto-forward.${environmentId}`;
 const publish = () => {
@@ -59,7 +75,7 @@ export const subscribePortForwards = (listener: () => void) => {
 export const portForwardSnapshot = () => forwardRevision;
 
 export const isPortForwardActive = (environmentId: EnvironmentId, port: number) =>
-  activeForwards.has(keyFor(environmentId, port));
+  currentActiveForward(keyFor(environmentId, port)) !== undefined;
 
 export const isPortForwardAutoSuppressed = (environmentId: EnvironmentId, port: number) =>
   autoSuppressed.has(keyFor(environmentId, port));
@@ -70,7 +86,7 @@ export const readPortForwardState = (
 ): PortForwardState => {
   const key = keyFor(environmentId, port);
   if (autoSuppressed.has(key)) return { state: "suppressed" };
-  const active = activeForwards.get(key);
+  const active = currentActiveForward(key);
   return active === undefined
     ? { state: "idle" }
     : { state: "active", localPort: active.localPort, localUrl: active.localUrl };
@@ -125,7 +141,13 @@ export async function enablePortForward(environmentId: EnvironmentId, url: strin
   } catch {
     // The resolver below reports the useful URL error.
   }
-  if (port > 0 && autoSuppressed.delete(keyFor(environmentId, port))) publish();
+  if (port > 0) {
+    const key = keyFor(environmentId, port);
+    if (autoSuppressed.delete(key)) {
+      advanceIntentGeneration(key);
+      publish();
+    }
+  }
   return prepareBrowserNavigationTarget(environmentId, { kind: "url", url });
 }
 
@@ -133,66 +155,63 @@ export async function prepareBrowserNavigationTarget(
   environmentId: EnvironmentId,
   target: BrowserNavigationTarget,
 ) {
-  const port = targetPort(target);
-  const key = port === null ? null : keyFor(environmentId, port);
-  const pending = key === null ? undefined : pendingForwards.get(key);
-  if (pending) return pending;
-
-  const preparation = prepareBrowserNavigationTargetWith(environmentId, target, {
-    resolveActiveForward: (port) => activeForwards.get(keyFor(environmentId, port)),
-    acquireLease: async (port) => {
-      const result = await runAtomCommand(
-        appAtomRegistry,
-        previewEnvironment.acquirePortForward,
-        { environmentId, input: { port } },
-        { label: "preview port forwarding", reportFailure: false },
-      );
-      if (result._tag !== "Success") {
-        throw new Error(`Could not authorize forwarding for port ${port}.`);
-      }
-      return result.value;
-    },
-    ensureDesktopForward: async ({ environmentId, httpBaseUrl, lease }) => {
-      const ensure = window.desktopBridge?.ensurePortForward;
-      if (!ensure) {
-        throw new Error(
-          "This environment port requires the Verne desktop app's authenticated forwarding support.",
+  return prepareBrowserNavigationTargetWith(environmentId, target, {
+    resolveActiveForward: (port) => currentActiveForward(keyFor(environmentId, port)),
+    establishDesktopForward: async ({ environmentId, httpBaseUrl, port }) => {
+      const key = keyFor(environmentId, port);
+      const generation = intentGeneration(key);
+      const active = currentActiveForward(key);
+      if (active !== undefined) return active;
+      const pending = pendingForwardEstablishments.get(key);
+      if (pending?.generation === generation) return pending.promise;
+      const establishment = (async () => {
+        const leaseResult = await runAtomCommand(
+          appAtomRegistry,
+          previewEnvironment.acquirePortForward,
+          { environmentId, input: { port } },
+          { label: "preview port forwarding", reportFailure: false },
         );
+        if (leaseResult._tag !== "Success") {
+          throw new Error(`Could not authorize forwarding for port ${port}.`);
+        }
+        const ensure = window.desktopBridge?.ensurePortForward;
+        if (!ensure) {
+          throw new Error(
+            "This environment port requires the Verne desktop app's authenticated forwarding support.",
+          );
+        }
+        const local = await ensure({
+          environmentId,
+          leaseId: leaseResult.value.leaseId,
+          httpBaseUrl,
+          forwardTicket: leaseResult.value.ticket,
+          remotePort: leaseResult.value.port,
+        });
+        const established: ActiveForward = {
+          generation,
+          leaseId: leaseResult.value.leaseId,
+          remotePort: leaseResult.value.port,
+          ...local,
+        };
+        if (generation !== intentGeneration(key) || autoSuppressed.has(key)) {
+          await releaseOwnedForward(environmentId, established);
+          throw new Error("Port forward is no longer requested.");
+        }
+        activeForwards.set(key, established);
+        publish();
+        return local;
+      })();
+      const pendingEntry = { generation, promise: establishment };
+      pendingForwardEstablishments.set(key, pendingEntry);
+      try {
+        return await establishment;
+      } finally {
+        if (pendingForwardEstablishments.get(key) === pendingEntry) {
+          pendingForwardEstablishments.delete(key);
+        }
       }
-      const result = await ensure({
-        environmentId,
-        leaseId: lease.leaseId,
-        httpBaseUrl,
-        forwardTicket: lease.ticket,
-        remotePort: lease.port,
-      });
-      activeForwards.set(keyFor(environmentId, lease.port), {
-        leaseId: lease.leaseId,
-        remotePort: lease.port,
-        ...result,
-      });
-      publish();
-      return result;
     },
   });
-  if (key === null) return preparation;
-  pendingForwards.set(key, preparation);
-  try {
-    return await preparation;
-  } finally {
-    if (pendingForwards.get(key) === preparation) pendingForwards.delete(key);
-  }
-}
-
-function targetPort(target: BrowserNavigationTarget): number | null {
-  if (target.kind === "environment-port") return target.port;
-  try {
-    const url = new URL(target.url.includes("://") ? target.url : `http://${target.url}`);
-    if (!isLoopbackHost(url.hostname)) return null;
-    return Number(url.port || (url.protocol === "https:" ? 443 : 80));
-  } catch {
-    return null;
-  }
 }
 
 export async function disablePortForward(
@@ -201,6 +220,7 @@ export async function disablePortForward(
   options: { readonly suppressAuto?: boolean } = { suppressAuto: true },
 ) {
   const key = keyFor(environmentId, remotePort);
+  advanceIntentGeneration(key);
   const timer = disappearanceTimers.get(key);
   if (timer !== undefined) clearTimeout(timer);
   disappearanceTimers.delete(key);
@@ -210,14 +230,22 @@ export async function disablePortForward(
   }
   const active = activeForwards.get(key);
   if (!active) return;
-  await window.desktopBridge?.releasePortForward?.({
-    environmentId,
-    leaseId: active.leaseId,
-    remotePort,
-  });
-  await releaseServerLease(environmentId, active.leaseId);
-  activeForwards.delete(key);
-  publish();
+  await releaseOwnedForward(environmentId, active);
+  if (activeForwards.get(key) === active) {
+    activeForwards.delete(key);
+    publish();
+  }
+}
+
+async function releaseOwnedForward(environmentId: EnvironmentId, active: ActiveForward) {
+  await Promise.allSettled([
+    window.desktopBridge?.releasePortForward?.({
+      environmentId,
+      leaseId: active.leaseId,
+      remotePort: active.remotePort,
+    }),
+    releaseServerLease(environmentId, active.leaseId),
+  ]);
 }
 
 async function releaseServerLease(environmentId: EnvironmentId, leaseId: string) {

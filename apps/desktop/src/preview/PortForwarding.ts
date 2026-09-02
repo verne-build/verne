@@ -72,8 +72,28 @@ export class DesktopPortForwarding extends Context.Service<
 const forwardKey = (input: { readonly environmentId: string; readonly remotePort: number }) =>
   `${input.environmentId}\u0000${input.remotePort}`;
 
+const isLoopbackEndpointHost = (host: string): boolean => {
+  const normalized = host.toLowerCase().replace(/^\[|\]$/g, "");
+  if (normalized === "localhost" || normalized === "::1") return true;
+  const ipv4 = normalized.split(".").map(Number);
+  return (
+    ipv4.length === 4 &&
+    ipv4[0] === 127 &&
+    ipv4.every((part) => Number.isInteger(part) && part >= 0 && part <= 255)
+  );
+};
+
 const tunnelUrl = (input: DesktopPortForwardEnsureInput): string => {
   const url = new URL(input.httpBaseUrl);
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("Preview tunnel endpoint must use HTTP or HTTPS.");
+  }
+  if (url.username.length > 0 || url.password.length > 0 || url.hash.length > 0) {
+    throw new Error("Preview tunnel endpoint must not contain credentials or a fragment.");
+  }
+  if (url.protocol === "http:" && !isLoopbackEndpointHost(url.hostname)) {
+    throw new Error("Plaintext preview tunnel endpoints must be loopback-only.");
+  }
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   url.pathname = "/preview/tunnel";
   url.search = "";
@@ -124,11 +144,12 @@ export const make = Effect.gen(function* () {
     Effect.tryPromise({
       try: () =>
         new Promise<DesktopPortForwardEnsureResult>((resolve, reject) => {
+          const webSocketUrl = tunnelUrl(input);
           const key = forwardKey(input);
           const previous = entries.get(key);
           if (previous) closeEntry(previous);
 
-          const webSocket = new WebSocket(tunnelUrl(input));
+          const webSocket = new WebSocket(webSocketUrl);
           webSocket.binaryType = "arraybuffer";
           const server = NodeNet.createServer();
           const sockets = new Map<number, NodeNet.Socket>();

@@ -33,7 +33,7 @@ describe("browser target resolver", () => {
     ],
     [
       "LAN bearer",
-      "http://192.168.1.25:3773",
+      "https://192.168.1.25:3773",
       new BearerConnectionTarget({
         environmentId: EnvironmentId.make("environment-1"),
         label: "LAN",
@@ -42,7 +42,7 @@ describe("browser target resolver", () => {
     ],
     [
       "Tailnet bearer",
-      "http://100.65.180.100:3773",
+      "https://100.65.180.100:3773",
       new BearerConnectionTarget({
         environmentId: EnvironmentId.make("environment-1"),
         label: "Tailnet",
@@ -54,14 +54,7 @@ describe("browser target resolver", () => {
     async (_name, httpBaseUrl, target) => {
       readPreparedConnection.mockReturnValue({ httpBaseUrl, target });
       const { prepareBrowserNavigationTargetWith } = await import("./browserTargetResolver");
-      const acquireLease = vi.fn(async () => ({
-        leaseId: "lease-1",
-        ticket: "ticket",
-        port: 5173,
-        connectHost: "127.0.0.1" as const,
-        expiresAt: "2026-09-01T18:00:00.000Z",
-      }));
-      const ensureDesktopForward = vi.fn(async () => ({
+      const establishDesktopForward = vi.fn(async () => ({
         localPort: 45173,
         localUrl: "http://localhost:45173/",
       }));
@@ -69,7 +62,7 @@ describe("browser target resolver", () => {
       const resolved = await prepareBrowserNavigationTargetWith(
         EnvironmentId.make("environment-1"),
         { kind: "url", url: "http://localhost:5173/dashboard?mode=test#results" },
-        { acquireLease, ensureDesktopForward },
+        { establishDesktopForward },
       );
 
       expect(resolved).toEqual({
@@ -78,9 +71,42 @@ describe("browser target resolver", () => {
         resolutionKind: "authenticated-tunnel",
         environmentId: "environment-1",
       });
-      expect(acquireLease).toHaveBeenCalledWith(5173);
+      expect(establishDesktopForward).toHaveBeenCalledWith({
+        environmentId: "environment-1",
+        httpBaseUrl,
+        port: 5173,
+      });
     },
   );
+
+  it.each([
+    ["LAN", "http://192.168.1.25:3773"],
+    ["Tailnet", "http://100.65.180.100:3773"],
+    ["public", "http://relay.example.com:3773"],
+    ["arbitrary scheme", "ftp://relay.example.com/resource"],
+    ["credentials", "https://user:password@relay.example.com"],
+    ["fragment", "https://relay.example.com/#secret"],
+  ])("rejects unsafe %s tunnel endpoint before acquiring a ticket", async (_name, httpBaseUrl) => {
+    readPreparedConnection.mockReturnValue({
+      httpBaseUrl,
+      target: new BearerConnectionTarget({
+        environmentId: EnvironmentId.make("environment-1"),
+        label: "Remote",
+        connectionId: "remote-1",
+      }),
+    });
+    const { prepareBrowserNavigationTargetWith } = await import("./browserTargetResolver");
+    const establishDesktopForward = vi.fn();
+
+    await expect(
+      prepareBrowserNavigationTargetWith(
+        EnvironmentId.make("environment-1"),
+        { kind: "url", url: "http://localhost:5173/app" },
+        { establishDesktopForward },
+      ),
+    ).rejects.toThrow(/HTTPS endpoint|valid HTTP endpoint/);
+    expect(establishDesktopForward).not.toHaveBeenCalled();
+  });
 
   it.each([
     [5173, "http://localhost:5173/app"],
@@ -100,14 +126,7 @@ describe("browser target resolver", () => {
         EnvironmentId.make("environment-1"),
         { kind: "url", url: "http://localhost:5173/app" },
         {
-          acquireLease: async () => ({
-            leaseId: "lease-1",
-            ticket: "ticket",
-            port: 5173,
-            connectHost: "127.0.0.1",
-            expiresAt: "2026-09-01T18:00:00.000Z",
-          }),
-          ensureDesktopForward: async () => ({
+          establishDesktopForward: async () => ({
             localPort,
             localUrl: `http://localhost:${localPort}/`,
           }),
@@ -174,14 +193,7 @@ describe("browser target resolver", () => {
       EnvironmentId.make("environment-1"),
       { kind: "url", url: "http://localhost:5173/app?x=1#top" },
       {
-        acquireLease: async () => ({
-          leaseId: "lease-1",
-          ticket: "ticket",
-          port: 5173,
-          connectHost: "127.0.0.1",
-          expiresAt: "2026-09-01T18:00:00.000Z",
-        }),
-        ensureDesktopForward: async () => ({
+        establishDesktopForward: async () => ({
           localPort: 45173,
           localUrl: "http://localhost:45173/",
         }),
@@ -204,15 +216,12 @@ describe("browser target resolver", () => {
         EnvironmentId.make("environment-1"),
         { kind: "url", url: "http://localhost:5173" },
         {
-          acquireLease: async () => {
-            throw new Error("must not acquire");
-          },
-          ensureDesktopForward: async () => {
-            throw new Error("must not connect");
+          establishDesktopForward: async () => {
+            throw new Error("must not establish");
           },
         },
       ),
-    ).rejects.toThrow(/HTTPS\/WSS/);
+    ).rejects.toThrow(/HTTPS endpoint/);
   });
 
   it("prepares a tunnel for an SSH environment whose server bridge is local", async () => {
@@ -221,26 +230,21 @@ describe("browser target resolver", () => {
       target: { _tag: "SshConnectionTarget" },
     });
     const { prepareBrowserNavigationTargetWith } = await import("./browserTargetResolver");
-    const acquireLease = vi.fn(async () => ({
-      leaseId: "lease-ssh",
-      ticket: "ticket",
-      port: 5173,
-      connectHost: "127.0.0.1" as const,
-      expiresAt: "2026-09-01T18:00:00.000Z",
+    const establishDesktopForward = vi.fn(async () => ({
+      localPort: 45173,
+      localUrl: "http://localhost:45173/",
     }));
     const resolved = await prepareBrowserNavigationTargetWith(
       EnvironmentId.make("environment-1"),
       { kind: "url", url: "http://localhost:5173/app" },
-      {
-        acquireLease,
-        ensureDesktopForward: async () => ({
-          localPort: 45173,
-          localUrl: "http://localhost:45173/",
-        }),
-      },
+      { establishDesktopForward },
     );
 
-    expect(acquireLease).toHaveBeenCalledWith(5173);
+    expect(establishDesktopForward).toHaveBeenCalledWith({
+      environmentId: "environment-1",
+      httpBaseUrl: "http://127.0.0.1:43881",
+      port: 5173,
+    });
     expect(resolved.resolvedUrl).toBe("http://localhost:45173/app");
     expect(resolved.resolutionKind).toBe("authenticated-tunnel");
   });

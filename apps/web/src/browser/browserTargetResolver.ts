@@ -2,7 +2,6 @@ import type {
   BrowserNavigationTarget,
   DesktopPortForwardEnsureResult,
   EnvironmentId,
-  PreviewPortForwardLeaseResult,
   PreviewUrlResolution,
 } from "@t3tools/contracts";
 import { isLoopbackHost, normalizePreviewUrl } from "@t3tools/shared/preview";
@@ -174,6 +173,18 @@ const isDesktopLocalTarget = (
     ? isLocalLoopbackHost(environmentUrl.hostname)
     : target._tag === "PrimaryConnectionTarget" || isDesktopLocalConnectionTarget(target);
 
+const assertSafeDesktopTunnelEndpoint = (url: URL): void => {
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("Remote preview tunnels require a valid HTTP endpoint.");
+  }
+  if (url.username.length > 0 || url.password.length > 0 || url.hash.length > 0) {
+    throw new Error("Remote preview tunnels require a credential-free HTTPS endpoint.");
+  }
+  if (url.protocol === "http:" && !isLocalLoopbackHost(url.hostname)) {
+    throw new Error("Remote preview tunnels require a secure HTTPS endpoint.");
+  }
+};
+
 export function isLoopbackBrowserNavigationTarget(target: BrowserNavigationTarget): boolean {
   if (target.kind === "environment-port") return true;
   try {
@@ -261,11 +272,10 @@ export async function prepareBrowserNavigationTargetWith(
   environmentId: EnvironmentId,
   target: BrowserNavigationTarget,
   dependencies: {
-    readonly acquireLease: (port: number) => Promise<PreviewPortForwardLeaseResult>;
-    readonly ensureDesktopForward: (input: {
+    readonly establishDesktopForward: (input: {
       readonly environmentId: EnvironmentId;
       readonly httpBaseUrl: string;
-      readonly lease: PreviewPortForwardLeaseResult;
+      readonly port: number;
     }) => Promise<DesktopPortForwardEnsureResult>;
     readonly resolveActiveForward?: (port: number) => DesktopPortForwardEnsureResult | undefined;
   },
@@ -279,9 +289,7 @@ export async function prepareBrowserNavigationTargetWith(
   if (isDesktopLocalTarget(connection.target, environmentUrl)) {
     return resolveDirectBrowserNavigationTarget(environmentId, target);
   }
-  if (environmentUrl.protocol === "http:" && !isPrivateNetworkHost(environmentUrl.hostname)) {
-    throw new Error("Remote preview tunnels require an HTTPS/WSS environment endpoint.");
-  }
+  assertSafeDesktopTunnelEndpoint(environmentUrl);
 
   let requestedUrl: string;
   let sourceUrl: URL;
@@ -304,10 +312,10 @@ export async function prepareBrowserNavigationTargetWith(
   const active = dependencies.resolveActiveForward?.(port);
   const local =
     active ??
-    (await dependencies.ensureDesktopForward({
+    (await dependencies.establishDesktopForward({
       environmentId,
       httpBaseUrl: connection.httpBaseUrl,
-      lease: await dependencies.acquireLease(port),
+      port,
     }));
   sourceUrl.hostname = "localhost";
   sourceUrl.port = String(local.localPort);
