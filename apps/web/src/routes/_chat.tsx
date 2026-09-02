@@ -42,7 +42,7 @@ function ChatRouteGlobalShortcuts() {
       }).length,
     [primaryEnvironmentId, projectGroupingSettings, projects],
   );
-  const terminalOpen = useTerminalUiStateStore((state) =>
+  const bottomDrawerOpen = useTerminalUiStateStore((state) =>
     routeThreadRef
       ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen
       : false,
@@ -61,7 +61,7 @@ function ChatRouteGlobalShortcuts() {
       const command = resolveShortcutCommand(event, keybindings, {
         context: {
           terminalFocus: isTerminalFocused(),
-          terminalOpen,
+          terminalOpen: bottomDrawerOpen,
           previewFocus: isPreviewFocused(),
           previewOpen,
         },
@@ -168,7 +168,7 @@ function ChatRouteGlobalShortcuts() {
     routeThreadRef,
     selectedThreadKeysSize,
     legacySidebarEnabled,
-    terminalOpen,
+    bottomDrawerOpen,
   ]);
 
   return null;

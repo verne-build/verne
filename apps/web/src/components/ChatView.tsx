@@ -180,7 +180,9 @@ import {
 import { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
+import ThreadBottomDrawer from "./ThreadBottomDrawer";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
+import { useThreadPreviewAccessController } from "./preview/useDiscoveredLocalServers";
 import {
   AlarmClockIcon,
   CheckCircle2Icon,
@@ -846,6 +848,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     [panelTerminalIds, serverOrderedTerminalIds, terminalUiState.terminalIds],
   );
   const storeSetTerminalHeight = useTerminalUiStateStore((state) => state.setTerminalHeight);
+  const storeSetBottomDrawerTab = useTerminalUiStateStore((state) => state.setBottomDrawerTab);
   const storeSplitTerminal = useTerminalUiStateStore((state) => state.splitTerminal);
   const storeSplitTerminalVertical = useTerminalUiStateStore(
     (state) => state.splitTerminalVertical,
@@ -915,6 +918,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
       return;
     }
     const terminalId = nextTerminalId(allocatableTerminalIds);
+    storeSetBottomDrawerTab(threadRef, "terminal");
     storeSplitTerminal(threadRef, terminalId);
     bumpFocusRequestId();
     void openTerminal({
@@ -934,6 +938,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     effectiveWorktreePath,
     runtimeEnv,
     storeSplitTerminal,
+    storeSetBottomDrawerTab,
     threadId,
     threadRef,
     openTerminal,
@@ -943,6 +948,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
       return;
     }
     const terminalId = nextTerminalId(allocatableTerminalIds);
+    storeSetBottomDrawerTab(threadRef, "terminal");
     storeSplitTerminalVertical(threadRef, terminalId);
     bumpFocusRequestId();
     void openTerminal({
@@ -963,6 +969,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     openTerminal,
     runtimeEnv,
     storeSplitTerminalVertical,
+    storeSetBottomDrawerTab,
     threadId,
     threadRef,
   ]);
@@ -972,6 +979,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
       return;
     }
     const terminalId = nextTerminalId(allocatableTerminalIds);
+    storeSetBottomDrawerTab(threadRef, "terminal");
     storeNewTerminal(threadRef, terminalId);
     bumpFocusRequestId();
     void openTerminal({
@@ -991,6 +999,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     allocatableTerminalIds,
     runtimeEnv,
     storeNewTerminal,
+    storeSetBottomDrawerTab,
     threadId,
     threadRef,
     openTerminal,
@@ -998,10 +1007,11 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
 
   const activateTerminal = useCallback(
     (terminalId: string) => {
+      storeSetBottomDrawerTab(threadRef, "terminal");
       storeSetActiveTerminal(threadRef, terminalId);
       bumpFocusRequestId();
     },
-    [bumpFocusRequestId, storeSetActiveTerminal, threadRef],
+    [bumpFocusRequestId, storeSetActiveTerminal, storeSetBottomDrawerTab, threadRef],
   );
 
   const closeTerminal = useCallback(
@@ -1049,40 +1059,62 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     [onAddTerminalContext, visible],
   );
 
+  const selectBottomDrawerTab = useCallback(
+    (tab: "terminal" | "ports") => {
+      storeSetBottomDrawerTab(threadRef, tab);
+    },
+    [storeSetBottomDrawerTab, threadRef],
+  );
+
   if (!project || !terminalUiState.terminalOpen || !cwd) {
     return null;
   }
 
   return (
     <div className={visible ? undefined : "hidden"}>
-      <ThreadTerminalDrawer
-        threadRef={threadRef}
-        threadId={threadId}
-        cwd={cwd}
-        worktreePath={effectiveWorktreePath}
-        runtimeEnv={runtimeEnv}
+      <ThreadBottomDrawer
+        drawerKey={scopedThreadKey(threadRef)}
         visible={visible}
         height={terminalUiState.terminalHeight}
-        // Known-session order is MRU and changes on focus; persisted store order keeps sidebar labels stable.
-        terminalIds={terminalUiState.terminalIds}
-        activeTerminalId={terminalUiState.activeTerminalId}
-        terminalGroups={terminalUiState.terminalGroups}
-        activeTerminalGroupId={terminalUiState.activeTerminalGroupId}
-        focusRequestId={focusRequestId + localFocusRequestId + (visible ? 1 : 0)}
-        onSplitTerminal={splitTerminal}
-        onSplitTerminalVertical={splitTerminalVertical}
-        onNewTerminal={createNewTerminal}
-        splitShortcutLabel={visible ? splitShortcutLabel : undefined}
-        splitVerticalShortcutLabel={visible ? splitVerticalShortcutLabel : undefined}
-        newShortcutLabel={visible ? newShortcutLabel : undefined}
-        closeShortcutLabel={visible ? closeShortcutLabel : undefined}
-        keybindings={keybindings}
-        onActiveTerminalChange={activateTerminal}
-        onCloseTerminal={closeTerminal}
+        selectedTab={terminalUiState.bottomDrawerTab}
+        onTabChange={selectBottomDrawerTab}
         onHeightChange={setTerminalHeight}
-        onAddTerminalContext={handleAddTerminalContext}
-        terminalLabelsById={terminalLabelsById}
-        terminalLaunchLocationsById={terminalLaunchLocationsById}
+        renderTerminal={({ height, resizeEpoch }) => (
+          <ThreadTerminalDrawer
+            mode="content"
+            threadRef={threadRef}
+            threadId={threadId}
+            cwd={cwd}
+            worktreePath={effectiveWorktreePath}
+            runtimeEnv={runtimeEnv}
+            height={height}
+            resizeEpoch={resizeEpoch}
+            // Known-session order is MRU and changes on focus; persisted store order keeps sidebar labels stable.
+            terminalIds={terminalUiState.terminalIds}
+            activeTerminalId={terminalUiState.activeTerminalId}
+            terminalGroups={terminalUiState.terminalGroups}
+            activeTerminalGroupId={terminalUiState.activeTerminalGroupId}
+            focusRequestId={focusRequestId + localFocusRequestId + (visible ? 1 : 0)}
+            onSplitTerminal={splitTerminal}
+            onSplitTerminalVertical={splitTerminalVertical}
+            onNewTerminal={createNewTerminal}
+            splitShortcutLabel={visible ? splitShortcutLabel : undefined}
+            splitVerticalShortcutLabel={visible ? splitVerticalShortcutLabel : undefined}
+            newShortcutLabel={visible ? newShortcutLabel : undefined}
+            closeShortcutLabel={visible ? closeShortcutLabel : undefined}
+            keybindings={keybindings}
+            onActiveTerminalChange={activateTerminal}
+            onCloseTerminal={closeTerminal}
+            onAddTerminalContext={handleAddTerminalContext}
+            terminalLabelsById={terminalLabelsById}
+            terminalLaunchLocationsById={terminalLaunchLocationsById}
+          />
+        )}
+        portsPanel={
+          <div className="flex h-full items-center justify-center px-4 text-sm text-muted-foreground">
+            Port previews will appear here.
+          </div>
+        }
       />
     </div>
   );
@@ -1248,7 +1280,6 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
       closeShortcutLabel={closeShortcutLabel}
       onActiveTerminalChange={onActiveTerminalChange}
       onCloseTerminal={onCloseTerminal}
-      onHeightChange={() => undefined}
       onAddTerminalContext={onAddTerminalContext}
       terminalLabelsById={terminalLabelsById}
       terminalLaunchLocationsById={terminalLaunchLocationsById}
@@ -1554,11 +1585,11 @@ function ChatViewContent(props: ChatViewProps) {
     ),
   );
   const storeSetTerminalOpen = useTerminalUiStateStore((s) => s.setTerminalOpen);
+  const storeSetBottomDrawerTab = useTerminalUiStateStore((s) => s.setBottomDrawerTab);
   const storeEnsureTerminal = useTerminalUiStateStore((state) => state.ensureTerminal);
   const storeSplitTerminal = useTerminalUiStateStore((s) => s.splitTerminal);
   const storeSplitTerminalVertical = useTerminalUiStateStore((s) => s.splitTerminalVertical);
   const storeNewTerminal = useTerminalUiStateStore((s) => s.newTerminal);
-  const storeSetActiveTerminal = useTerminalUiStateStore((s) => s.setActiveTerminal);
   const storeCloseTerminal = useTerminalUiStateStore((s) => s.closeTerminal);
   const serverThreadRefs = useThreadRefs();
   const serverThreadKeys = useMemo(() => serverThreadRefs.map(scopedThreadKey), [serverThreadRefs]);
@@ -1713,6 +1744,10 @@ function ChatViewContent(props: ChatViewProps) {
         : null,
     [activeThreadEnvironmentId, activeThreadId],
   );
+  useThreadPreviewAccessController({
+    environmentId: activeThreadRef?.environmentId ?? null,
+    threadId: activeThreadRef?.threadId ?? null,
+  });
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
   const changeRequestSnapshotByKey = useAtomValue(threadChangeRequestSnapshotsAtom);
   const [timelineAnchor, setTimelineAnchor] = useState<{
@@ -3157,6 +3192,7 @@ function ChatViewContent(props: ChatViewProps) {
         return;
       }
       const terminalId = nextTerminalId(allocatableActiveTerminalIds);
+      storeSetBottomDrawerTab(activeThreadRef, "terminal");
       storeEnsureTerminal(activeThreadRef, terminalId, { open: true });
       void openTerminal({
         environmentId,
@@ -3173,6 +3209,9 @@ function ChatViewContent(props: ChatViewProps) {
       });
       return;
     }
+    if (nextOpen) {
+      storeSetBottomDrawerTab(activeThreadRef, "terminal");
+    }
     setTerminalOpen(nextOpen);
   }, [
     activeProject,
@@ -3185,6 +3224,7 @@ function ChatViewContent(props: ChatViewProps) {
     openTerminal,
     setTerminalOpen,
     storeEnsureTerminal,
+    storeSetBottomDrawerTab,
     terminalUiState.terminalIds.length,
     terminalUiState.terminalOpen,
   ]);
@@ -3198,6 +3238,7 @@ function ChatViewContent(props: ChatViewProps) {
         return;
       }
       const terminalId = nextTerminalId(allocatableActiveTerminalIds);
+      storeSetBottomDrawerTab(activeThreadRef, "terminal");
       if (direction === "vertical") {
         storeSplitTerminalVertical(activeThreadRef, terminalId);
       } else {
@@ -3230,6 +3271,7 @@ function ChatViewContent(props: ChatViewProps) {
       hasReachedSplitLimit,
       storeSplitTerminal,
       storeSplitTerminalVertical,
+      storeSetBottomDrawerTab,
     ],
   );
   const createNewTerminal = useCallback(() => {
@@ -3241,6 +3283,7 @@ function ChatViewContent(props: ChatViewProps) {
       return;
     }
     const terminalId = nextTerminalId(allocatableActiveTerminalIds);
+    storeSetBottomDrawerTab(activeThreadRef, "terminal");
     storeNewTerminal(activeThreadRef, terminalId);
     setTerminalFocusRequestId((value) => value + 1);
     void openTerminal({
@@ -3266,6 +3309,7 @@ function ChatViewContent(props: ChatViewProps) {
     environmentId,
     gitCwd,
     storeNewTerminal,
+    storeSetBottomDrawerTab,
   ]);
   const closeTerminal = useCallback(
     (terminalId: string) => {
@@ -3331,6 +3375,9 @@ function ChatViewContent(props: ChatViewProps) {
         cwd: targetCwd,
         worktreePath: targetWorktreePath,
       });
+      if (activeThreadRef) {
+        storeSetBottomDrawerTab(activeThreadRef, "terminal");
+      }
       setTerminalOpen(true);
       if (!activeThreadRef) {
         return;
@@ -3368,7 +3415,7 @@ function ChatViewContent(props: ChatViewProps) {
       if (shouldCreateNewTerminal) {
         storeNewTerminal(activeThreadRef, targetTerminalId);
       } else {
-        storeSetActiveTerminal(activeThreadRef, targetTerminalId);
+        storeEnsureTerminal(activeThreadRef, targetTerminalId, { open: true, active: true });
       }
 
       const openResult = await openTerminal({ environmentId, input: openTerminalInput });
@@ -3407,8 +3454,9 @@ function ChatViewContent(props: ChatViewProps) {
       gitCwd,
       setTerminalOpen,
       setThreadError,
+      storeEnsureTerminal,
       storeNewTerminal,
-      storeSetActiveTerminal,
+      storeSetBottomDrawerTab,
       setLastInvokedScriptByProjectId,
       environmentId,
       openTerminal,
@@ -5325,9 +5373,6 @@ function ChatViewContent(props: ChatViewProps) {
           splitPanelTerminal();
           return;
         }
-        if (!terminalUiState.terminalOpen) {
-          setTerminalOpen(true);
-        }
         splitTerminal();
         return;
       }
@@ -5338,9 +5383,6 @@ function ChatViewContent(props: ChatViewProps) {
         if (terminalFocusOwner === "right-panel") {
           splitPanelTerminal("vertical");
           return;
-        }
-        if (!terminalUiState.terminalOpen) {
-          setTerminalOpen(true);
         }
         splitTerminal("vertical");
         return;
@@ -5364,9 +5406,6 @@ function ChatViewContent(props: ChatViewProps) {
         if (terminalFocusOwner === "right-panel") {
           addTerminalSurface();
           return;
-        }
-        if (!terminalUiState.terminalOpen) {
-          setTerminalOpen(true);
         }
         createNewTerminal();
         return;

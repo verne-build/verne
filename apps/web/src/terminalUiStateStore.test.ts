@@ -29,6 +29,7 @@ describe("terminalUiStateStore actions", () => {
     );
     expect(terminalUiState).toEqual({
       terminalOpen: false,
+      bottomDrawerTab: "terminal",
       terminalHeight: 280,
       terminalIds: [],
       activeTerminalId: "",
@@ -39,7 +40,7 @@ describe("terminalUiStateStore actions", () => {
 
   it("opens and splits terminals into the active group", () => {
     const store = useTerminalUiStateStore.getState();
-    store.setTerminalOpen(THREAD_REF, true);
+    store.newTerminal(THREAD_REF, DEFAULT_THREAD_TERMINAL_ID);
     store.splitTerminal(THREAD_REF, "terminal-2");
 
     const terminalUiState = selectThreadTerminalUiState(
@@ -59,7 +60,7 @@ describe("terminalUiStateStore actions", () => {
 
   it("stacks vertically split terminals in the active group", () => {
     const store = useTerminalUiStateStore.getState();
-    store.setTerminalOpen(THREAD_REF, true);
+    store.newTerminal(THREAD_REF, DEFAULT_THREAD_TERMINAL_ID);
     store.splitTerminalVertical(THREAD_REF, "terminal-2");
 
     const terminalUiState = selectThreadTerminalUiState(
@@ -75,7 +76,7 @@ describe("terminalUiStateStore actions", () => {
     ]);
   });
 
-  it("materializes the default terminal when opening an empty drawer", () => {
+  it("opens an empty bottom drawer without materializing a terminal", () => {
     useTerminalUiStateStore.getState().setTerminalOpen(THREAD_REF, true);
 
     const terminalUiState = selectThreadTerminalUiState(
@@ -84,16 +85,76 @@ describe("terminalUiStateStore actions", () => {
     );
     expect(terminalUiState).toEqual({
       terminalOpen: true,
+      bottomDrawerTab: "terminal",
       terminalHeight: 280,
-      terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
-      activeTerminalId: DEFAULT_THREAD_TERMINAL_ID,
-      terminalGroups: [
-        {
-          id: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
-          terminalIds: [DEFAULT_THREAD_TERMINAL_ID],
-        },
-      ],
-      activeTerminalGroupId: `group-${DEFAULT_THREAD_TERMINAL_ID}`,
+      terminalIds: [],
+      activeTerminalId: "",
+      terminalGroups: [],
+      activeTerminalGroupId: "",
+    });
+  });
+
+  it("selects bottom drawer tabs per thread and opens Ports without creating a terminal", () => {
+    const store = useTerminalUiStateStore.getState();
+    store.setBottomDrawerTab(THREAD_REF, "ports");
+
+    expect(
+      selectThreadTerminalUiState(
+        useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+        THREAD_REF,
+      ),
+    ).toMatchObject({
+      terminalOpen: true,
+      bottomDrawerTab: "ports",
+      terminalIds: [],
+    });
+    expect(
+      selectThreadTerminalUiState(
+        useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+        OTHER_THREAD_REF,
+      ).bottomDrawerTab,
+    ).toBe("terminal");
+  });
+
+  it("terminal actions select Terminal before opening or focusing it", () => {
+    const store = useTerminalUiStateStore.getState();
+    store.setBottomDrawerTab(THREAD_REF, "ports");
+    store.newTerminal(THREAD_REF, "terminal-2");
+
+    expect(
+      selectThreadTerminalUiState(
+        useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+        THREAD_REF,
+      ).bottomDrawerTab,
+    ).toBe("terminal");
+
+    store.setBottomDrawerTab(THREAD_REF, "ports");
+    store.setActiveTerminal(THREAD_REF, "terminal-2");
+    expect(
+      selectThreadTerminalUiState(
+        useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+        THREAD_REF,
+      ).bottomDrawerTab,
+    ).toBe("terminal");
+  });
+
+  it("preserves the selected Ports tab when terminal sessions are cleared and the drawer reopens", () => {
+    const store = useTerminalUiStateStore.getState();
+    store.newTerminal(THREAD_REF, "terminal-only");
+    store.setBottomDrawerTab(THREAD_REF, "ports");
+    store.closeTerminal(THREAD_REF, "terminal-only");
+    store.setTerminalOpen(THREAD_REF, false);
+    store.setTerminalOpen(THREAD_REF, true);
+
+    expect(
+      selectThreadTerminalUiState(
+        useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+        THREAD_REF,
+      ),
+    ).toMatchObject({
+      terminalOpen: true,
+      bottomDrawerTab: "ports",
+      terminalIds: [],
     });
   });
 
@@ -202,6 +263,7 @@ describe("terminalUiStateStore actions", () => {
       terminalUiStateByThreadKey: {
         [scopedThreadKey(THREAD_REF)]: {
           terminalOpen: true,
+          bottomDrawerTab: "terminal",
           terminalHeight: 320,
           terminalIds: ["term-1"],
           activeTerminalId: "term-1",
@@ -212,20 +274,17 @@ describe("terminalUiStateStore actions", () => {
     });
   });
 
-  it("resets to default and clears persisted entry when closing the last terminal", () => {
+  it("keeps the open terminal empty state when closing the last terminal", () => {
     const store = useTerminalUiStateStore.getState();
     store.newTerminal(THREAD_REF, "terminal-only");
     store.closeTerminal(THREAD_REF, "terminal-only");
 
     expect(
-      useTerminalUiStateStore.getState().terminalUiStateByThreadKey[scopedThreadKey(THREAD_REF)],
-    ).toBeUndefined();
-    expect(
       selectThreadTerminalUiState(
         useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
         THREAD_REF,
-      ).terminalIds,
-    ).toEqual([]);
+      ),
+    ).toMatchObject({ terminalOpen: true, bottomDrawerTab: "terminal", terminalIds: [] });
   });
 
   it("keeps a valid active terminal after closing an active split terminal", () => {
