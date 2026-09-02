@@ -1,3 +1,8 @@
+import {
+  BearerConnectionTarget,
+  RelayConnectionTarget,
+  SshConnectionTarget,
+} from "@t3tools/client-runtime/connection";
 import { EnvironmentId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -8,73 +13,110 @@ vi.mock("~/state/session", () => ({ readPreparedConnection }));
 describe("browser target resolver", () => {
   beforeEach(() => readPreparedConnection.mockReset());
 
-  it("maps environment ports onto a private network host", async () => {
-    readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://192.168.1.25:3773" });
-    const { resolveBrowserNavigationTarget } = await import("./browserTargetResolver");
-    expect(
-      resolveBrowserNavigationTarget(EnvironmentId.make("environment-1"), {
-        kind: "environment-port",
+  it.each([
+    [
+      "SSH",
+      "http://127.0.0.1:43881",
+      new SshConnectionTarget({
+        environmentId: EnvironmentId.make("environment-1"),
+        label: "SSH",
+        connectionId: "ssh-1",
+      }),
+    ],
+    [
+      "relay",
+      "https://relay.example.com",
+      new RelayConnectionTarget({
+        environmentId: EnvironmentId.make("environment-1"),
+        label: "Relay",
+      }),
+    ],
+    [
+      "LAN bearer",
+      "http://192.168.1.25:3773",
+      new BearerConnectionTarget({
+        environmentId: EnvironmentId.make("environment-1"),
+        label: "LAN",
+        connectionId: "lan-1",
+      }),
+    ],
+    [
+      "Tailnet bearer",
+      "http://100.65.180.100:3773",
+      new BearerConnectionTarget({
+        environmentId: EnvironmentId.make("environment-1"),
+        label: "Tailnet",
+        connectionId: "tailnet-1",
+      }),
+    ],
+  ])(
+    "prepares an authenticated tunnel for every remote desktop %s target",
+    async (_name, httpBaseUrl, target) => {
+      readPreparedConnection.mockReturnValue({ httpBaseUrl, target });
+      const { prepareBrowserNavigationTargetWith } = await import("./browserTargetResolver");
+      const acquireLease = vi.fn(async () => ({
+        leaseId: "lease-1",
+        ticket: "ticket",
         port: 5173,
-        path: "/dashboard",
-      }),
-    ).toEqual({
-      requestedUrl: "http://localhost:5173/dashboard",
-      resolvedUrl: "http://192.168.1.25:5173/dashboard",
-      resolutionKind: "direct-private-network",
-      environmentId: "environment-1",
-    });
-  });
+        connectHost: "127.0.0.1" as const,
+        expiresAt: "2026-09-01T18:00:00.000Z",
+      }));
+      const ensureDesktopForward = vi.fn(async () => ({
+        localPort: 45173,
+        localUrl: "http://localhost:45173/",
+      }));
 
-  it("maps localhost URL navigation onto a remote Tailscale IPv4 host", async () => {
-    readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://100.65.180.100:3773" });
-    const { resolveBrowserNavigationTarget } = await import("./browserTargetResolver");
-    expect(
-      resolveBrowserNavigationTarget(EnvironmentId.make("environment-1"), {
-        kind: "url",
-        url: "http://localhost:5173/dashboard?mode=test#results",
-      }),
-    ).toEqual({
-      requestedUrl: "http://localhost:5173/dashboard?mode=test#results",
-      resolvedUrl: "http://100.65.180.100:5173/dashboard?mode=test#results",
-      resolutionKind: "direct-private-network",
-      environmentId: "environment-1",
-    });
-  });
+      const resolved = await prepareBrowserNavigationTargetWith(
+        EnvironmentId.make("environment-1"),
+        { kind: "url", url: "http://localhost:5173/dashboard?mode=test#results" },
+        { acquireLease, ensureDesktopForward },
+      );
 
-  it("preserves URL credentials when mapping localhost onto a remote host", async () => {
-    readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://100.65.180.100:3773" });
-    const { resolveBrowserNavigationTarget } = await import("./browserTargetResolver");
-    expect(
-      resolveBrowserNavigationTarget(EnvironmentId.make("environment-1"), {
-        kind: "url",
-        url: "http://user:p%40ss@localhost:5173/dashboard",
-      }).resolvedUrl,
-    ).toBe("http://user:p%40ss@100.65.180.100:5173/dashboard");
-  });
+      expect(resolved).toEqual({
+        requestedUrl: "http://localhost:5173/dashboard?mode=test#results",
+        resolvedUrl: "http://localhost:45173/dashboard?mode=test#results",
+        resolutionKind: "authenticated-tunnel",
+        environmentId: "environment-1",
+      });
+      expect(acquireLease).toHaveBeenCalledWith(5173);
+    },
+  );
 
-  it("maps credentialed localhost URLs onto private IPv6 hosts", async () => {
-    readPreparedConnection.mockReturnValue({
-      httpBaseUrl: "http://[fd7a:115c:a1e0::53]:3773",
-    });
-    const { resolveBrowserNavigationTarget } = await import("./browserTargetResolver");
-    expect(
-      resolveBrowserNavigationTarget(EnvironmentId.make("environment-1"), {
-        kind: "url",
-        url: "http://user:p%40ss@localhost:5173/dashboard?mode=test#results",
-      }).resolvedUrl,
-    ).toBe("http://user:p%40ss@[fd7a:115c:a1e0::53]:5173/dashboard?mode=test#results");
-  });
+  it.each([
+    [5173, "http://localhost:5173/app"],
+    [45173, "http://localhost:45173/app"],
+  ])(
+    "uses the actual desktop listener port %i in the resolved URL",
+    async (localPort, expectedUrl) => {
+      readPreparedConnection.mockReturnValue({
+        httpBaseUrl: "https://relay.example.com",
+        target: new RelayConnectionTarget({
+          environmentId: EnvironmentId.make("environment-1"),
+          label: "Relay",
+        }),
+      });
+      const { prepareBrowserNavigationTargetWith } = await import("./browserTargetResolver");
+      const resolved = await prepareBrowserNavigationTargetWith(
+        EnvironmentId.make("environment-1"),
+        { kind: "url", url: "http://localhost:5173/app" },
+        {
+          acquireLease: async () => ({
+            leaseId: "lease-1",
+            ticket: "ticket",
+            port: 5173,
+            connectHost: "127.0.0.1",
+            expiresAt: "2026-09-01T18:00:00.000Z",
+          }),
+          ensureDesktopForward: async () => ({
+            localPort,
+            localUrl: `http://localhost:${localPort}/`,
+          }),
+        },
+      );
 
-  it("maps schemeless localhost navigation onto a remote environment host", async () => {
-    readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://192.168.1.25:3773" });
-    const { resolveBrowserNavigationTarget } = await import("./browserTargetResolver");
-    expect(
-      resolveBrowserNavigationTarget(EnvironmentId.make("environment-1"), {
-        kind: "url",
-        url: "localhost:3000/app",
-      }).resolvedUrl,
-    ).toBe("http://192.168.1.25:3000/app");
-  });
+      expect(resolved.resolvedUrl).toBe(expectedUrl);
+    },
+  );
 
   it("keeps localhost navigation local for a local environment", async () => {
     readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://127.0.0.1:3773" });
@@ -108,7 +150,7 @@ describe("browser target resolver", () => {
     });
   });
 
-  it("refuses public relay hosts until the authenticated gateway exists", async () => {
+  it("refuses synchronous remote resolution until the authenticated access controller runs", async () => {
     readPreparedConnection.mockReturnValue({ httpBaseUrl: "https://relay.example.com" });
     const { resolveBrowserNavigationTarget } = await import("./browserTargetResolver");
     expect(() =>
@@ -116,13 +158,91 @@ describe("browser target resolver", () => {
         kind: "environment-port",
         port: 5173,
       }),
-    ).toThrow(/authenticated preview gateway/);
+    ).toThrow(/authenticated preview access controller/);
     expect(() =>
       resolveBrowserNavigationTarget(EnvironmentId.make("environment-1"), {
         kind: "url",
         url: "http://localhost:5173",
       }),
-    ).toThrow(/authenticated preview gateway/);
+    ).toThrow(/authenticated preview access controller/);
+  });
+
+  it("prepares an authenticated desktop tunnel for a public paired environment", async () => {
+    readPreparedConnection.mockReturnValue({ httpBaseUrl: "https://relay.example.com" });
+    const { prepareBrowserNavigationTargetWith } = await import("./browserTargetResolver");
+    const resolved = await prepareBrowserNavigationTargetWith(
+      EnvironmentId.make("environment-1"),
+      { kind: "url", url: "http://localhost:5173/app?x=1#top" },
+      {
+        acquireLease: async () => ({
+          leaseId: "lease-1",
+          ticket: "ticket",
+          port: 5173,
+          connectHost: "127.0.0.1",
+          expiresAt: "2026-09-01T18:00:00.000Z",
+        }),
+        ensureDesktopForward: async () => ({
+          localPort: 45173,
+          localUrl: "http://localhost:45173/",
+        }),
+      },
+    );
+    expect(resolved).toEqual({
+      requestedUrl: "http://localhost:5173/app?x=1#top",
+      resolvedUrl: "http://localhost:45173/app?x=1#top",
+      resolutionKind: "authenticated-tunnel",
+      environmentId: "environment-1",
+    });
+  });
+
+  it("rejects plaintext public preview tunnels", async () => {
+    readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://preview.example.com" });
+    const { prepareBrowserNavigationTargetWith } = await import("./browserTargetResolver");
+
+    await expect(
+      prepareBrowserNavigationTargetWith(
+        EnvironmentId.make("environment-1"),
+        { kind: "url", url: "http://localhost:5173" },
+        {
+          acquireLease: async () => {
+            throw new Error("must not acquire");
+          },
+          ensureDesktopForward: async () => {
+            throw new Error("must not connect");
+          },
+        },
+      ),
+    ).rejects.toThrow(/HTTPS\/WSS/);
+  });
+
+  it("prepares a tunnel for an SSH environment whose server bridge is local", async () => {
+    readPreparedConnection.mockReturnValue({
+      httpBaseUrl: "http://127.0.0.1:43881",
+      target: { _tag: "SshConnectionTarget" },
+    });
+    const { prepareBrowserNavigationTargetWith } = await import("./browserTargetResolver");
+    const acquireLease = vi.fn(async () => ({
+      leaseId: "lease-ssh",
+      ticket: "ticket",
+      port: 5173,
+      connectHost: "127.0.0.1" as const,
+      expiresAt: "2026-09-01T18:00:00.000Z",
+    }));
+    const resolved = await prepareBrowserNavigationTargetWith(
+      EnvironmentId.make("environment-1"),
+      { kind: "url", url: "http://localhost:5173/app" },
+      {
+        acquireLease,
+        ensureDesktopForward: async () => ({
+          localPort: 45173,
+          localUrl: "http://localhost:45173/",
+        }),
+      },
+    );
+
+    expect(acquireLease).toHaveBeenCalledWith(5173);
+    expect(resolved.resolvedUrl).toBe("http://localhost:45173/app");
+    expect(resolved.resolutionKind).toBe("authenticated-tunnel");
   });
 
   it("normalizes schemeless localhost server-picker values", async () => {
@@ -151,18 +271,23 @@ describe("browser target resolver", () => {
     );
   });
 
-  it("supports private IPv6 environment hosts", async () => {
+  it("does not rewrite localhost directly onto a private IPv6 control host", async () => {
     readPreparedConnection.mockReturnValue({
       httpBaseUrl: "http://[fd7a:115c:a1e0::53]:3773",
+      target: new BearerConnectionTarget({
+        environmentId: EnvironmentId.make("environment-1"),
+        label: "Tailnet IPv6",
+        connectionId: "tailnet-ipv6",
+      }),
     });
     const { resolveBrowserNavigationTarget } = await import("./browserTargetResolver");
-    expect(
+    expect(() =>
       resolveBrowserNavigationTarget(EnvironmentId.make("environment-1"), {
         kind: "environment-port",
         port: 5173,
         path: "/app?mode=test",
-      }).resolvedUrl,
-    ).toBe("http://[fd7a:115c:a1e0::53]:5173/app?mode=test");
+      }),
+    ).toThrow(/authenticated preview access controller/);
   });
 
   it("supports a local IPv6 environment host", async () => {

@@ -23,6 +23,7 @@ export function createPreviewEnvironmentAtoms<R, E>(
   const lifecycleScheduler = createAtomCommandScheduler();
   const statusScheduler = createAtomCommandScheduler();
   const automationScheduler = createAtomCommandScheduler();
+  const tailnetScheduler = createAtomCommandScheduler();
   const lifecycleConcurrency = {
     mode: "serial" as const,
     key: ({ environmentId, input }: { environmentId: string; input: { threadId: string } }) =>
@@ -44,6 +45,58 @@ export function createPreviewEnvironmentAtoms<R, E>(
       // Configured URLs are part of this atom's key. Dispose immediately so
       // unmounted projects stop contributing probe candidates on the server.
       idleTtlMs: 0,
+    }),
+    tailnetStatus: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:preview:tailnet-status",
+      tag: WS_METHODS.previewTailnetStatus,
+      staleTimeMs: 5_000,
+    }),
+    acquireTailnetPreview: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:preview:tailnet-acquire",
+      tag: WS_METHODS.previewTailnetAcquire,
+      scheduler: tailnetScheduler,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.threadId, input.port]),
+      },
+    }),
+    renewTailnetPreview: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:preview:tailnet-renew",
+      tag: WS_METHODS.previewTailnetRenew,
+      scheduler: tailnetScheduler,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.threadId, input.port]),
+      },
+    }),
+    releaseTailnetPreview: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:preview:tailnet-release",
+      tag: WS_METHODS.previewTailnetRelease,
+      scheduler: tailnetScheduler,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.leaseId]),
+      },
+    }),
+    setTailnetPreviewPortEnabled: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:preview:tailnet-set-port-enabled",
+      tag: WS_METHODS.previewTailnetSetPortEnabled,
+      scheduler: tailnetScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.threadId, input.port]),
+      },
+    }),
+    acquirePortForward: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:preview:port-forward-acquire",
+      tag: WS_METHODS.previewPortForwardAcquire,
+    }),
+    releasePortForward: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:preview:port-forward-release",
+      tag: WS_METHODS.previewPortForwardRelease,
     }),
     automationRequests: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:preview:automation-requests",

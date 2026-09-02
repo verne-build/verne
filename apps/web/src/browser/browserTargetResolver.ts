@@ -1,10 +1,13 @@
 import type {
   BrowserNavigationTarget,
+  DesktopPortForwardEnsureResult,
   EnvironmentId,
+  PreviewPortForwardLeaseResult,
   PreviewUrlResolution,
 } from "@t3tools/contracts";
 import { isLoopbackHost, normalizePreviewUrl } from "@t3tools/shared/preview";
 
+import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { readPreparedConnection } from "~/state/session";
 
 export const normalizeHostname = (host: string): string =>
@@ -163,44 +166,45 @@ const readEnvironmentUrl = (environmentId: EnvironmentId): URL => {
   return new URL(connection.httpBaseUrl);
 };
 
-const resolveEnvironmentPortTarget = (
-  environmentId: EnvironmentId,
-  target: Extract<BrowserNavigationTarget, { readonly kind: "environment-port" }>,
+const isDesktopLocalTarget = (
+  target: NonNullable<ReturnType<typeof readPreparedConnection>>["target"] | undefined,
   environmentUrl: URL,
-  requestedUrl?: string,
-  sourceUrl?: URL,
-): PreviewUrlResolution => {
-  if (!isPrivateNetworkHost(environmentUrl.hostname)) {
-    throw new Error(
-      "This environment port needs the planned authenticated preview gateway; its server address is not directly private-network reachable.",
-    );
+): boolean =>
+  target === undefined
+    ? isLocalLoopbackHost(environmentUrl.hostname)
+    : target._tag === "PrimaryConnectionTarget" || isDesktopLocalConnectionTarget(target);
+
+export function isLoopbackBrowserNavigationTarget(target: BrowserNavigationTarget): boolean {
+  if (target.kind === "environment-port") return true;
+  try {
+    return isLoopbackHost(new URL(normalizePreviewUrl(target.url)).hostname);
+  } catch {
+    return false;
+  }
+}
+
+export function resolveDirectBrowserNavigationTarget(
+  environmentId: EnvironmentId,
+  target: BrowserNavigationTarget,
+): PreviewUrlResolution {
+  if (target.kind === "url") {
+    return {
+      requestedUrl: target.url,
+      resolvedUrl: target.url,
+      resolutionKind: "direct",
+      environmentId,
+    };
   }
   const protocol = target.protocol ?? "http";
   const path = target.path?.startsWith("/") ? target.path : `/${target.path ?? ""}`;
-  const normalizedEnvironmentHost = environmentUrl.hostname.replace(/^\[|\]$/g, "");
-  // Local loopback environments should advertise `localhost` so Chromium
-  // dual-stack lookup can reach a Vite server bound only to ::1 or 127.0.0.1.
-  const resolvedHost = isLocalLoopbackHost(normalizedEnvironmentHost)
-    ? "localhost"
-    : normalizedEnvironmentHost.includes(":")
-      ? `[${normalizedEnvironmentHost}]`
-      : normalizedEnvironmentHost;
-  const resolved = sourceUrl
-    ? new URL(sourceUrl)
-    : new URL(path, `${protocol}://${resolvedHost}:${target.port}`);
-  if (sourceUrl) {
-    resolved.hostname = resolvedHost;
-    resolved.port = String(target.port);
-  }
+  const url = `${protocol}://localhost:${target.port}${path}`;
   return {
-    requestedUrl: requestedUrl ?? `${protocol}://localhost:${target.port}${path}`,
-    resolvedUrl: resolved.toString(),
-    resolutionKind: isLocalLoopbackHost(normalizedEnvironmentHost)
-      ? "direct"
-      : "direct-private-network",
+    requestedUrl: url,
+    resolvedUrl: url,
+    resolutionKind: "direct",
     environmentId,
   };
-};
+}
 
 export function resolveBrowserNavigationTarget(
   environmentId: EnvironmentId,
@@ -216,29 +220,29 @@ export function resolveBrowserNavigationTarget(
     }
     if (parsed && isLoopbackHost(parsed.hostname)) {
       const environmentUrl = readEnvironmentUrl(environmentId);
-      if (parsed.hostname === "0.0.0.0" || !isLocalLoopbackHost(environmentUrl.hostname)) {
-        return resolveEnvironmentPortTarget(
-          environmentId,
-          {
-            kind: "environment-port",
-            port: Number(parsed.port || (parsed.protocol === "https:" ? 443 : 80)),
-            protocol: parsed.protocol === "https:" ? "https" : "http",
-            path: `${parsed.pathname}${parsed.search}${parsed.hash}`,
-          },
-          environmentUrl,
-          target.url,
-          parsed,
+      if (!isDesktopLocalTarget(readPreparedConnection(environmentId)?.target, environmentUrl)) {
+        throw new Error(
+          "This environment port requires the authenticated preview access controller.",
         );
       }
+      if (parsed.hostname === "0.0.0.0") {
+        parsed.hostname = "localhost";
+        return {
+          requestedUrl: target.url,
+          resolvedUrl: parsed.toString(),
+          resolutionKind: "direct",
+          environmentId,
+        };
+      }
     }
-    return {
-      requestedUrl: target.url,
-      resolvedUrl: target.url,
-      resolutionKind: "direct",
-      environmentId,
-    };
+    return resolveDirectBrowserNavigationTarget(environmentId, target);
   }
-  return resolveEnvironmentPortTarget(environmentId, target, readEnvironmentUrl(environmentId));
+  const environmentUrl = readEnvironmentUrl(environmentId);
+  const connection = readPreparedConnection(environmentId);
+  if (!isDesktopLocalTarget(connection?.target, environmentUrl)) {
+    throw new Error("This environment port requires the authenticated preview access controller.");
+  }
+  return resolveDirectBrowserNavigationTarget(environmentId, target);
 }
 
 export function resolveDiscoveredServerUrl(environmentId: EnvironmentId, rawUrl: string): string {
@@ -251,4 +255,66 @@ export function resolveDiscoveredServerUrl(environmentId: EnvironmentId, rawUrl:
   } catch {
     return rawUrl;
   }
+}
+
+export async function prepareBrowserNavigationTargetWith(
+  environmentId: EnvironmentId,
+  target: BrowserNavigationTarget,
+  dependencies: {
+    readonly acquireLease: (port: number) => Promise<PreviewPortForwardLeaseResult>;
+    readonly ensureDesktopForward: (input: {
+      readonly environmentId: EnvironmentId;
+      readonly httpBaseUrl: string;
+      readonly lease: PreviewPortForwardLeaseResult;
+    }) => Promise<DesktopPortForwardEnsureResult>;
+    readonly resolveActiveForward?: (port: number) => DesktopPortForwardEnsureResult | undefined;
+  },
+): Promise<PreviewUrlResolution> {
+  if (!isLoopbackBrowserNavigationTarget(target)) {
+    return resolveDirectBrowserNavigationTarget(environmentId, target);
+  }
+  const connection = readPreparedConnection(environmentId);
+  if (!connection) throw new Error(`Environment ${environmentId} is not connected.`);
+  const environmentUrl = new URL(connection.httpBaseUrl);
+  if (isDesktopLocalTarget(connection.target, environmentUrl)) {
+    return resolveDirectBrowserNavigationTarget(environmentId, target);
+  }
+  if (environmentUrl.protocol === "http:" && !isPrivateNetworkHost(environmentUrl.hostname)) {
+    throw new Error("Remote preview tunnels require an HTTPS/WSS environment endpoint.");
+  }
+
+  let requestedUrl: string;
+  let sourceUrl: URL;
+  let port: number;
+  if (target.kind === "environment-port") {
+    const protocol = target.protocol ?? "http";
+    const path = target.path?.startsWith("/") ? target.path : `/${target.path ?? ""}`;
+    requestedUrl = `${protocol}://localhost:${target.port}${path}`;
+    sourceUrl = new URL(requestedUrl);
+    port = target.port;
+  } else {
+    requestedUrl = target.url;
+    sourceUrl = new URL(normalizePreviewUrl(target.url));
+    if (!isLoopbackHost(sourceUrl.hostname)) {
+      return resolveBrowserNavigationTarget(environmentId, target);
+    }
+    port = Number(sourceUrl.port || (sourceUrl.protocol === "https:" ? 443 : 80));
+  }
+
+  const active = dependencies.resolveActiveForward?.(port);
+  const local =
+    active ??
+    (await dependencies.ensureDesktopForward({
+      environmentId,
+      httpBaseUrl: connection.httpBaseUrl,
+      lease: await dependencies.acquireLease(port),
+    }));
+  sourceUrl.hostname = "localhost";
+  sourceUrl.port = String(local.localPort);
+  return {
+    requestedUrl,
+    resolvedUrl: sourceUrl.href,
+    resolutionKind: "authenticated-tunnel",
+    environmentId,
+  };
 }

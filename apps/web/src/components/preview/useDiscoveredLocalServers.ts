@@ -1,16 +1,31 @@
 import type { DiscoveredLocalServer } from "@t3tools/contracts";
 import { isLoopbackHost } from "@t3tools/shared/preview";
-import { useMemo } from "react";
+import { useEffect, useMemo, useSyncExternalStore } from "react";
 
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  createDefaultPreviewAccessController,
+  type PreviewAccessController,
+} from "~/browser/previewAccessController";
 import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
+import {
+  enablePortForward,
+  isEnvironmentAutoForwardEnabled,
+  isPortForwardActive,
+  isPortForwardAutoSuppressed,
+  reconcileDiscoveredPortForwards,
+  portForwardSnapshot,
+  subscribePortForwards,
+} from "~/browser/prepareBrowserNavigationTarget";
+import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
+import { readPreparedConnection } from "~/state/session";
 import { useDiscoveredPortsState } from "~/portDiscoveryState";
 
 export interface PreviewableServer extends DiscoveredLocalServer {
   source: "scanner" | "configured";
   /**
-   * Pre-resolution loopback url. `url` is the resolved navigation target
-   * (volatile on a remote environment); history must key off this instead.
+   * Stable pre-resolution loopback URL used for history. The controller owns
+   * volatile desktop-forward and Tailnet URLs instead of persisting them here.
    */
   requestedUrl: string;
 }
@@ -29,7 +44,7 @@ export function useDiscoveredLocalServers(
 ): ReadonlyArray<PreviewableServer> {
   const scannerState = useDiscoveredPortsState(input.environmentId, input.configuredUrls);
 
-  return useMemo(
+  const servers = useMemo(
     () =>
       mergeServers({
         scanner: scannerState.servers.map((server) => ({
@@ -42,6 +57,78 @@ export function useDiscoveredLocalServers(
       }),
     [input.environmentId, scannerState, input.configuredUrls],
   );
+
+  return servers;
+}
+
+export function useEnvironmentPortForwardLifecycle(environmentId: EnvironmentId, supported = true) {
+  const scannerState = useDiscoveredPortsState(environmentId);
+  const forwardRevision = useSyncExternalStore(
+    subscribePortForwards,
+    portForwardSnapshot,
+    portForwardSnapshot,
+  );
+  useEffect(() => {
+    if (!supported) return;
+    reconcileEnvironmentPortForwards(
+      environmentId,
+      scannerState.servers.map((server) => ({ ...server, requestedUrl: server.url })),
+    );
+  }, [environmentId, forwardRevision, scannerState.servers, supported]);
+}
+
+/**
+ * Owns automatic Tailnet leases for the current thread independently of the
+ * selected bottom-drawer tab. Mount this once in the persistent chat lifecycle
+ * and share the returned controller with whichever port surface is visible.
+ */
+export function useThreadPreviewAccessController(input: {
+  readonly environmentId: EnvironmentId | null;
+  readonly threadId: ThreadId | null;
+}): PreviewAccessController {
+  const scannerState = useDiscoveredPortsState(input.environmentId);
+  const controller = useMemo(
+    () => createDefaultPreviewAccessController(),
+    [input.environmentId, input.threadId],
+  );
+
+  useEffect(() => {
+    if (input.environmentId === null || input.threadId === null) return;
+    void controller.reconcile({
+      environmentId: input.environmentId,
+      threadId: input.threadId,
+      servers: scannerState.servers,
+    });
+  }, [controller, input.environmentId, input.threadId, scannerState.servers]);
+
+  useEffect(() => () => void controller.cleanup(), [controller]);
+  return controller;
+}
+
+function reconcileEnvironmentPortForwards(
+  environmentId: EnvironmentId,
+  servers: ReadonlyArray<Pick<PreviewableServer, "port" | "requestedUrl">>,
+) {
+  if (!window.desktopBridge?.ensurePortForward) return;
+  reconcileDiscoveredPortForwards(environmentId, new Set(servers.map((server) => server.port)));
+  if (!isEnvironmentAutoForwardEnabled(environmentId)) return;
+  const connection = readPreparedConnection(environmentId);
+  if (!connection) return;
+  if (
+    connection.target._tag === "PrimaryConnectionTarget" ||
+    isDesktopLocalConnectionTarget(connection.target)
+  ) {
+    return;
+  }
+  for (const server of servers.slice(0, 16)) {
+    if (
+      isPortForwardActive(environmentId, server.port) ||
+      isPortForwardAutoSuppressed(environmentId, server.port)
+    ) {
+      continue;
+    }
+    void enablePortForward(environmentId, server.requestedUrl).catch(() => undefined);
+  }
 }
 
 export function mergeServers(input: {
