@@ -2,6 +2,7 @@ import * as NodeCrypto from "node:crypto";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
 import * as Layer from "effect/Layer";
@@ -94,6 +95,8 @@ export class TailnetPreviewSessionInvalidError extends Schema.TaggedErrorClass<T
   },
 ) {}
 
+const isTailnetPreviewTargetInvalidError = Schema.is(TailnetPreviewTargetInvalidError);
+
 interface LaunchRecord extends TailnetPreviewLaunchBinding {
   readonly secretDigest: string;
   readonly expiresAtMillis: number;
@@ -118,6 +121,20 @@ interface TailnetPreviewAuthState {
   readonly revokedLaunches: ReadonlyMap<string, RevokedTokenRecord>;
   readonly revokedSessions: ReadonlyMap<string, RevokedTokenRecord>;
 }
+
+type AuthDecision<A, E> = readonly [Effect.Effect<A, E>, TailnetPreviewAuthState];
+type MintLaunchDecision = AuthDecision<
+  TailnetPreviewLaunchCapability,
+  TailnetPreviewAuthCapacityError
+>;
+type ExchangeLaunchDecision = AuthDecision<
+  TailnetPreviewGatewaySession,
+  TailnetPreviewAuthCapacityError | TailnetPreviewLaunchInvalidError
+>;
+type ValidateSessionDecision = AuthDecision<
+  TailnetPreviewGatewayBinding,
+  TailnetPreviewSessionInvalidError
+>;
 
 export interface TailnetPreviewAuthStateSnapshot {
   readonly launches: ReadonlyArray<LaunchRecord>;
@@ -147,7 +164,8 @@ const initialState: TailnetPreviewAuthState = {
 
 const cookieNameForPort = (port: number) => `__Host-verne-preview-${port}`;
 
-const expiresAtIso = (expiresAtMillis: number) => new Date(expiresAtMillis).toISOString();
+const expiresAtIso = (expiresAtMillis: number) =>
+  DateTime.formatIso(DateTime.makeUnsafe(expiresAtMillis));
 
 const normalizeOptions = (
   options: Partial<TailnetPreviewAuthOptions> | undefined,
@@ -238,7 +256,7 @@ const validateRelativeTarget = (
       return normalized;
     },
     catch: (cause) =>
-      cause instanceof TailnetPreviewTargetInvalidError
+      isTailnetPreviewTargetInvalidError(cause)
         ? cause
         : new TailnetPreviewTargetInvalidError({ reason: "not-relative" }),
   });
@@ -326,7 +344,7 @@ const makeWithOptions = Effect.fn("TailnetPreviewAuth.makeWithOptions")(function
     const now = yield* Clock.currentTimeMillis;
     const expiresAtMillis = now + config.launchTtlMs;
 
-    const capability = yield* Ref.modify(stateRef, (state) => {
+    const capability = yield* Ref.modify(stateRef, (state): MintLaunchDecision => {
       const nextState = pruneState(state, now);
       if (nextState.launches.size >= config.maxActiveLaunches) {
         return [
@@ -365,7 +383,7 @@ const makeWithOptions = Effect.fn("TailnetPreviewAuth.makeWithOptions")(function
     const sessionDigest = yield* digestHex(sessionSecret);
     const expiresAtMillis = now + config.sessionTtlMs;
 
-    const session = yield* Ref.modify(stateRef, (state) => {
+    const session = yield* Ref.modify(stateRef, (state): ExchangeLaunchDecision => {
       const nextState = pruneState(state, now);
       const revokedLaunch = [...state.revokedLaunches].find(([digest]) =>
         timingSafeDigestEqual(digest, launchDigest),
@@ -468,7 +486,7 @@ const makeWithOptions = Effect.fn("TailnetPreviewAuth.makeWithOptions")(function
     const sessionDigest = yield* digestHex(input.sessionSecret);
     const now = yield* Clock.currentTimeMillis;
 
-    const binding = yield* Ref.modify(stateRef, (state) => {
+    const binding = yield* Ref.modify(stateRef, (state): ValidateSessionDecision => {
       const nextState = pruneState(state, now);
       const revokedSession = [...state.revokedSessions].find(([digest]) =>
         timingSafeDigestEqual(digest, sessionDigest),
