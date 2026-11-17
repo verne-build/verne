@@ -45,6 +45,32 @@ mac:
     - target: dir
     - target: dmg
     - target: zip
+
+linux:
+  category: Development
+  # electron-builder extracts a 512x512 PNG from the ICNS when building on
+  # macOS, or looks for build/icon.png on Linux CI. Generate it with:
+  #   sips -s format png build/icon.icns --out build/icon.png
+  icon: build/icon.icns
+  target:
+    - target: AppImage
+    - target: deb
+
+win:
+  # electron-builder converts ICNS → ICO automatically when building on macOS,
+  # or use build/icon.ico for a Windows/Linux CI build.
+  icon: build/icon.icns
+  target:
+    - target: nsis
+    - target: portable
+  # NSIS installer adds the install dir to PATH so `verne` is available in
+  # terminals without the ensure_cli_symlink Unix mechanism.
+  nsis:
+    oneClick: false
+    allowToChangeInstallationDirectory: true
+    createDesktopShortcut: true
+    createStartMenuShortcut: true
+
 publish:
   provider: github
   owner: verne-build

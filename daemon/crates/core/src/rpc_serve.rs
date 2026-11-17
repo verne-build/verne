@@ -1,29 +1,29 @@
-//! Generic Unix-socket RPC server loop, shared by the daemon and the sidecar.
+//! Generic RPC server loop, shared by the daemon and the sidecar.
 //! Both speak the same length-prefixed JSON protocol; they differ only in their
 //! state type and dispatch table. The `__subscribe_events` mode is handled here
 //! (it only needs the `EventBus`); everything else is delegated to `dispatch`.
+//!
+//! Transport:
+//! - Unix/macOS/Linux: Unix domain socket (`.sock` file)
+//! - Windows: TCP loopback; the port is written to `<socket_path>.port`
 
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use tokio::net::UnixListener;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::protocol::{codec, Request, Response, ServerMessage};
 use crate::state::EventBus;
 
 pub type BoxFut = Pin<Box<dyn Future<Output = Response> + Send>>;
 
-/// Max concurrent in-flight requests per connection. The dispatch loop runs each
-/// request on its own task (so a slow handler doesn't head-of-line block the
-/// ones behind it); this caps how many run at once and applies read backpressure.
-/// Handlers offload heavy blocking work (git2, fs) via spawn_blocking, so this
-/// bounds dispatch concurrency without starving the async runtime.
+/// Max concurrent in-flight requests per connection.
 const MAX_INFLIGHT_PER_CONN: usize = 32;
 
-async fn write_msg(
-    writer: &tokio::sync::Mutex<tokio::net::unix::OwnedWriteHalf>,
+async fn write_msg<W: AsyncWriteExt + Unpin>(
+    writer: &tokio::sync::Mutex<W>,
     msg: &ServerMessage,
 ) -> Result<(), String> {
     let body = serde_json::to_vec(msg).map_err(|e| e.to_string())?;
@@ -39,32 +39,82 @@ pub async fn serve<S: Send + Sync + 'static>(
     event_bus: Arc<EventBus>,
     dispatch: fn(Request, Arc<S>) -> BoxFut,
 ) {
-    let _ = std::fs::remove_file(&socket_path);
-    let listener = UnixListener::bind(&socket_path).expect("bind socket");
-    log::info!("rpc server listening on {}", socket_path.display());
+    #[cfg(unix)]
+    serve_unix(socket_path, state, event_bus, dispatch).await;
+    #[cfg(windows)]
+    serve_tcp(socket_path, state, event_bus, dispatch).await;
+}
 
+// ── Unix domain socket transport ────────────────────────────────────────────
+
+#[cfg(unix)]
+async fn serve_unix<S: Send + Sync + 'static>(
+    socket_path: PathBuf,
+    state: Arc<S>,
+    event_bus: Arc<EventBus>,
+    dispatch: fn(Request, Arc<S>) -> BoxFut,
+) {
+    use tokio::net::UnixListener;
+    let _ = std::fs::remove_file(&socket_path);
+    let listener = UnixListener::bind(&socket_path).expect("bind unix socket");
+    log::info!("rpc server listening on {}", socket_path.display());
     loop {
         match listener.accept().await {
             Ok((stream, _)) => {
-                let s = state.clone();
-                let bus = event_bus.clone();
-                tokio::spawn(handle_client(stream, s, bus, dispatch));
+                let (r, w) = stream.into_split();
+                tokio::spawn(handle_client(r, w, state.clone(), event_bus.clone(), dispatch));
             }
             Err(e) => log::error!("accept err: {e}"),
         }
     }
 }
 
-async fn handle_client<S: Send + Sync + 'static>(
-    stream: tokio::net::UnixStream,
+// ── TCP loopback transport (Windows) ────────────────────────────────────────
+
+#[cfg(windows)]
+async fn serve_tcp<S: Send + Sync + 'static>(
+    socket_path: PathBuf,
     state: Arc<S>,
     event_bus: Arc<EventBus>,
     dispatch: fn(Request, Arc<S>) -> BoxFut,
 ) {
-    let (mut r, w) = stream.into_split();
+    use tokio::net::TcpListener;
+    // Bind to an ephemeral loopback port and publish it next to the socket path
+    // so the Node.js side can read it and connect via TCP.
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind tcp");
+    let port = listener.local_addr().expect("local addr").port();
+    let port_path = socket_path.with_extension("port");
+    std::fs::write(&port_path, port.to_string()).expect("write port file");
+    log::info!(
+        "rpc server listening on 127.0.0.1:{port} ({})",
+        port_path.display()
+    );
+    loop {
+        match listener.accept().await {
+            Ok((stream, _)) => {
+                let (r, w) = stream.into_split();
+                tokio::spawn(handle_client(r, w, state.clone(), event_bus.clone(), dispatch));
+            }
+            Err(e) => log::error!("accept err: {e}"),
+        }
+    }
+}
+
+// ── Shared connection handler ────────────────────────────────────────────────
+
+async fn handle_client<R, W, S>(
+    mut r: R,
+    w: W,
+    state: Arc<S>,
+    event_bus: Arc<EventBus>,
+    dispatch: fn(Request, Arc<S>) -> BoxFut,
+) where
+    R: AsyncReadExt + Unpin + Send + 'static,
+    W: AsyncWriteExt + Unpin + Send + 'static,
+    S: Send + Sync + 'static,
+{
     let writer = Arc::new(tokio::sync::Mutex::new(w));
 
-    // Read the first request to decide the mode.
     let body = match codec::read_frame(&mut r).await {
         Ok(b) => b,
         Err(_) => return,
@@ -97,26 +147,18 @@ async fn handle_client<S: Send + Sync + 'static>(
         }
     }
 
-    // Normal request/response mode. Each request is dispatched on its own task so
-    // one slow handler doesn't head-of-line block the requests behind it on the
-    // same connection (the client matches responses by id, so out-of-order
-    // completion is fine; sequential client flows stay ordered because they await
-    // each response before sending the next). The semaphore bounds in-flight work
-    // and, by gating the read of the next frame, applies backpressure.
     let sem = Arc::new(tokio::sync::Semaphore::new(MAX_INFLIGHT_PER_CONN));
 
     let spawn_dispatch = |req: Request, permit: tokio::sync::OwnedSemaphorePermit| {
         let writer = writer.clone();
         let state = state.clone();
         tokio::spawn(async move {
-            let _permit = permit; // held until the response is written
+            let _permit = permit;
             let resp = dispatch(req, state).await;
             let _ = write_msg(&writer, &ServerMessage::Response(resp)).await;
         });
     };
 
-    // first_req can't fail to get a permit (sem starts full); unwrap is safe
-    // unless the semaphore is closed, which we never do.
     if let Ok(permit) = sem.clone().acquire_owned().await {
         spawn_dispatch(first_req, permit);
     }
@@ -139,8 +181,6 @@ async fn handle_client<S: Send + Sync + 'static>(
                 continue;
             }
         };
-        // Wait for a free slot before dispatching — bounds concurrency and stops
-        // us reading faster than we can serve.
         let Ok(permit) = sem.clone().acquire_owned().await else {
             return;
         };

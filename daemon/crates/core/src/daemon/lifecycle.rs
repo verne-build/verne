@@ -35,7 +35,30 @@ fn acquire_lock(pid_path: PathBuf) -> Result<(), String> {
 }
 
 fn process_alive(pid: i32) -> bool {
-    use nix::sys::signal::kill;
-    use nix::unistd::Pid;
-    kill(Pid::from_raw(pid), None).is_ok()
+    #[cfg(unix)]
+    {
+        use nix::sys::signal::kill;
+        use nix::unistd::Pid;
+        return kill(Pid::from_raw(pid), None).is_ok();
+    }
+    #[cfg(windows)]
+    {
+        // On Windows, attempt to open the process handle with zero rights; success
+        // means the process exists. PROCESS_QUERY_LIMITED_INFORMATION = 0x1000.
+        use std::os::windows::raw::HANDLE;
+        extern "system" {
+            fn OpenProcess(access: u32, inherit: i32, pid: u32) -> HANDLE;
+            fn CloseHandle(handle: HANDLE) -> i32;
+        }
+        unsafe {
+            let h = OpenProcess(0x1000, 0, pid as u32);
+            if h.is_null() {
+                return false;
+            }
+            CloseHandle(h);
+            true
+        }
+    }
+    #[allow(unreachable_code)]
+    false
 }

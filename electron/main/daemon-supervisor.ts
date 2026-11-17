@@ -5,6 +5,14 @@ import { join } from "node:path";
 import { DaemonClient } from "./daemon-client";
 import { socketPath, sidecarSocketPath, internalDataDir, daemonLog, sidecarLog, wsPort } from "./paths";
 
+// On Windows the Rust side writes a TCP port file (`.port`) instead of a Unix
+// socket. `socketReady` returns true when whichever file the platform uses is
+// present on disk so the connect loop knows a server is coming up.
+function socketReady(path: string): boolean {
+  if (process.platform === "win32") return existsSync(`${path}.port`);
+  return existsSync(path);
+}
+
 // Bundled daemon binary path: resources/verne in production. In dev the in-repo
 // crate builds to daemon/target/debug/verne (app.getAppPath() is the repo root).
 // VERNE_DAEMON_BIN remains an optional override.
@@ -32,7 +40,7 @@ function resourceDir(): string {
 
 async function tryConnect(retries = 30, delayMs = 100): Promise<DaemonClient> {
   for (let i = 0; i < retries; i++) {
-    if (existsSync(socketPath)) {
+    if (socketReady(socketPath)) {
       try { const c = new DaemonClient(socketPath); await c.connect(); return c; }
       catch { /* socket exists but not yet accepting; retry */ }
     }
@@ -41,13 +49,21 @@ async function tryConnect(retries = 30, delayMs = 100): Promise<DaemonClient> {
   throw new Error(`daemon socket never came up at ${socketPath}`);
 }
 
-// PIDs currently LISTENing on our WS port (macOS lsof). Empty if free.
+// PIDs currently LISTENing on our WS port. Empty if free.
 function wsPortHolders(): number[] {
   try {
+    if (process.platform === "win32") {
+      // netstat on Windows: columns are proto, local addr, foreign addr, state, pid
+      const out = execFileSync("netstat", ["-ano"], { encoding: "utf8" });
+      return out.split("\n")
+        .filter((l) => l.includes(`0.0.0.0:${wsPort}`) && l.includes("LISTENING"))
+        .map((l) => Number(l.trim().split(/\s+/).pop()))
+        .filter((n) => Number.isInteger(n) && n > 0);
+    }
     return execFileSync("lsof", ["-ti", `tcp:${wsPort}`, "-sTCP:LISTEN"], { encoding: "utf8" })
       .split("\n").map((s) => Number(s.trim())).filter((n) => Number.isInteger(n) && n > 0);
   } catch {
-    return []; // lsof exits non-zero when nothing is listening → port is free
+    return [];
   }
 }
 
@@ -91,7 +107,7 @@ function spawnDaemon(): void {
 /** Connect to a running daemon, or spawn one and connect. Idempotent across reloads:
  *  a pre-existing detached daemon is reused, preserving PTY sessions. */
 export async function ensureDaemon(): Promise<DaemonClient> {
-  if (existsSync(socketPath)) {
+  if (socketReady(socketPath)) {
     try { const c = new DaemonClient(socketPath); await c.connect(); return c; } catch { /* stale; respawn */ }
   }
   // No reusable daemon → spawning a fresh one. Reap any orphan still holding the
@@ -108,7 +124,7 @@ export async function ensureDaemon(): Promise<DaemonClient> {
 export async function restartDaemon(client: DaemonClient): Promise<void> {
   client.close(); // __shutdown + end sockets → old daemon exits and removes its socket
   // Wait for the old daemon to drop its socket so we don't reconnect to the dying one.
-  for (let i = 0; i < 50 && existsSync(socketPath); i++) {
+  for (let i = 0; i < 50 && socketReady(socketPath); i++) {
     await new Promise((r) => setTimeout(r, 100));
   }
   await freeWsPort();
@@ -116,7 +132,7 @@ export async function restartDaemon(client: DaemonClient): Promise<void> {
   // Reconnect the SAME instance (not a fresh one) so existing references stay valid.
   let connected = false;
   for (let i = 0; i < 30 && !connected; i++) {
-    if (existsSync(socketPath)) {
+    if (socketReady(socketPath)) {
       try { await client.connect(); connected = true; break; } catch { /* not accepting yet */ }
     }
     await new Promise((r) => setTimeout(r, 100));
@@ -147,7 +163,7 @@ function spawnSidecar(): void {
 
 async function tryConnectSidecar(retries = 50, delayMs = 100): Promise<DaemonClient> {
   for (let i = 0; i < retries; i++) {
-    if (existsSync(sidecarSocketPath)) {
+    if (socketReady(sidecarSocketPath)) {
       try { const c = new DaemonClient(sidecarSocketPath); await c.connect(); return c; }
       catch { /* socket exists but not yet accepting; retry */ }
     }
@@ -159,7 +175,7 @@ async function tryConnectSidecar(retries = 50, delayMs = 100): Promise<DaemonCli
 /** Connect to the sidecar, spawning it if needed. Unlike the daemon, the sidecar
  *  is restartable; a reachable one is reused, otherwise a fresh one is spawned. */
 export async function ensureSidecar(): Promise<DaemonClient> {
-  if (existsSync(sidecarSocketPath)) {
+  if (socketReady(sidecarSocketPath)) {
     try { const c = new DaemonClient(sidecarSocketPath); await c.connect(); return c; } catch { /* stale; respawn */ }
   }
   spawnSidecar();
@@ -168,6 +184,7 @@ export async function ensureSidecar(): Promise<DaemonClient> {
 
 /** Stop the sidecar process spawned by this app (best-effort). */
 export function killSidecar(): void {
-  try { sidecarChild?.kill("SIGTERM"); } catch { /* already gone */ }
+  // SIGTERM is Unix-only; on Windows `kill()` with no signal sends a terminate.
+  try { sidecarChild?.kill(process.platform === "win32" ? undefined : "SIGTERM"); } catch { /* already gone */ }
   sidecarChild = null;
 }
