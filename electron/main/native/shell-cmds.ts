@@ -52,6 +52,13 @@ export function registerShellCommands(): void {
     await shell.openExternal(p.url);
   });
 
+  // `open <path>` in the user's default app — preview fallback for formats the
+  // renderer can't decode (HEVC/MKV video, encrypted PDFs, …).
+  registerNative("open_path", async (p: { path: string }) => {
+    const err = await shell.openPath(p.path);
+    if (err) throw new Error(err);
+  });
+
   registerNative("get_installed_ides", () =>
     IDES.filter((i) => existsSync(i.appPath)).map((i) => i.name)
   );

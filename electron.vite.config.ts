@@ -1,5 +1,7 @@
-import { resolve } from "node:path";
+import { resolve, join, sep } from "node:path";
 import { build as esbuild } from "esbuild";
+import { cp } from "node:fs/promises";
+import { createReadStream } from "node:fs";
 import { defineConfig, externalizeDepsPlugin } from "electron-vite";
 import type { Plugin } from "vite";
 import vue from "@vitejs/plugin-vue";
@@ -46,6 +48,41 @@ function buildSttWorker(): Plugin {
         // left as runtime requires by platform:node.
         external: ["electron"],
       });
+    },
+  };
+}
+
+// pdf.js loads CMaps (CJK text), standard fonts, ICC profiles and its
+// JBIG2/JPEG2000 wasm decoders at runtime via URL. Ship those folders next to
+// the renderer bundle and serve them from `/pdfjs/…` in dev.
+function copyPdfJsAssets(): Plugin {
+  const srcRoot = resolve("node_modules/pdfjs-dist");
+  const outRoot = resolve("out/renderer/pdfjs");
+  const dirs = ["wasm", "cmaps", "standard_fonts", "iccs"];
+  const MIME: Record<string, string> = {
+    ".wasm": "application/wasm",
+    ".js": "text/javascript",
+    ".mjs": "text/javascript",
+  };
+
+  return {
+    name: "copy-pdfjs-assets",
+    configureServer(server) {
+      server.middlewares.use("/pdfjs", (req, res, next) => {
+        const rel = decodeURIComponent((req.url ?? "").split("?")[0]).replace(/^\/+/, "");
+        const file = resolve(srcRoot, rel);
+        if (file !== srcRoot && !file.startsWith(srcRoot + sep)) return next();
+        const stream = createReadStream(file);
+        stream.on("error", () => next());
+        const ext = file.slice(file.lastIndexOf("."));
+        res.setHeader("Content-Type", MIME[ext] ?? "application/octet-stream");
+        stream.pipe(res);
+      });
+    },
+    async closeBundle() {
+      for (const dir of dirs) {
+        await cp(join(srcRoot, dir), join(outRoot, dir), { recursive: true });
+      }
     },
   };
 }
@@ -101,6 +138,7 @@ export default defineConfig({
         },
       }),
       tailwindcss(),
+      copyPdfJsAssets(),
     ],
     build: {
       rollupOptions: {

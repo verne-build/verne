@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref, computed, watch, onActivated, nextTick } from "vue";
+import { ref, computed, watch, onActivated, nextTick, defineAsyncComponent } from "vue";
 import type { FilePanelTab, FilePanelFileTab } from "@/types";
 import { useSettings } from "@/composables/useSettings";
 import { PANEL_SIZES } from "@/lib/panelSizes";
 import { addToAgent } from "@/composables/useAddToAgent";
-import { convertFileSrc } from "@/platform";
+import { convertFileSrc, invoke } from "@/platform";
+import { isMarkdownFile, isSvgFile, previewKindForPath, fileExtension } from "@/lib/filePreview";
 import { toast } from "vue-sonner";
 import CodeEditor from "./CodeEditor.vue";
 import FilesPanel from "./FilesPanel.vue";
@@ -83,24 +84,23 @@ function defaultPreviewFor(ext: string | null | undefined): boolean {
 
 const filePreview = ref(false);
 watch(() => props.activeTab, (tab) => {
-  const ext = tab?.kind === "file" ? tab.filePath.split(".").pop()?.toLowerCase() : null;
-  filePreview.value = defaultPreviewFor(ext);
+  filePreview.value = tab?.kind === "file" ? defaultPreviewFor(fileExtension(tab.filePath)) : false;
 }, { immediate: true });
 
-const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "bmp", "webp", "ico", "avif"]);
-function isImageFile(path: string) {
-  const ext = path.split(".").pop()?.toLowerCase() ?? "";
-  return IMAGE_EXTS.has(ext);
-}
+const activeFileTab = computed<FilePanelFileTab | null>(() =>
+  props.activeTab?.kind === "file" ? props.activeTab : null,
+);
 
-const activeFileIsImage = computed(() => {
-  const t = props.activeTab;
-  return t?.kind === "file" && isImageFile(t.filePath);
+// Non-text files are rendered by a dedicated preview instead of Monaco.
+const activePreviewKind = computed(() => {
+  const t = activeFileTab.value;
+  return t ? previewKindForPath(t.filePath) : null;
 });
-const activeImageSrc = computed(() => {
-  const t = props.activeTab;
-  return activeFileIsImage.value && t?.kind === "file" ? convertFileSrc(t.filePath) : "";
-});
+
+const activeFileIsImage = computed(() => activePreviewKind.value === "image");
+const activeImageSrc = computed(() =>
+  activeFileIsImage.value && activeFileTab.value ? convertFileSrc(activeFileTab.value.filePath) : "",
+);
 const imageLoadError = ref(false);
 watch(() => props.activeTab, () => { imageLoadError.value = false; });
 
@@ -115,14 +115,14 @@ const breadcrumbSegments = computed(() => {
 });
 
 const activeFileExt = computed(() => {
-  const t = props.activeTab;
-  if (t?.kind !== "file") return null;
-  return t.filePath.split(".").pop()?.toLowerCase() ?? null;
+  const t = activeFileTab.value;
+  return t ? fileExtension(t.filePath) : null;
 });
 
-const activeFileHasPreview = computed(
-  () => activeFileExt.value === "md" || activeFileExt.value === "svg",
-);
+const activeFileHasPreview = computed(() => {
+  const p = activeFileTab.value?.filePath;
+  return !!p && (isMarkdownFile(p) || isSvgFile(p));
+});
 
 const previewTabOptions: SegmentedOption[] = [
   { value: "edit", label: "Edit", icon: PenLine },
@@ -159,6 +159,16 @@ async function copyActivePath(relative: boolean) {
 function activeTabAsFile(): FilePanelFileTab | null {
   const t = props.activeTab;
   return t?.kind === "file" ? t : null;
+}
+
+// Heavy viewers (pdf.js) live in their own chunk so the main bundle stays lean.
+const PdfPreview = defineAsyncComponent(() => import("./preview/PdfPreview.vue"));
+const MediaPreview = defineAsyncComponent(() => import("./preview/MediaPreview.vue"));
+
+function openActiveExternally() {
+  const p = activeFileTab.value?.filePath;
+  if (!p) return;
+  void invoke("open_path", { path: p }).catch((e) => toast.error(String(e)));
 }
 </script>
 
@@ -203,6 +213,10 @@ function activeTabAsFile(): FilePanelFileTab | null {
             <DropdownMenuSeparator />
             <DropdownMenuItem @select="copyActivePath(false)">Copy Path</DropdownMenuItem>
             <DropdownMenuItem @select="copyActivePath(true)">Copy Relative Path</DropdownMenuItem>
+            <template v-if="activePreviewKind">
+              <DropdownMenuSeparator />
+              <DropdownMenuItem @select="openActiveExternally">Open in Default App</DropdownMenuItem>
+            </template>
             <DropdownMenuSeparator />
             <DropdownMenuItem
               class="justify-between"
@@ -329,6 +343,17 @@ function activeTabAsFile(): FilePanelFileTab | null {
               </EmptyContent>
             </Empty>
           </div>
+          <PdfPreview
+            v-else-if="activePreviewKind === 'pdf' && activeFileTab"
+            :key="activeFileTab.id"
+            :path="activeFileTab.filePath"
+          />
+          <MediaPreview
+            v-else-if="(activePreviewKind === 'video' || activePreviewKind === 'audio') && activeFileTab"
+            :key="activeFileTab.id"
+            :kind="activePreviewKind === 'video' ? 'video' : 'audio'"
+            :path="activeFileTab.filePath"
+          />
           <CodeEditor
             v-else-if="activeTab?.kind === 'file'"
             :file-path="activeTab.filePath"

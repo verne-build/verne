@@ -18,6 +18,8 @@ contextBridge.exposeInMainWorld("verne", {
     set.add(handler);
     return () => set!.delete(handler); // UnlistenFn
   },
-  assetUrl: (path: string) => `verne-asset://local/${encodeURI(path)}`,
+  // encodeURI leaves `#`/`?` alone, which would truncate the URL into a fragment
+  // or query — escape them so filenames like `clip #2.mp4` still resolve.
+  assetUrl: (path: string) => `verne-asset://local/${encodeURI(path).replace(/[?#]/g, encodeURIComponent)}`,
   filePathForFile: (file: File) => webUtils.getPathForFile(file),
 });

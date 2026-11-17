@@ -5,7 +5,7 @@
   "type": "module",
   "main": "out/main/index.cjs",
   "scripts": {
-    "bundle:install": "pnpm --dir resources/bundled install",
+    "bundle:install": "pnpm --dir resources/bundled install --ignore-workspace",
     "postinstall": "node node_modules/electron/install.js && node scripts/sign-dev-electron.mjs",
     "daemon:build:dev": "cargo build --manifest-path daemon/Cargo.toml",
     "daemon:build": "cargo build --release --manifest-path daemon/Cargo.toml",
@@ -45,6 +45,7 @@
     "emmet-monaco-es": "^5.7.0",
     "markdown-it": "^14.2.0",
     "monaco-editor": "^0.55.1",
+    "pdfjs-dist": "^6.5.438",
     "pidusage": "^4.0.1",
     "pinia": "^3.0.4",
     "reka-ui": "^2.9.9",

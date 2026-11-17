@@ -9,6 +9,9 @@ files:
 asarUnpack:
   - "**/node_modules/sherpa-onnx*/**"
   - out/main/mcp-server.cjs
+  # pdf.js reads these via fetch()/WebAssembly from the worker — keep them as
+  # real files so the file protocol can serve them.
+  - out/renderer/pdfjs/**
 extraResources:
   - from: daemon/target/release/verne
     to: verne
