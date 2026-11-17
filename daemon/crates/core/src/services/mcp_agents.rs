@@ -101,11 +101,26 @@ pub fn verne_binary() -> PathBuf {
 }
 
 fn is_executable(p: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    p.is_file()
-        && p.metadata()
+    if !p.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        return p.metadata()
             .map(|m| m.permissions().mode() & 0o111 != 0)
-            .unwrap_or(false)
+            .unwrap_or(false);
+    }
+    #[cfg(windows)]
+    {
+        // On Windows, executability is determined by extension, not mode bits.
+        matches!(
+            p.extension().and_then(|e| e.to_str()),
+            Some("exe" | "cmd" | "bat" | "com")
+        )
+    }
+    #[allow(unreachable_code)]
+    false
 }
 
 /// Resolve the first of `names` found on the user's login-shell PATH.

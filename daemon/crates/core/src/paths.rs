@@ -14,14 +14,20 @@ pub fn internal_data_dir() -> PathBuf {
 /// Pure bundle-id + dev-suffix path logic. No env override — the
 /// `VERNE_INTERNAL_DATA_DIR` short-circuit lives in [`internal_data_dir`] so
 /// that an explicit `debug` flag here always maps to the `-dev` suffix.
+///
+/// Resolves to the platform-appropriate local app data directory:
+/// - macOS  → `~/Library/Application Support/<id>`
+/// - Linux  → `$XDG_DATA_HOME/<id>` or `~/.local/share/<id>`
+/// - Windows → `%LOCALAPPDATA%\<id>`
 pub fn internal_data_dir_for_bundle(bundle_id: &str, debug: bool) -> PathBuf {
-    let home = dirs::home_dir().expect("no home dir");
     let id = if debug {
         format!("{bundle_id}-dev")
     } else {
         bundle_id.to_string()
     };
-    home.join("Library").join("Application Support").join(id)
+    let base = dirs::data_local_dir()
+        .unwrap_or_else(|| dirs::home_dir().expect("no home dir").join(".local").join("share"));
+    base.join(id)
 }
 
 pub fn user_data_dir() -> PathBuf {
@@ -132,6 +138,8 @@ pub fn server_log_path() -> PathBuf {
 /// Symlink `~/.local/bin/verne` (or `verne-dev` for debug builds) to the
 /// currently-running binary so the CLI is on PATH. Refreshed on every GUI
 /// launch — newest install wins. Best-effort: returns Err but never aborts.
+/// On Windows, CLI PATH management requires a different mechanism; this is a no-op.
+#[cfg(unix)]
 pub fn ensure_cli_symlink() -> std::io::Result<PathBuf> {
     let home = dirs::home_dir()
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no home dir"))?;
@@ -156,6 +164,16 @@ pub fn ensure_cli_symlink() -> std::io::Result<PathBuf> {
     Ok(link)
 }
 
+#[cfg(windows)]
+pub fn ensure_cli_symlink() -> std::io::Result<PathBuf> {
+    // Windows: CLI symlink not supported via this mechanism.
+    // The installer (NSIS) adds the binary directory to PATH instead.
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "CLI symlink not supported on Windows; use the installer or add the binary dir to PATH",
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -171,16 +189,20 @@ mod tests {
         assert_eq!(BUNDLE_ID, "build.verne");
 
         let prod = internal_data_dir_for_bundle("build.verne", false);
-        let prod_ok = prod.ends_with("Library/Application Support/build.verne");
-
         let dev = internal_data_dir_for_bundle("build.verne", true);
-        let dev_ok = dev.ends_with("Library/Application Support/build.verne-dev");
+
+        // Bundle id and dev suffix must appear; the base dir is platform-specific.
+        assert!(
+            prod.to_string_lossy().contains("build.verne"),
+            "prod dir was {prod:?}"
+        );
+        assert!(
+            dev.to_string_lossy().contains("build.verne-dev"),
+            "dev dir was {dev:?}"
+        );
 
         if let Some(val) = old_val {
             std::env::set_var("VERNE_INTERNAL_DATA_DIR", val);
         }
-
-        assert!(prod_ok, "prod dir was {prod:?}");
-        assert!(dev_ok, "dev dir was {dev:?}");
     }
 }

@@ -1,6 +1,6 @@
 import { protocol, net } from "electron";
 import { pathToFileURL } from "node:url";
-import { realpath } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import { relative, isAbsolute } from "node:path";
 
 // Must be called BEFORE app.whenReady (privileged scheme registration).
@@ -33,6 +33,41 @@ export function isPathAllowed(realPath: string, allowedRoots: string[]): boolean
   return false;
 }
 
+interface ByteRange {
+  start: number;
+  end: number;
+}
+
+/**
+ * Parse a single `bytes=` range. Returns null for syntaxes we don't handle
+ * (multi-range, garbage) so the caller can fall back to a full 200 response,
+ * and "invalid" for a valid syntax that can't be satisfied (→ 416).
+ */
+export function parseByteRange(header: string, size: number): ByteRange | "invalid" | null {
+  const match = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
+  if (!match) return null;
+  const [, rawStart, rawEnd] = match;
+  if (!rawStart && !rawEnd) return null;
+
+  let start: number;
+  let end: number;
+  if (!rawStart) {
+    // Suffix range: the last N bytes.
+    const suffix = Number(rawEnd);
+    if (!Number.isFinite(suffix) || suffix <= 0) return "invalid";
+    start = Math.max(0, size - suffix);
+    end = size - 1;
+  } else {
+    start = Number(rawStart);
+    end = rawEnd ? Number(rawEnd) : size - 1;
+  }
+
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start > end || start >= size) {
+    return "invalid";
+  }
+  return { start, end: Math.min(end, size - 1) };
+}
+
 // Call after app.whenReady. `getAllowedRoots` returns the live set of roots the
 // scheme may serve from: open workspace/worktree directory paths (DB), the app
 // resource dir, and the internal data dir. See registerExtraNatives in index.ts.
@@ -63,6 +98,47 @@ export function handleAssetProtocol(getAllowedRoots: () => string[]): void {
       return new Response(null, { status: 404 });
     }
 
-    return net.fetch(pathToFileURL(real).toString());
+    // net.fetch on file:// returns no Content-Length/Accept-Ranges and answers a
+    // Range request with 200 (sliced body, no Content-Range). Media elements need
+    // a real 206 to know the file size and seek, so synthesize the headers here.
+    const info = await stat(real).catch(() => null);
+    if (!info?.isFile()) return new Response(null, { status: 404 });
+
+    const fileUrl = pathToFileURL(real).toString();
+    const rangeHeader = request.headers.get("range");
+
+    if (rangeHeader) {
+      const range = parseByteRange(rangeHeader, info.size);
+      if (range === "invalid") {
+        return new Response(null, {
+          status: 416,
+          headers: { "Content-Range": `bytes */${info.size}`, "Accept-Ranges": "bytes" },
+        });
+      }
+      if (range) {
+        const upstream = await net.fetch(fileUrl, {
+          headers: { Range: `bytes=${range.start}-${range.end}` },
+        });
+        const headers = new Headers(upstream.headers);
+        headers.set("Content-Range", `bytes ${range.start}-${range.end}/${info.size}`);
+        headers.set("Content-Length", String(range.end - range.start + 1));
+        headers.set("Accept-Ranges", "bytes");
+        return new Response(upstream.body, {
+          status: 206,
+          statusText: "Partial Content",
+          headers,
+        });
+      }
+    }
+
+    const upstream = await net.fetch(fileUrl);
+    const headers = new Headers(upstream.headers);
+    headers.set("Content-Length", String(info.size));
+    headers.set("Accept-Ranges", "bytes");
+    return new Response(upstream.body, {
+      status: upstream.status,
+      statusText: upstream.statusText,
+      headers,
+    });
   });
 }

@@ -117,8 +117,11 @@ fn load_or_create_hook_secret() -> String {
         let _ = std::fs::create_dir_all(parent);
     }
     if std::fs::write(&path, &secret).is_ok() {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        }
     }
     secret
 }

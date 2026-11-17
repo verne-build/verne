@@ -1,8 +1,22 @@
 import net from "node:net";
+import fs from "node:fs";
 import { encodeFrame, FrameDecoder } from "./daemon-codec";
 
 type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void };
 type EventHandler = (name: string, payload: unknown) => void;
+
+/**
+ * On Windows the Rust side uses a TCP loopback transport and writes the port
+ * number to `<socketPath>.port`. On Unix we connect directly to the socket.
+ */
+function socketConnectOptions(socketPath: string): net.NetConnectOpts {
+  if (process.platform === "win32") {
+    const portPath = `${socketPath}.port`;
+    const port = parseInt(fs.readFileSync(portPath, "utf8").trim(), 10);
+    return { port, host: "127.0.0.1" };
+  }
+  return socketPath as unknown as net.NetConnectOpts;
+}
 
 export class DaemonClient {
   private sock: net.Socket | null = null;
@@ -17,7 +31,7 @@ export class DaemonClient {
 
   connect(): Promise<void> {
     return new Promise((resolve, reject) => {
-      const s = net.createConnection(this.socketPath);
+      const s = net.createConnection(socketConnectOptions(this.socketPath));
       let settled = false;
       // Persistent error handler: a pre-connect failure (ECONNREFUSED) rejects
       // the promise once; a post-connect failure (daemon dies → ECONNRESET) is
@@ -80,7 +94,7 @@ export class DaemonClient {
    */
   subscribeEvents(): Promise<void> {
     return new Promise((resolve, reject) => {
-      const s = net.createConnection(this.socketPath);
+      const s = net.createConnection(socketConnectOptions(this.socketPath));
       let settled = false;
       // Same crash-safe pattern as connect(): reject once on a pre-connect error,
       // swallow post-connect errors (cleanup runs in 'close').
