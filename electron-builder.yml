@@ -13,10 +13,6 @@ asarUnpack:
   # real files so the file protocol can serve them.
   - out/renderer/pdfjs/**
 extraResources:
-  - from: daemon/target/release/verne
-    to: verne
-  - from: daemon/target/release/verne-sidecar
-    to: verne-sidecar
   - from: resources/bundled
     to: bundled
   - from: resources/notification.wav
@@ -41,6 +37,11 @@ mac:
   gatekeeperAssess: false
   # The Rust daemon binaries in Resources are signed by electron-builder's bundle
   # walk. If notarization flags them, list them explicitly under `binaries:`.
+  extraResources:
+    - from: daemon/target/release/verne
+      to: verne
+    - from: daemon/target/release/verne-sidecar
+      to: verne-sidecar
   target:
     - target: dir
     - target: dmg
@@ -48,18 +49,23 @@ mac:
 
 linux:
   category: Development
-  # electron-builder extracts a 512x512 PNG from the ICNS when building on
-  # macOS, or looks for build/icon.png on Linux CI. Generate it with:
-  #   sips -s format png build/icon.icns --out build/icon.png
-  icon: build/icon.icns
+  icon: build/icon.png
+  extraResources:
+    - from: daemon/target/release/verne
+      to: verne
+    - from: daemon/target/release/verne-sidecar
+      to: verne-sidecar
   target:
     - target: AppImage
     - target: deb
 
 win:
-  # electron-builder converts ICNS → ICO automatically when building on macOS,
-  # or use build/icon.ico for a Windows/Linux CI build.
-  icon: build/icon.icns
+  icon: build/icon.png
+  extraResources:
+    - from: daemon/target/release/verne.exe
+      to: verne.exe
+    - from: daemon/target/release/verne-sidecar.exe
+      to: verne-sidecar.exe
   target:
     - target: nsis
     - target: portable

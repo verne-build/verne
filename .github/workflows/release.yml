@@ -42,8 +42,8 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "Releasing $TAG"
 
-  build:
-    name: Build ${{ matrix.arch }}
+  build-mac:
+    name: Build macOS ${{ matrix.arch }}
     needs: gate
     environment: release
     strategy:
@@ -89,7 +89,7 @@ jobs:
         run: test -f release/latest-mac.yml || (echo "::error::latest-mac.yml missing — electron-updater needs it"; exit 1)
       - uses: actions/upload-artifact@v4
         with:
-          name: dist-${{ matrix.arch }}
+          name: dist-mac-${{ matrix.arch }}
           path: |
             release/*.dmg
             release/*-mac.zip
@@ -98,9 +98,79 @@ jobs:
           retention-days: 14
           if-no-files-found: error
 
+  build-linux:
+    name: Build Linux x64
+    needs: gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.tag }}
+      - uses: pnpm/action-setup@v4
+        with: { version: 11 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: "daemon -> daemon/target" }
+      - name: Install system deps
+        run: |
+          sudo apt-get update -y
+          # cmake for git2 bundled build; fakeroot+dpkg for .deb packaging
+          sudo apt-get install -y cmake pkg-config fakeroot dpkg
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm bundle:install
+      - run: cargo build --release --manifest-path daemon/Cargo.toml
+      - run: pnpm exec electron-vite build
+      - name: Package (Linux)
+        run: pnpm exec electron-builder --linux --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-linux-x64
+          path: |
+            release/*.AppImage
+            release/*.deb
+            release/latest-linux.yml
+          retention-days: 14
+          if-no-files-found: warn
+
+  build-win:
+    name: Build Windows x64
+    needs: gate
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.tag }}
+      - uses: pnpm/action-setup@v4
+        with: { version: 11 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: "daemon -> daemon/target" }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm bundle:install
+      - run: cargo build --release --manifest-path daemon/Cargo.toml
+      - run: pnpm exec electron-vite build
+      - name: Package (Windows, unsigned)
+        run: pnpm exec electron-builder --win --publish never
+        env:
+          # Skip code signing — add CSC_LINK / CSC_KEY_PASSWORD secrets when
+          # a Windows signing cert is available.
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-win-x64
+          path: |
+            release/*.exe
+            release/*.yml
+          retention-days: 14
+          if-no-files-found: warn
+
   publish:
     name: Publish release
-    needs: [gate, build]
+    needs: [gate, build-mac, build-linux, build-win]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -111,20 +181,26 @@ jobs:
         with:
           path: artifacts
           pattern: dist-*
-      - name: Merge mac update manifests
+      - name: Merge mac update manifests & collect all artifacts
         env:
           JS_YAML_DIR: ${{ runner.temp }}/tools
         run: |
           mkdir -p out
-          cp artifacts/dist-*/*.dmg artifacts/dist-*/*-mac.zip artifacts/dist-*/*.blockmap out/ 2>/dev/null || true
-          # Install js-yaml in an isolated dir so npm never resolves the project's
-          # deps (npm ignores pnpm peerDependencyRules -> ERESOLVE) or runs postinstall.
+          # macOS (dmg, zip, blockmap)
+          cp artifacts/dist-mac-*/*.dmg artifacts/dist-mac-*/*-mac.zip artifacts/dist-mac-*/*.blockmap out/ 2>/dev/null || true
+          # Linux
+          cp artifacts/dist-linux-*/*.AppImage artifacts/dist-linux-*/*.deb out/ 2>/dev/null || true
+          cp artifacts/dist-linux-*/latest-linux.yml out/ 2>/dev/null || true
+          # Windows
+          cp artifacts/dist-win-*/*.exe out/ 2>/dev/null || true
+          cp artifacts/dist-win-*/latest.yml out/ 2>/dev/null || true
+          # Merge macOS latest-mac.yml (arm64 + x64)
           mkdir -p "$JS_YAML_DIR"
           echo '{"name":"tools","private":true}' > "$JS_YAML_DIR/package.json"
           npm install --prefix "$JS_YAML_DIR" --no-audit --no-fund js-yaml
-          test -d "$JS_YAML_DIR/node_modules/js-yaml" || { echo "::error::js-yaml not installed at $JS_YAML_DIR"; exit 1; }
+          test -d "$JS_YAML_DIR/node_modules/js-yaml" || { echo "::error::js-yaml not installed"; exit 1; }
           node scripts/merge-mac-manifests.mjs out/latest-mac.yml \
-            artifacts/dist-arm64/latest-mac.yml artifacts/dist-x64/latest-mac.yml
+            artifacts/dist-mac-arm64/latest-mac.yml artifacts/dist-mac-x64/latest-mac.yml
           ls -la out
       - name: Generate release notes
         run: |

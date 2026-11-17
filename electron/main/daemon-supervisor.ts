@@ -13,19 +13,22 @@ function socketReady(path: string): boolean {
   return existsSync(path);
 }
 
+// `.exe` on Windows; empty string elsewhere.
+const EXE = process.platform === "win32" ? ".exe" : "";
+
 // Bundled daemon binary path: resources/verne in production. In dev the in-repo
 // crate builds to daemon/target/debug/verne (app.getAppPath() is the repo root).
 // VERNE_DAEMON_BIN remains an optional override.
 function daemonBinary(): string {
-  if (app.isPackaged) return join(process.resourcesPath, "verne");
-  return process.env.VERNE_DAEMON_BIN ?? join(app.getAppPath(), "daemon", "target", "debug", "verne");
+  if (app.isPackaged) return join(process.resourcesPath, `verne${EXE}`);
+  return process.env.VERNE_DAEMON_BIN ?? join(app.getAppPath(), "daemon", "target", "debug", `verne${EXE}`);
 }
 
 // Sidecar binary path — mirrors daemonBinary() but for `verne-sidecar`. The
 // workspace puts both bins under daemon/target/debug in dev.
 function sidecarBinary(): string {
-  if (app.isPackaged) return join(process.resourcesPath, "verne-sidecar");
-  return process.env.VERNE_SIDECAR_BIN ?? join(app.getAppPath(), "daemon", "target", "debug", "verne-sidecar");
+  if (app.isPackaged) return join(process.resourcesPath, `verne-sidecar${EXE}`);
+  return process.env.VERNE_SIDECAR_BIN ?? join(app.getAppPath(), "daemon", "target", "debug", `verne-sidecar${EXE}`);
 }
 
 // Dir containing bundled assets (`bundled/`, notification sounds). In production
