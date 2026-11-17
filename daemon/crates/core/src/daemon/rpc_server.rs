@@ -2149,7 +2149,7 @@ fn watch_directory_impl(state: &crate::state::AppState, path: String) -> Result<
     if !watch_path.is_dir() {
         return Err("not a directory".to_string());
     }
-    let emit_path = path.clone();
+    let fallback_path = path.clone();
     let bus = state.event_bus.clone();
     let mut watcher = notify::RecommendedWatcher::new(
         move |res: Result<Event, notify::Error>| {
@@ -2160,9 +2160,17 @@ fn watch_directory_impl(state: &crate::state::AppState, path: String) -> Result<
                         | EventKind::Remove(_)
                         | EventKind::Modify(notify::event::ModifyKind::Name(_))
                 ) {
+                    // Emit the actual changed path so the frontend can reload
+                    // the specific parent directory, not always the root.
+                    let changed = ev
+                        .paths
+                        .first()
+                        .and_then(|p| p.to_str())
+                        .map(|s| s.to_owned())
+                        .unwrap_or_else(|| fallback_path.clone());
                     bus.emit(
                         "directory-changed",
-                        serde_json::Value::String(emit_path.clone()),
+                        serde_json::Value::String(changed),
                     );
                 }
             }
@@ -2171,7 +2179,7 @@ fn watch_directory_impl(state: &crate::state::AppState, path: String) -> Result<
     )
     .map_err(|e| e.to_string())?;
     watcher
-        .watch(&watch_path, RecursiveMode::NonRecursive)
+        .watch(&watch_path, RecursiveMode::Recursive)
         .map_err(|e| e.to_string())?;
     if let Ok(mut watchers) = state.file_watchers.lock() {
         watchers.insert(format!("dir:{}", path), watcher);

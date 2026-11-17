@@ -189,13 +189,25 @@ async function reloadDir(absDir: string) {
   model.bump();
 }
 
-async function refreshDir(changedPath: string) {
+// Debounce per directory: coalesce rapid-fire events (npm install, cargo build)
+// into a single reload instead of hammering listTree for every file touched.
+const pendingReloads = new Map<string, ReturnType<typeof setTimeout>>();
+function scheduleReload(absDir: string) {
+  const existing = pendingReloads.get(absDir);
+  if (existing) clearTimeout(existing);
+  pendingReloads.set(absDir, setTimeout(() => {
+    pendingReloads.delete(absDir);
+    if (!renamingPath.value) reloadDir(absDir);
+  }, 150));
+}
+
+function refreshDir(changedPath: string) {
   // Don't clobber an in-progress rename/new-entry input with a watch-driven
   // re-list (it would unmount the input). Explicit reloads after commit handle it.
   if (renamingPath.value) return;
   const dir = changedPath.endsWith("/") ? changedPath.slice(0, -1) : changedPath;
   const parent = dir.slice(0, dir.lastIndexOf("/"));
-  await reloadDir(model.nodes.value.has(parent) ? parent : props.workingDir);
+  scheduleReload(model.nodes.value.has(parent) ? parent : props.workingDir);
 }
 
 let watchGen = 0;
@@ -448,6 +460,8 @@ onBeforeUnmount(() => {
   if (saveExpandedTimer) { clearTimeout(saveExpandedTimer); persistExpanded(); }
   if (saveScrollTimer) clearTimeout(saveScrollTimer);
   clearSpring();
+  for (const t of pendingReloads.values()) clearTimeout(t);
+  pendingReloads.clear();
   if (unlistenDir) unlistenDir();
   if (watchedDir) useRpc().request.unwatchDirectory({ path: watchedDir }).catch(() => {});
   window.removeEventListener("explorer-new-file", handleExplorerNewFile);
